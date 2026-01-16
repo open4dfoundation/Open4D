@@ -1,7 +1,5 @@
 # **TVMC: Time-Varying Mesh Compression Using Volume-Tracked Reference Meshes**
 
-<!-- TEST: This is a test commit to verify repository access -->
-
 Guodong Chen, Filip Hácha, Libor Váša, Mallesham Dasari
 
 ![alt text](https://github.com/frozzzen3/TVMC/blob/main/images/TVMC-workflow.png?raw=true)
