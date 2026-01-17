@@ -11,6 +11,22 @@ constraints.
 
 ---
 
+## Ecosystem Overview
+
+<p align="center">
+  <img src="docs/assets/open4d_ecosystem.pdf" width="90%">
+</p>
+
+**Open4D ecosystem layers:**
+- **Core (`open4d/`)**: canonical 4D data models, IO, metrics
+- **Modules (`modules/`)**: research algorithms (e.g., TVMC, ARAP-based tracking)
+- **Benchmarks (`benchmarks/`)**: paper-reproducible evaluations
+- **Apps (`apps/`)**: end-to-end pipelines and demos
+- **Bindings (`cpp/`, `python/`)**: performance-critical + research-friendly APIs
+
+---
+
+
 ## Why Open4D?
 
 Today, 4D geometry pipelines are fragmented:
@@ -30,23 +46,9 @@ The goal is to let research **compound**, not reset with every paper.
 
 ---
 
-## Ecosystem Overview
-
-<p align="center">
-  <img src="docs/assets/open4d_ecosystem.png" width="90%">
-</p>
-
-**Open4D ecosystem layers:**
-- **Core (`open4d/`)**: canonical 4D data models, IO, metrics
-- **Modules (`modules/`)**: research algorithms (e.g., TVMC, ARAP-based tracking)
-- **Benchmarks (`benchmarks/`)**: paper-reproducible evaluations
-- **Apps (`apps/`)**: end-to-end pipelines and demos
-- **Bindings (`cpp/`, `python/`)**: performance-critical + research-friendly APIs
-
----
-
 ## Repository Structure
 
+```
 Open4D/
 ├── open4d/ # Core public API (stable)
 │ ├── core/ # 4D data structures
@@ -64,7 +66,7 @@ Open4D/
 ├── tests/ # Unit + integration tests
 ├── docs/ # Documentation and figures
 └── docker/ # Reproducible environments
-
+```
 
 ---
 
