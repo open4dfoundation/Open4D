@@ -14,7 +14,7 @@ constraints.
 ## Ecosystem Overview
 
 <p align="center">
-  <img src="docs/assets/open4d_ecosystem.pdf" width="90%">
+  <img src="docs/assets/open4d_ecosystem.png" width="90%">
 </p>
 
 **Open4D ecosystem layers:**
