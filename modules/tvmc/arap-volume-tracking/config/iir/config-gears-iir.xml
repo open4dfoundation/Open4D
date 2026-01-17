@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<Config xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <mode>process IIR</mode>
+  <firstIndex>0</firstIndex>
+  <lastIndex>100</lastIndex>
+  <inDir>data\gears</inDir>
+  <fileNamePrefix>mesh_0</fileNamePrefix>
+  <outDir>data\gears-output-iir</outDir>
+  <volumeGridResolution>512</volumeGridResolution>
+  <pointCount>2000</pointCount>
+  <gradientThreshold>0.0001</gradientThreshold>
+  <smoothSigma>0.1816</smoothSigma>
+  <smoothSigma2>0.0077593</smoothSigma2>
+  <falloffStrength>0.05</falloffStrength>
+  <applySmooth>1</applySmooth>
+  <applyLloyd>1</applyLloyd>
+</Config>

@@ -1,14 +1,130 @@
 # Open4D
 
-Open4D is an open platform for **4D dynamic geometry**—including representation,
-compression, processing, evaluation, and streaming of time-varying 3D data.
+**Open4D** is an open, research-driven platform for **4D dynamic geometry** —
+the representation, compression, processing, evaluation, and streaming of
+time-varying 3D data.
 
-The goal of Open4D is to provide a shared foundation for XR, robotics,
-teleoperation, digital twins, and autonomous systems.
+It is designed as shared infrastructure for **XR systems, robotics,
+teleoperation, digital twins, and autonomous systems**, where geometry evolves
+over time and must be processed under tight latency, bandwidth, and accuracy
+constraints.
 
-## Structure
-- `open4d/`   : Core data structures, IO, and metrics (stable public API)
-- `modules/`  : Algorithms and research systems (e.g., TVMC)
-- `apps/`     : End-to-end pipelines and demos
-- `benchmarks/`: Reproducible evaluations and paper artifacts
-- `examples/`: Minimal usage snippets
+---
+
+## Why Open4D?
+
+Today, 4D geometry pipelines are fragmented:
+- algorithms live in paper-specific codebases,
+- evaluation scripts are ad hoc,
+- datasets and metrics are inconsistent,
+- systems integration is repeatedly re-implemented.
+
+Open4D provides a **common substrate**:
+- stable 4D data abstractions,
+- reusable IO and metrics,
+- modular research algorithms,
+- reproducible benchmarks,
+- end-to-end system pipelines.
+
+The goal is to let research **compound**, not reset with every paper.
+
+---
+
+## Ecosystem Overview
+
+<p align="center">
+  <img src="docs/assets/open4d_ecosystem.png" width="90%">
+</p>
+
+**Open4D ecosystem layers:**
+- **Core (`open4d/`)**: canonical 4D data models, IO, metrics
+- **Modules (`modules/`)**: research algorithms (e.g., TVMC, ARAP-based tracking)
+- **Benchmarks (`benchmarks/`)**: paper-reproducible evaluations
+- **Apps (`apps/`)**: end-to-end pipelines and demos
+- **Bindings (`cpp/`, `python/`)**: performance-critical + research-friendly APIs
+
+---
+
+## Repository Structure
+
+Open4D/
+├── open4d/ # Core public API (stable)
+│ ├── core/ # 4D data structures
+│ ├── io/ # Readers / writers
+│ ├── metrics/ # Quality + temporal metrics
+│ └── utils/
+├── modules/ # Research systems and algorithms
+│ ├── tvmc/
+│ ├── arap_volume_tracking/
+│ └── tvm_editing/
+├── benchmarks/ # Reproducible experiments
+├── apps/ # End-to-end pipelines
+├── examples/ # Minimal usage examples
+├── cpp/ # C++ core + bindings
+├── tests/ # Unit + integration tests
+├── docs/ # Documentation and figures
+└── docker/ # Reproducible environments
+
+
+---
+
+## Design Principles
+
+- **4D-first**: time is a first-class signal, not an afterthought
+- **Separation of concerns**: core abstractions vs. research modules
+- **Reproducibility**: benchmarks are explicit and scriptable
+- **Systems-aware**: metrics include bitrate, latency, and temporal stability
+- **Cross-domain**: XR, robotics, and autonomy share the same foundations
+
+---
+
+## Current Modules
+
+- **TVMC** — Time-Varying Mesh Compression  
+- **ARAP Volume Tracking** — deformation-aware temporal alignment  
+- **Temporal Mesh Editing** — structured editing of dynamic geometry  
+
+(Additional modules are expected to evolve independently on top of the core API.)
+
+---
+
+## Installation (Development)
+
+```bash
+git clone https://github.com/open4d/open4d.git
+cd Open4D
+pip install -e .
+```
+
+## Citation
+
+If you use Open4D in academic work, please cite the project:
+
+```bibtex
+@software{open4d,
+  title  = {Open4D: An Open Platform for 4D Dynamic Geometry},
+  author = {Dasari, Mallesham and contributors},
+  year   = {2025}
+} 
+```
+
+## Contributors
+
+Core contributors:
+- **Jason Balayev**
+- **Guodong Chen**
+- **Mallesham Dasari**
+
+Contributions from the broader research and open-source community are welcome.
+
+## Contributing
+
+Open4D is an open research platform. Contributions are welcome in the form of:
+- new modules
+- benchmarks and datasets
+- metrics
+- documentation
+- performance improvements
+
+See `CONTRIBUTING.md` for guidelines.
+

@@ -1,0 +1,61 @@
+﻿#version 450
+#extension GL_ARB_shader_atomic_counter_ops: enable
+
+layout (local_size_x = 64) in;
+
+layout(std430, binding = 0) buffer ActiveCells
+{
+	ivec4 activeCells[];
+};
+
+layout(std430, binding = 1) readonly buffer Centers
+{
+	uvec4 centers[];
+};
+
+layout(std430, binding=2) coherent buffer CentersNew
+{
+	uvec4 centersNew[];
+};
+
+layout(std430, binding=3) buffer GridCells 
+{
+	vec4 gridCells[];
+};
+
+uniform float maxD = 10000000;
+uniform int dataLength;
+uniform ivec3 gridSize = ivec3(32,32,32);
+uniform int maxgridcenters = 1024;
+uniform int bitshift = 4;
+uniform int iteration = 1;
+
+void main() {
+	uint offset = (gl_GlobalInvocationID.x);
+	if(offset>=dataLength) return;
+	ivec4 cell = activeCells[offset];
+	float minD = maxD;
+	int minI = -1;
+
+	int gridIndex = (((cell.z >> bitshift) * gridSize.y + (cell.y >> bitshift))*gridSize.x + (cell.x >> bitshift)) * maxgridcenters;
+
+    while(gridCells[gridIndex].w==iteration)
+    {
+		int c = int(gridCells[gridIndex].z);
+		vec4 center = centers[c];
+
+		vec3 diff = cell.xyz-center.xyz/center.w;
+		float dist = dot(diff,diff);
+		if(dist<minD) {
+			minD = dist;
+			minI = c;
+		}
+		gridIndex++;
+	}
+	activeCells[offset].w = minI;
+
+	atomicAdd(centersNew[minI].x, cell.x);
+	atomicAdd(centersNew[minI].y, cell.y);
+	atomicAdd(centersNew[minI].z, cell.z);
+	atomicAdd(centersNew[minI].w, 1);
+}

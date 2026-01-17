@@ -1,0 +1,2 @@
+[*.cs]
+file_header_template = \nCopyright (c) 2022,2023 Jan Dvořák, Zuzana Káčereková, Petr Vaněček, Lukáš Hruda, Libor Váša\nLicensed under the MIT License\n
