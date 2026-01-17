@@ -1,20 +1,16 @@
 # Open4D
 
-**Open4D** is an open, research-driven platform for **4D dynamic geometry** —
-the representation, compression, processing, evaluation, and streaming of
-time-varying 3D data.
-
-It is designed as shared infrastructure for **XR systems, robotics,
-teleoperation, digital twins, and autonomous systems**, where geometry evolves
-over time and must be processed under tight latency, bandwidth, and accuracy
-constraints.
+**Open4D** is an open, research-driven platform for the representation, compression, processing, evaluation, and streaming of
+time-varying 4D geometry data. It is designed as shared infrastructure for application domains such as **XR systems, robotics,
+teleoperation, digital twins, and autonomous systems**, where geometry evolves and varies
+over time and must be processed under tight latency, bandwidth, and accuracy constraints.
 
 ---
 
 ## Ecosystem Overview
 
 <p align="center">
-  <img src="docs/assets/open4d_ecosystem.png" width="90%">
+  <img src="docs/assets/open4d-ecosystem.png" width="90%">
 </p>
 
 **Open4D ecosystem layers:**
@@ -104,8 +100,8 @@ If you use Open4D in academic work, please cite the project:
 
 ```bibtex
 @software{open4d,
-  title  = {Open4D: An Open Platform for 4D Dynamic Geometry},
-  author = {Dasari, Mallesham and contributors},
+  title  = {Open4D: An Open-Source Library for 4D Geometry Processing},
+  author = {Chen, Guodong and Dasari, Mallesham},
   year   = {2025}
 } 
 ```
@@ -113,9 +109,9 @@ If you use Open4D in academic work, please cite the project:
 ## Contributors
 
 Core contributors:
-- **Jason Balayev**
-- **Guodong Chen**
-- **Mallesham Dasari**
+- **Jason Balayev (balayev.j@northeastern.edu)**
+- **Guodong Chen (chen.guod@northeastern.edu)**
+- **Mallesham Dasari (m.dasari@northeastern.edu)**
 
 Contributions from the broader research and open-source community are welcome.
 
@@ -128,5 +124,5 @@ Open4D is an open research platform. Contributions are welcome in the form of:
 - documentation
 - performance improvements
 
-See `CONTRIBUTING.md` for guidelines.
+Please reach out if you'd like to contribute!
 
