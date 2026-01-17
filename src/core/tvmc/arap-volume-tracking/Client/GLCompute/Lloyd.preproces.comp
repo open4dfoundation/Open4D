@@ -1,0 +1,55 @@
+﻿#version 450
+#extension GL_ARB_shader_atomic_counter_ops: enable
+
+layout (local_size_x = 64) in;
+
+layout(std430, binding = 0) buffer ActiveGridCells
+{
+	ivec4 activeGridCells[];
+};
+
+layout(std430, binding = 1) readonly buffer Centers
+{
+	uvec4 centers[];
+};
+
+layout(std430, binding=3) buffer GridCells 
+{
+	vec4 gridCells[];
+};
+
+uniform int dataLength;
+uniform int centersCnt = 1000;
+uniform int approxCentersCount;
+uniform int iteration = 1;
+uniform int gridsize;
+uniform int cellsize;
+uniform int diag = 0;
+
+void main() {
+	uint offset = (gl_GlobalInvocationID.x);
+	if(offset>=dataLength) return;
+
+	ivec3 cell = (activeGridCells[offset].xyz);
+	int index = (((cell.z * gridsize + cell.y)*gridsize + cell.x) * approxCentersCount);
+	vec3 cellCenter = vec3(cell.x*cellsize + cellsize/2, cell.y*cellsize + cellsize/2, cell.z*cellsize + cellsize/2);
+
+	float Rmin = 1./0.;
+
+	int c;
+	for(c=0; c<centersCnt; c++) {
+		vec3 dist = centers[c].xyz/centers[c].w - cellCenter;
+		float R = dot(dist,dist);
+		Rmin = min(R,Rmin);
+		if(R>Rmin + diag) continue;
+		float Rdiag = R+diag;
+		int offset = index;
+		while(true) {
+			if(gridCells[offset].w!=iteration || Rdiag<gridCells[offset].x) {
+				gridCells[offset] = vec4(R,0,c,iteration);
+				break;
+			}
+			offset++;
+		}
+	}
+}

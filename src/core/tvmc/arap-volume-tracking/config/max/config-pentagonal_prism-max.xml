@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<Config xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <firstIndex>0</firstIndex>
+  <lastIndex>49</lastIndex>
+  <inDir>data\pentagonal_prism</inDir>
+  <fileNamePrefix>mesh_000</fileNamePrefix>
+  <outDir>data\pentagonal_prism-output</outDir>
+  <volumeGridResolution>512</volumeGridResolution>
+  <pointCount>2000</pointCount>
+  <gradientThreshold>0.0001</gradientThreshold>
+  <smoothSigma>0.125</smoothSigma>
+  <smoothSigma2>0.125</smoothSigma2>
+  <falloffStrength>0.05</falloffStrength>
+  <applySmooth>1</applySmooth>
+  <applyLloyd>1</applyLloyd>
+</Config>

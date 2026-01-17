@@ -1,348 +1,128 @@
-# **TVMC: Time-Varying Mesh Compression Using Volume-Tracked Reference Meshes**
+# Open4D
 
-Guodong Chen, Filip Hácha, Libor Váša, Mallesham Dasari
-
-![alt text](https://github.com/frozzzen3/TVMC/blob/main/images/TVMC-workflow.png?raw=true)
-
-This repository contains the official authors implementation associated with the paper **"TVMC: Time-Varying Mesh Compression Using Volume-Tracked Reference Meshes"**, which can be found [here](https://github.com/frozzzen3/TVMC/blob/main/files/TVMC_accepted.pdf), accepted by [2025 ACM MMSys](https://2025.acmmmsys.org/).
-
-## BibTex
-
-```
-@inproceedings{Chen2025TVMC,
-  author    = {Chen, Guodong and H{\'a}cha, Filip and V{\'a}{\v{s}}a, Libor and Dasari, Mallesham},
-  title     = {TVMC: Time-Varying Mesh Compression Using Volume-Tracked Reference Meshes},
-  booktitle = {ACM Multimedia Systems Conference 2025 (MMSys '25)},
-  year      = {2025},
-  address   = {Stellenbosch, South Africa},
-  doi       = {10.1145/3712676.3714440}
-}
-```
-
-## System Requirements
-
-- **Operating System:** Windows 11 or Ubuntu 20.04
-- **Python:** 3.8
-- Dependencies:
-  - `numpy`
-  - `open3d==0.18.0`
-  - `scikit-learn`
-  - `scipy`
-  - `trimesh==4.1.0`
-
-Clone this project:
-
-```
-git clone https://github.com/SINRG-Lab/TVMC.git
-```
-
-## Running with Docker
-
-Follow these steps to build and run the Docker image:
-
-### Step 1: Build the Docker Image
-
-To begin, build the Docker image from the provided Dockerfile:
-
-```
-docker build -t tvmc-linux .
-```
-
-### Step 2: Run the Docker Image
-
-After building the image, run the Docker container with the following command:
-
-```
-docker run --rm -it tvmc-linux
-```
-
-### Step 3: Run the Pipeline Script
-
-Once inside the Docker container, grant execute permissions to the `run_pipeline.sh` script and execute it:
-
-```
-conda activate open3d_env
-chmod +x run_pipeline.sh
-sudo ./run_pipeline.sh
-```
-
-The pipeline will start, and the required tasks will be executed sequentially.
-
-
+**Open4D** is an open, research-driven platform for the representation, compression, processing, evaluation, and streaming of
+time-varying 4D geometry data. It is designed as shared infrastructure for application domains such as **XR systems, robotics,
+teleoperation, digital twins, and autonomous systems**, where geometry evolves and varies
+over time and must be processed under tight latency, bandwidth, and accuracy constraints.
 
 ---
 
-## Running TVMC on Your Own Machine
+## Ecosystem Overview
 
-If you want to run TVMC on your own machine using your own dataset, here’s how you can set it up. We've tested this on Windows 11 and Ubuntu 20.04.
+<p align="center">
+  <img src="docs/assets/open4d-ecosystem.png" width="90%">
+</p>
 
-(Provide the detailed steps here for running the pipeline outside of Docker)
+**Open4D ecosystem layers:**
+- **Core (`open4d/`)**: canonical 4D data models, IO, metrics
+- **Modules (`modules/`)**: research algorithms (e.g., TVMC, ARAP-based tracking)
+- **Benchmarks (`benchmarks/`)**: paper-reproducible evaluations
+- **Apps (`apps/`)**: end-to-end pipelines and demos
+- **Bindings (`cpp/`, `python/`)**: performance-critical + research-friendly APIs
 
-## Step 0:
-
-Install .Net 7.0
-
-For Linux:
-
-```
-wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
-sudo dpkg -i packages-microsoft-prod.deb
-rm packages-microsoft-prod.deb
-sudo apt-get update && \  sudo apt-get install -y dotnet-sdk-7.0
-sudo apt-get update && \  sudo apt-get install -y aspnetcore-runtime-7.0
-```
-
-```
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh
-
-conda create -n open3d_env python==3.8 numpy open3d==0.18.0 scikit-learn scipy trimesh==4.1.0 -c conda-forge
-echo 'export PATH="$HOME/miniconda3/bin:$PATH"' 
-
-~/.bashrc source ~/.bashrc
-conda init
-source ~/.bashrc
-conda activate open3d_env
-```
+---
 
 
+## Why Open4D?
 
-For windows you can use Visual Studio to install .NET 7.0 and anaconda to create python environment.
+Today, 4D geometry pipelines are fragmented:
+- algorithms live in paper-specific codebases,
+- evaluation scripts are ad hoc,
+- datasets and metrics are inconsistent,
+- systems integration is repeatedly re-implemented.
 
+Open4D provides a **common substrate**:
+- stable 4D data abstractions,
+- reusable IO and metrics,
+- modular research algorithms,
+- reproducible benchmarks,
+- end-to-end system pipelines.
 
+The goal is to let research **compound**, not reset with every paper.
 
-## Step 1: As-Rigid-As-Possible (ARAP) Volume Tracking
+---
 
-ARAP volume tracking is written in C# and .NET 7.0
-
-Navigate to the root directory:
+## Repository Structure
 
 ```
-cd ./arap-volume-tracking
+Open4D/
+├── open4d/ # Core public API (stable)
+│ ├── core/ # 4D data structures
+│ ├── io/ # Readers / writers
+│ ├── metrics/ # Quality + temporal metrics
+│ └── utils/
+├── modules/ # Research systems and algorithms
+│ ├── tvmc/
+│ ├── arap_volume_tracking/
+│ └── tvm_editing/
+├── benchmarks/ # Reproducible experiments
+├── apps/ # End-to-end pipelines
+├── examples/ # Minimal usage examples
+├── cpp/ # C++ core + bindings
+├── tests/ # Unit + integration tests
+├── docs/ # Documentation and figures
+└── docker/ # Reproducible environments
 ```
 
-Build the project:
+---
 
-```
-dotnet build -c release
-```
+## Design Principles
 
-Run the tracking process:
+- **4D-first**: time is a first-class signal, not an afterthought
+- **Separation of concerns**: core abstractions vs. research modules
+- **Reproducibility**: benchmarks are explicit and scriptable
+- **Systems-aware**: metrics include bitrate, latency, and temporal stability
+- **Cross-domain**: XR, robotics, and autonomy share the same foundations
 
-```
-dotnet ./bin/Client.dll ./config/max/config-basketball-max.xml
-```
+---
 
-Volume tracking results are saved in the `<outDir>` folder:
+## Current Modules
 
-- `.xyz` files: coordinates of volume centers
-- `.txt` files: transformations of centers between frames
+- **TVMC** — Time-Varying Mesh Compression  
+- **ARAP Volume Tracking** — deformation-aware temporal alignment  
+- **Temporal Mesh Editing** — structured editing of dynamic geometry  
 
-### Global Optimization (Optional)
+(Additional modules are expected to evolve independently on top of the core API.)
 
-Global optimization refines volume centers by removing abnormal volume centers and adjusting positions for the remains to reduce distortions. 
+---
 
-```
-dotnet ./bin/Client.dll ./config/impr/config-basketball-impr.xml
-```
+## Installation (Development)
 
-Results are stored in `<outDir>/impr`.
-
-Additional time-varying mesh sequences are available in `./arap-volume-tracking/data`. Configuration files are in `./arap-volume-tracking/config`. Different tracking modes (`./iir`, `./impr`, `./max`) use distinct configurations. More details [here](https://github.com/frozzzen3/TVMC/blob/main/arap-volume-tracking/README.md).
-
-To run ARAP volume tracking on a custom dataset:
-
-```
-dotnet ./bin/Client.dll <config_file.xml>
+```bash
+git clone https://github.com/open4d/open4d.git
+cd Open4D
+pip install -e .
 ```
 
-## Step 2: Generate Reference Centers Using Multi-Dimensional Scaling (MDS)
+## Citation
 
-Navigate to TVMC root:
+If you use Open4D in academic work, please cite the project:
 
-```
-cd ../TVMC
-```
-
-Run the MDS script:
-
-```
-python ./get_reference_center.py --dataset basketball_player --num_frames 10 --num_centers 1995 --centers_dir ../arap-volume-tracking/data/basketball-output-max-2000/impr
+```bibtex
+@software{open4d,
+  title  = {Open4D: An Open-Source Library for 4D Geometry Processing},
+  author = {Chen, Guodong and Dasari, Mallesham},
+  year   = {2025}
+} 
 ```
 
-The number of centers (`--num_centers`) must match the global optimization results. Output is stored in `./arap-volume-tracking/data/basketball-output-max-2000/impr/reference/reference_centers_aligned.xyz`.
+## Contributors
 
-If the number of volume centers is large, experiment with different `random_state` values for better results.
+Core contributors:
+- **Jason Balayev (balayev.j@northeastern.edu)**
+- **Guodong Chen (chen.guod@northeastern.edu)**
+- **Mallesham Dasari (m.dasari@northeastern.edu)**
 
-## Step 3: Compute Transformation Dual Quaternions
+Contributions from the broader research and open-source community are welcome.
 
-Then, we compute the transformations for each center, mapping their original positions to the reference space, along with their inverses. These transformations are then used to deform the mesh surface based on the movement of volume centers.
+## Contributing
 
-```
-python ./get_transformation.py --dataset basketball_player --num_frames 10 --num_centers 1995 --centers_dir ../arap-volume-tracking/data/basketball-output-max-2000/impr --firstIndex 11 --lastIndex 20
-```
+Open4D is an open research platform. Contributions are welcome in the form of:
+- new modules
+- benchmarks and datasets
+- metrics
+- documentation
+- performance improvements
 
-## Step 4: Create Volume-Tracked, Self-Contact-Free Reference Mesh
+Please reach out if you'd like to contribute!
 
-For Linux, switch to .NET 5.0.
-
-```
-sudo apt-get install -y dotnet-sdk-5.0
-sudo apt-get install -y aspnetcore-runtime-5.0
-```
-
-Navigate to the `tvm-editing` directory and build:
-
-```
-cd ../tvm-editing
-dotnet new globaljson --sdk-version 5.0.408 
-dotnet build TVMEditor.sln --configuration Release --no-incremental
-```
-
-(For Windows the writer used .NET 8.0 and there is no need to install .NET 5.0 and run `dotnet new globaljson --sdk-version 5.0.408 `. If you encounter error regarding .NET version, try to install the correct version on your machine.)
-
-Run the mesh deformation:
-
-for Windows:
-
-```
-TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test.exe basketball 1 11 20 "./TVMEditor.Test/bin/Release/net5.0/Data/basketball_player_1995/" "./TVMEditor.Test/bin/Release/net5.0/output/basketball_player_1995/"
-```
-
-for Linux:
-
-```
-TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test basketball 1 11 20 "./TVMEditor.Test/bin/Release/net5.0/Data/basketball_player_1995/" "./TVMEditor.Test/bin/Release/net5.0/output/basketball_player_1995/"
-```
-
-Navigate to TVMC root again:
-
-```
-cd ../TVMC
-```
-
-Extract the reference mesh:
-
-```
-python ./extract_reference_mesh.py --dataset basketball_player --num_frames 10 --num_centers 1995 --inputDir ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/basketball_player_1995/output/ --outputDir ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/basketball_player_1995/reference_mesh/ --firstIndex 11 --lastIndex 20 --key 9
-```
-
-## Step 5: Deform Reference Mesh to Each Mesh in the Group
-
-Navigate to the `tvm-editing` directory,
-
-```
-cd ../tvm-editing
-```
-
-Then run:
-
-```
-TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test.exe basketball 2 11 20 "./TVMEditor.Test/bin/Release/net5.0/Data/basketball_player_1995" "./TVMEditor.Test/bin/Release/net5.0/output/basketball_player_1995/"
-```
-
-For Linux:
-
-```
-TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test basketball 2 11 20 "./TVMEditor.Test/bin/Release/net5.0/Data/basketball_player_1995" "./TVMEditor.Test/bin/Release/net5.0/output/basketball_player_1995/"
-```
-
-
-
-## Step 6: Compute Displacement Fields
-
-Navigate to ./TVMC again:
-
-```
-cd ../TVMC
-```
-
-```
-python ./get_displacements.py --dataset basketball_player --num_frames 10 --num_centers 1995 --target_mesh_path ../arap-volume-tracking/data/basketball_player --firstIndex 11 --lastIndex 20
-```
-
-The displacement fields are stored as `.ply` files. For compression, Draco is used to encode both the reference mesh and displacements.
-
-
-
-Tips: So far, we've got everything we need for a group of time-varying mesh compression (A self-contact-free reference mesh and displacement fields). You can use any other compression methods to deal with them. For example, you may use video coding to compress displacements to get even better compression performance.
-
-## Step 7: Compression and Evaluation
-
-Navigate to TVMC root:
-
-```
-cd ..
-```
-
-Clone and build Draco:
-
-```
-git clone https://github.com/google/draco.git
-cd ./draco
-mkdir build
-cd build
-```
-
-On Windows:
-
-```
-cmake ../ -G "Visual Studio 17 2022" -A x64
-cmake --build . --config Release
-```
-
-On Linux:
-
-```
-cmake ../
-make
-```
-
-Draco paths (please change based on your project):
-
-- Encoder: `./draco/build/Release/draco_encoder.exe` / `./draco/build/draco_encoder` 
-- Decoder: `./draco/build/Release/draco_decoder.exe` / `./draco/build/draco_decoder` 
-
-Navigate to TVMC:
-
-```
-cd ../../TVMC
-```
-
-Run the evaluation:
-
-```
-python ./evaluation.py --dataset basketball_player --num_frames 10 --num_centers 1995 --firstIndex 11 --lastIndex 20 --fileNamePrefix basketball_player_fr0 --encoderPath ../draco/build/Release/draco_encoder.exe --decoderPath ../draco/build/Release/draco_decoder.exe --qp 10 --outputPath ./basketball_player_outputs
-```
-
-For Linux:
-
-```
-python ./evaluation.py --dataset basketball_player --num_frames 10 --num_centers 1995 --firstIndex 11 --lastIndex 20 --fileNamePrefix basketball_player_fr0 --encoderPath ../draco/build/draco_encoder --decoderPath ../draco/build/draco_decoder --qp 10 --outputPath ./basketball_player_outputs
-```
-
-
-
-## Generate figures
-
-We provide scripts to generate the figures presented in the paper based on the collected results.
-
-- **If you have went through above steps for all four datasets**, execute:
-
-  ```
-  python ./objective_results_all.py
-  ```
-
-  This script uses the newly generated results to produce Rate-Distortion (RD) performance and Cumulative Distribution Function (CDF) figures.
-
-  (in the Docker image you may need to store generated figures locally using `docker cp`)
-
-- **If you followed the recommended commands above** (which generate results only for the *Basketball Player* dataset), 
-
-  ```
-  python ./objective_results_basic.py
-  ```
-
-  This version primarily uses mostly the original data from the paper to replicate the key figures.
-
-This provides a straightforward way to replicate the results.

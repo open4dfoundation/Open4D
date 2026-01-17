@@ -1,0 +1,33 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.33027.164
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation", "Documentation", "{24872BBA-C832-4B1B-A90E-A3583BA0BBB8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TVMEditor", "TVMEditor\TVMEditor.csproj", "{F05686B8-05FA-4BED-A1FA-E5F461524B2D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TVMEditor.Test", "TVMEditor.Test\TVMEditor.Test.csproj", "{2CB29130-041E-40A9-AFBA-64A05FC19AEC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F05686B8-05FA-4BED-A1FA-E5F461524B2D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F05686B8-05FA-4BED-A1FA-E5F461524B2D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F05686B8-05FA-4BED-A1FA-E5F461524B2D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F05686B8-05FA-4BED-A1FA-E5F461524B2D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2CB29130-041E-40A9-AFBA-64A05FC19AEC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2CB29130-041E-40A9-AFBA-64A05FC19AEC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2CB29130-041E-40A9-AFBA-64A05FC19AEC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2CB29130-041E-40A9-AFBA-64A05FC19AEC}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {75899761-FB01-4097-9504-2033AB2B6DDD}
+	EndGlobalSection
+EndGlobal

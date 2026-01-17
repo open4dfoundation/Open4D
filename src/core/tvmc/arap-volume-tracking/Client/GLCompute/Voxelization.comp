@@ -1,0 +1,30 @@
+﻿#version 430
+
+layout (local_size_x = 32, local_size_y = 32) in;
+
+layout(std430, binding = 0) buffer ZBuffer
+{
+    uint data[];
+};
+uniform ivec3 volumeDim;
+
+
+void main() {
+	// set voxel history to outside
+	uint fill = 0xffffffff;
+	uint offset = (gl_GlobalInvocationID.x * volumeDim.y + gl_GlobalInvocationID.y) * volumeDim.z;
+	for(uint i=0; i<volumeDim.z; i++) {
+		uint dato = data[offset+i];
+		// get front facing fragments
+		uint datoi = dato & 0xffff;
+		// get back facing fragments
+		uint datoo = dato >> 16;
+		// if any intersection, set voxel history to inside
+		if(dato>0) fill = 0;
+		// set the voxel to voxel history value
+		data[offset+i] = fill;
+
+		// if backfacing fragment is further than frontfacing fragment, set voxel history to outside
+		if(dato>0 && datoo>=datoi) fill = 0xffffffff;
+	}
+}

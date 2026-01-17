@@ -1,0 +1,10 @@
+[project]
+name = "open4d"
+version = "0.1.0"
+description = "Open platform for 4D dynamic geometry"
+authors = [{ name = "SINRG Lab" }]
+dependencies = []
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

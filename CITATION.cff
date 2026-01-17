@@ -1,0 +1,6 @@
+cff-version: 1.2.0
+title: Open4D
+message: "If you use Open4D in your research, please cite it."
+authors:
+  - name: Mallesham Dasari
+    affiliation: Northeastern University

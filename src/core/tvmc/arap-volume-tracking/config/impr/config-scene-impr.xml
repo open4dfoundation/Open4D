@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<Config xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <mode>improvement</mode>
+  <firstIndex>1</firstIndex>
+  <lastIndex>7</lastIndex>
+  <inDir>data\scene</inDir>
+  <fileNamePrefix>dynamic_mesh_0</fileNamePrefix>
+  <outDir>data\scene-max-4000</outDir>
+  <volumeGridResolution>512</volumeGridResolution>
+  <pointCount>4000</pointCount>
+  <gradientThreshold>0.0001</gradientThreshold>
+  <smoothSigma>0.125</smoothSigma>
+  <smoothSigma2>0.03</smoothSigma2>
+  <applySmooth>1</applySmooth>
+  <applyLloyd>0.5</applyLloyd>
+  <filterCount>5</filterCount>
+  <numberOfImprovements>2</numberOfImprovements>
+  <maxIt>30</maxIt>
+</Config>

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<Config xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <mode>improvement</mode>
+  <firstIndex>11</firstIndex>
+  <lastIndex>20</lastIndex>
+  <inDir>data/basketball_player</inDir>
+  <fileNamePrefix>basketball_player_fr0</fileNamePrefix>
+  <outDir>data/basketball-output-max-2000</outDir>
+  <volumeGridResolution>512</volumeGridResolution>
+  <pointCount>2000</pointCount>
+  <gradientThreshold>0.0001</gradientThreshold>
+  <smoothSigma>0.125</smoothSigma>
+  <smoothSigma2>0.03</smoothSigma2>
+  <applySmooth>1</applySmooth>
+  <applyLloyd>0.5</applyLloyd>
+  <filterCount>5</filterCount>
+  <numberOfImprovements>1</numberOfImprovements>
+  <maxIt>30</maxIt>
+</Config>
