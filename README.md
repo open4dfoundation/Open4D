@@ -79,6 +79,7 @@ Open4D/
 ## Current Modules
 
 - **TVMC** — Time-Varying Mesh Compression  
+- **Unity Decoder Plugin** - a 4D mesh decoder plugin for Unity that can run on XR headsets like Meta Quest3
 - **ARAP Volume Tracking** — deformation-aware temporal alignment  
 - **Temporal Mesh Editing** — structured editing of dynamic geometry  
 
