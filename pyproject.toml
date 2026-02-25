@@ -1,10 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "open4d"
 version = "0.1.0"
-description = "Open platform for 4D dynamic geometry"
-authors = [{ name = "SINRG Lab" }]
-dependencies = []
+dependencies = ["numpy"]
 
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["open4d*"]
+exclude = ["data*", "apps*", "cmake*", "docker*", "pc_frames*"]
