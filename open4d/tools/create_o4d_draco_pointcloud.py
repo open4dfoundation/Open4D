@@ -126,6 +126,7 @@ def import_pointcloud_folder_to_o4d_draco(
         meta=meta_out,
     ) as writer:
         for i, fname in enumerate(files):
+            print (fname)
             path = os.path.join(input_dir, fname)
             ext = os.path.splitext(fname)[1].lower()
 
@@ -160,6 +161,8 @@ def import_pointcloud_folder_to_o4d_draco(
             ts = (i / fps) if (fps is not None and fps > 0) else float(i)
             writer.write_keyframe(points, colors_rgb=colors, timestamp=ts, frame_index=i)
             frames_written += 1
+            if frames_written > 10:
+                return frames_written
 
     return frames_written
 
