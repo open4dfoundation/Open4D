@@ -1,0 +1,3 @@
+[submodule "open4d/core/tsmc"]
+	path = open4d/core/tsmc
+	url = https://github.com/SINRG-Lab/TSMC.git
