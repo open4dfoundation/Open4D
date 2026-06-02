@@ -78,6 +78,7 @@ Open4D/
 
 ## Current Modules
 
+- **N4MC** — Neural Time-varying Mesh Compression
 - **TSMC** — Time-Varying 4D Scene Mesh Compression  
 - **TVMC** — Time-Varying Mesh Compression  
 - **Unity Decoder Plugin** - a 4D mesh decoder plugin for Unity that can run on XR headsets like Meta Quest3
