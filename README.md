@@ -14,11 +14,11 @@ over time and must be processed under tight latency, bandwidth, and accuracy con
 </p>
 
 **Open4D ecosystem layers:**
-- **Core (`open4d/`)**: canonical 4D data models, IO, metrics
-- **Modules (`modules/`)**: research algorithms (e.g., TVMC, ARAP-based tracking)
-- **Benchmarks (`benchmarks/`)**: paper-reproducible evaluations
-- **Apps (`apps/`)**: end-to-end pipelines and demos
-- **Bindings (`cpp/`, `python/`)**: performance-critical + research-friendly APIs
+- **Core (`open4d/`)**: Canonical 4D data models, IO, metrics
+- **Modules (`modules/`)**: Research algorithms (e.g., TVMC, ARAP-based tracking)
+- **Benchmarks (`benchmarks/`)**: Paper-reproducible evaluation code, including Open4D methods, reimplemented baselines, configs, metrics, and scripts.
+- **Apps (`apps/`)**: End-to-end pipelines and demos
+- **Bindings (`cpp/`, `python/`)**: Performance-critical + research-friendly APIs
 
 ---
 
