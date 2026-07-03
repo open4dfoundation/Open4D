@@ -97,27 +97,6 @@ cd Open4D
 pip install -e .
 ```
 
-## Citation
-
-If you use Open4D in academic work, please cite the project:
-
-```bibtex
-@software{open4d,
-  title  = {Open4D: An Open-Source Library for 4D Geometry Processing},
-  author = {Chen, Guodong and Dasari, Mallesham},
-  year   = {2025}
-} 
-```
-
-## Contributors
-
-Core contributors:
-- **Jason Balayev (balayev.j@northeastern.edu)**
-- **Guodong Chen (chen.guod@northeastern.edu)**
-- **Mallesham Dasari (m.dasari@northeastern.edu)**
-
-Contributions from the broader research and open-source community are welcome.
-
 ## Contributing
 
 Open4D is an open research platform. Contributions are welcome in the form of:
