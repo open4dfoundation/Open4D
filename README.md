@@ -1,5 +1,4 @@
-# Open4D
-
+# Open4D - Ryan's Fork
 **Open4D** is an open, research-driven platform for the representation, compression, processing, evaluation, and streaming of
 time-varying 4D geometry data. It is designed as shared infrastructure for application domains such as **XR systems, robotics,
 teleoperation, digital twins, and autonomous systems**, where geometry evolves and varies
