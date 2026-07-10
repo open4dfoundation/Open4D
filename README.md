@@ -52,9 +52,10 @@ Open4D/
 │ ├── metrics/ # Quality + temporal metrics
 │ └── utils/
 ├── modules/ # Research systems and algorithms
-│ ├── tvmc/
-│ ├── arap_volume_tracking/
-│ └── tvm_editing/
+│ ├── N4MC/
+│ ├── tsmc/
+│ ├── tsmc/
+│ └── unity_decoder/
 ├── benchmarks/ # Reproducible experiments
 ├── apps/ # End-to-end pipelines
 ├── examples/ # Minimal usage examples
@@ -82,10 +83,11 @@ Open4D/
 - **TSMC** — Time-Varying 4D Scene Mesh Compression  
 - **TVMC** — Time-Varying Mesh Compression  
 - **Unity Decoder Plugin** - a 4D mesh decoder plugin for Unity that can run on XR headsets like Meta Quest3
+
+## Future Modules (Additional modules are expected to evolve independently on top of the core API.)
 - **ARAP Volume Tracking** — deformation-aware temporal alignment  
 - **Temporal Mesh Editing** — structured editing of dynamic geometry  
 
-(Additional modules are expected to evolve independently on top of the core API.)
 
 ---
 
