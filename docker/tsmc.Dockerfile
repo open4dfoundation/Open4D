@@ -4,5 +4,5 @@ COPY --from=mcr.microsoft.com/dotnet/runtime:5.0 /usr/share/dotnet/shared
 RUN apt-get update && apt-get install -y python3 python3-pip cmake build-essential
 COPY modules/tsmc /opt/tsmc
 WORKDIR /opt/tsmc
-RUN pip3 install -r requirements.txt   # or conda env create -f environment.yml
+conda env create -f environment.yml
 ENTRYPOINT ["./run.sh"]
