@@ -54,7 +54,7 @@ Open4D/
 ├── modules/ # Research systems and algorithms
 │ ├── N4MC/
 │ ├── tsmc/
-│ ├── tsmc/
+│ ├── tvmc/
 │ └── unity_decoder/
 ├── benchmarks/ # Reproducible experiments
 ├── apps/ # End-to-end pipelines
