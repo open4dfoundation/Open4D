@@ -1,0 +1,22 @@
+# Created by Open3D 
+# object name: frame_0006
+newmtl frame_0006_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd frame_0006_0.png
+newmtl frame_0006_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd frame_0006_1.png
+newmtl frame_0006_2
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd frame_0006_2.png
+newmtl frame_0006_3
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd frame_0006_3.png
