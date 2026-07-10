@@ -7,6 +7,12 @@ name = "open4d"
 version = "0.1.0"
 dependencies = ["numpy"]
 
+[project.optional-dependencies]
+tools  = ["trimesh"]
+draco  = ["DracoPy"]
+player = ["PyQt6", "pyqtgraph", "PyOpenGL"]
+all    = ["trimesh", "DracoPy", "PyQt6", "pyqtgraph", "PyOpenGL"]
+
 [tool.setuptools]
 include-package-data = false
 

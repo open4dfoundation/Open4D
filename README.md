@@ -97,6 +97,8 @@ Open4D/
 git clone https://github.com/open4d/open4d.git
 cd Open4D
 pip install -e .
+pip install -e ".[player]" # for visualization
+pip install -e ".[all]" # everything
 ```
 
 ## Contributing
