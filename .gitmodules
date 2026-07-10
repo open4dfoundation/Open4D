@@ -1,6 +1,6 @@
-[submodule "open4d/core/tsmc"]
-	path = open4d/core/tsmc
-	url = https://github.com/SINRG-Lab/TSMC.git
-[submodule "open4d/core/N4MC"]
-	path = open4d/core/N4MC
+[submodule "open4d/modules/N4MC"]
+	path = open4d/modules/N4MC
 	url = https://github.com/frozzzen3/N4MC.git
+[submodule "open4d/modules/tsmc"]
+	path = open4d/modules/tsmc
+	url = https://github.com/SINRG-Lab/TSMC.git
