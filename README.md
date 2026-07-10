@@ -94,7 +94,7 @@ Open4D/
 ## Installation (Development)
 
 ```bash
-git clone https://github.com/open4d/open4d.git
+git clone https://github.com/SINRG-Lab/Open4D.git
 cd Open4D
 pip install -e .
 pip install -e ".[player]" # for visualization
