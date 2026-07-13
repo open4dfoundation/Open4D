@@ -1,6 +1,11 @@
-# TVMC Quick Start — Homebrew macOS
+# TVMC Quick Start
 
-## 1. Install dependencies
+TVMC supports Homebrew macOS and Ubuntu Linux. It requires Python 3.8–3.11,
+CMake, Git, and the .NET 10 SDK.
+
+## 1. Install system dependencies
+
+### Homebrew macOS
 
 Install [Homebrew](https://brew.sh/) if it is not already available, then run:
 
@@ -17,7 +22,37 @@ dotnet --version
 cmake --version
 ```
 
-TVMC requires Python 3.8–3.11 and the .NET 10 SDK.
+### Ubuntu Linux
+
+Ubuntu 22.04 includes Python 3.10, which is supported by TVMC. Install the
+system packages:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential cmake git curl \
+  python3 python3-venv \
+  libgl1 libglib2.0-0
+```
+
+Install the .NET 10 SDK for your user account:
+
+```bash
+curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+bash /tmp/dotnet-install.sh --channel 10.0
+
+export DOTNET_ROOT="$HOME/.dotnet"
+export PATH="$DOTNET_ROOT:$PATH"
+```
+
+Add the two `export` lines to `~/.bashrc` to make them available in future
+shells, then verify the required tools:
+
+```bash
+python3 --version
+dotnet --version
+cmake --version
+```
 
 ## 2. Enter the TVMC directory
 
