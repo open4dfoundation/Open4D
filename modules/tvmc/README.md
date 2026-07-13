@@ -31,16 +31,7 @@ From the Open4D repository root:
 cd modules/tvmc
 ```
 
-## 3. Restore the basketball sample data
-
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-git -C "$REPO_ROOT" archive 9a74ee4 \
-  modules/tvmc/arap-volume-tracking/data/basketball_player \
-  | tar -x -C "$REPO_ROOT"
-```
-
-## 4. Set up TVMC
+## 3. Set up TVMC
 
 This creates the Python environment and builds the .NET projects and Draco:
 
@@ -48,7 +39,7 @@ This creates the Python environment and builds the .NET projects and Draco:
 ./setup.sh
 ```
 
-## 5. Run the complete pipeline
+## 4. Run the complete pipeline
 
 ```bash
 ./run_pipeline.sh basketball
