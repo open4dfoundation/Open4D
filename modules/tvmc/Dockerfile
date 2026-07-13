@@ -1,67 +1,30 @@
-FROM ubuntu:20.04
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble
 
-# Set noninteractive mode for apt-get
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    TVMC_CONTAINER=1 \
+    DRACO_ENCODER=/opt/draco/build/draco_encoder \
+    DRACO_DECODER=/opt/draco/build/draco_decoder
 
-RUN apt-get update && apt-get install -y --no-install-recommends apt-transport-https ca-certificates
-
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    wget \
-    git \
-    cmake \
-    g++ \
-    build-essential \
-    python3 \
-    python3-pip \
-    python3-venv \
-    sudo \
-    curl \
-    unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git libgl1 libglib2.0-0 libgomp1 python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Install OpenGL dependencies for Open3D
-RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
-    libglib2.0-0
+RUN git clone --depth 1 https://github.com/google/draco.git /opt/draco \
+    && cmake -S /opt/draco -B /opt/draco/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /opt/draco/build --parallel
 
-# Install .NET 7.0 SDK and runtime
-RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
-    && dpkg -i packages-microsoft-prod.deb \
-    && rm packages-microsoft-prod.deb \
-    && apt-get update \
-    && apt-get install -y dotnet-sdk-7.0 aspnetcore-runtime-7.0 \
-    && apt-get install -y dotnet-sdk-5.0 aspnetcore-runtime-5.0
+COPY requirements.txt /tmp/tvmc-requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /tmp/tvmc-requirements.txt
 
-# Install Miniconda
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh \
-    && bash miniconda.sh -b -p /opt/conda \
-    && rm miniconda.sh \
-    && /opt/conda/bin/conda init
+# Cache NuGet packages in the image. The mounted workspace is built quickly at runtime.
+COPY arap-volume-tracking /tmp/tvmc-restore/arap-volume-tracking
+COPY tvm-editing /tmp/tvmc-restore/tvm-editing
+RUN dotnet restore /tmp/tvmc-restore/arap-volume-tracking/Client/Client.csproj -p:NuGetAudit=false \
+    && dotnet restore /tmp/tvmc-restore/tvm-editing/TVMEditor.Test/TVMEditor.Test.csproj -p:NuGetAudit=false \
+    && rm -rf /tmp/tvmc-restore
 
-ENV PATH="/opt/conda/bin:$PATH"
-
-# Create and activate conda environment
-RUN conda create -n open3d_env python=3.8 numpy open3d=0.18.0 scikit-learn scipy matplotlib trimesh=4.1.0 -c conda-forge
-
-# Clone the project
-WORKDIR /app
-RUN git clone https://github.com/SINRG-Lab/TVMC.git
-
-WORKDIR /app/TVMC
-RUN git clone https://github.com/google/draco.git && \
-    cd draco && mkdir build && cd build && \
-    cmake ../ && make -j$(nproc)
-
-# Install additional Python dependencies
-RUN /opt/conda/envs/open3d_env/bin/pip install --upgrade pip && \
-    /opt/conda/envs/open3d_env/bin/pip install numpy scikit-learn scipy trimesh
-
-# Set environment variables
-ENV PATH="/opt/conda/envs/open3d_env/bin:$PATH"
-ENV CONDA_DEFAULT_ENV=open3d_env
-
-# Set working directory
-WORKDIR /app/TVMC
-
-CMD ["/bin/bash"]
+WORKDIR /workspace
+ENTRYPOINT ["/bin/bash", "/workspace/docker-entrypoint.sh"]
+CMD ["basketball"]

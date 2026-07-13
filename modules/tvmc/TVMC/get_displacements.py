@@ -4,6 +4,7 @@ import open3d as o3d
 import numpy as np
 from copy import deepcopy
 import trimesh
+import re
 
 
 def subdivide_surface_fitting(decimated_mesh, target_mesh, iterations=1):
@@ -79,7 +80,15 @@ firstIndex = args.firstIndex
 lastIndex = args.lastIndex
 
 
+re_pattern = re.compile(r'.+?(\d+)\.[a-zA-Z0-9+]+$')
 obj_files = [f for f in os.listdir(target_mesh_path) if f.endswith('.obj')]
+obj_files = sorted(obj_files, key=lambda name: int(re_pattern.match(name).group(1)))
+obj_files = [
+    name for name in obj_files
+    if firstIndex <= int(re_pattern.match(name).group(1)) <= lastIndex
+]
+if len(obj_files) != num_frames:
+    raise ValueError(f"Expected {num_frames} OBJ files in {target_mesh_path}, found {len(obj_files)}")
 i = firstIndex
 for obj_file in obj_files:
     dynamic_deformed = o3d.io.read_triangle_mesh(f'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/deformed_reference_mesh_{i:03}.obj')

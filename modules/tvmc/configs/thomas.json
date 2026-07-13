@@ -1,0 +1,11 @@
+{
+  "dataset": "thomas",
+  "editor_dataset": "thomas",
+  "first_index": 1,
+  "last_index": 10,
+  "num_centers": 2000,
+  "key_frame": 4,
+  "file_prefix": "thomas_fr0",
+  "tracking_config": "config/max/config-thomas-max.xml",
+  "centers_dir": "arap-volume-tracking/data/thomas-output-max-2000"
+}

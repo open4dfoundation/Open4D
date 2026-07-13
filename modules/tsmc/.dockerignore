@@ -1,0 +1,25 @@
+# Rebuilt inside the image
+draco/
+**/bin/
+**/obj/
+.venv/
+venv/
+third_party/
+
+# Generated pipeline outputs
+arap-volume-tracking/output/
+arap-volume-tracking/data/
+tvm-editing/TVMEditor.Test/bin/
+tsmc/output/
+data/*/meshes/dynamic/
+data/*/meshes/static/
+data/*/meshes/gt/
+data/*/masks/
+data/*/render/
+
+# Misc
+.git/
+.idea/
+__pycache__/
+*.pyc
+*.log

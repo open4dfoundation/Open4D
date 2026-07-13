@@ -421,4 +421,16 @@ print("average D1:", np.mean(d1s))
 print("average D2:", np.mean(d2s))
 print("average log10 of mse:", np.mean(mses))
 print("average log10 of rmse:", np.mean(rmses))
-print(json.dumps({"bitrate_mbps": bitrate_mbps, "d2s_mean": np.mean(d2s)}))
+metrics = {
+    "bitrate_mbps": float(bitrate_mbps),
+    "d1_mean": float(np.mean(d1s)),
+    "d2_mean": float(np.mean(d2s)),
+    "log10_mse_mean": float(np.mean(mses)),
+    "log10_rmse_mean": float(np.mean(rmses)),
+    "decoding_time_ms": float(decoding_time),
+    "num_frames": int(num_frames),
+    "qp": int(qp),
+}
+with open(os.path.join(outputPath, "metrics.json"), "w", encoding="utf-8") as metrics_file:
+    json.dump(metrics, metrics_file, indent=2)
+print(json.dumps(metrics))

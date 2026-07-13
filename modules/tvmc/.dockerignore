@@ -1,0 +1,7 @@
+.venv
+draco
+**/bin
+**/obj
+**/__pycache__
+TVMC/*_outputs
+arap-volume-tracking/data

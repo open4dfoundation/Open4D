@@ -1,0 +1,3 @@
+[submodule "modules/tvmc/draco"]
+	path = modules/tvmc/draco
+	url = https://github.com/google/draco

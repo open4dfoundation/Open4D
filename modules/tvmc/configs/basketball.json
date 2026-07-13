@@ -1,0 +1,12 @@
+{
+  "dataset": "basketball_player",
+  "editor_dataset": "basketball",
+  "first_index": 11,
+  "last_index": 20,
+  "num_centers": 1995,
+  "key_frame": 9,
+  "file_prefix": "basketball_player_fr0",
+  "tracking_config": "config/max/config-basketball-max.xml",
+  "improvement_config": "config/impr/config-basketball-impr.xml",
+  "centers_dir": "arap-volume-tracking/data/basketball-output-max-2000/impr"
+}

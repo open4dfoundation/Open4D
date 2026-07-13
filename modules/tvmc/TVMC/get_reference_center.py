@@ -14,6 +14,7 @@ parser.add_argument('--num_centers', type=int, required=True, help="Number of vo
 parser.add_argument('--centers_dir', type=str, required=True, help="Path for the volume centers")
 parser.add_argument('--file_extension', type=str, default=".xyz", help="File extension for the input files")
 parser.add_argument('--random_state', type=int, default=None, help="Seed for MDS (for reproducibility)")
+parser.add_argument('--jobs', type=int, default=1, help="Parallel MDS jobs; use 1 for maximum portability")
 
 args = parser.parse_args()
 
@@ -24,6 +25,7 @@ num_centers = args.num_centers
 centers_dir = args.centers_dir
 file_extension = args.file_extension
 random_state = args.random_state
+jobs = args.jobs
 
 print("open3d version:", o3d.__version__)
 print(f"Dataset: {dataset}, Frames: {num_frames}, Centers: {num_centers}")
@@ -31,7 +33,7 @@ print(f"Dataset: {dataset}, Frames: {num_frames}, Centers: {num_centers}")
 output_file = f"{centers_dir}/{dataset}_distance_matrix_{num_frames}_{num_centers}.txt"
 
 xyz_files = [f for f in os.listdir(centers_dir) if f.endswith('.xyz')]
-re_pattern = re.compile('.+?(\d+)\.([a-zA-Z0-9+])')
+re_pattern = re.compile(r'.+?(\d+)\.([a-zA-Z0-9+]+)$')
 xyz_files = sorted(xyz_files, key=lambda x: int(re_pattern.match(x).groups()[0]))
 
 if not os.path.exists(output_file):
@@ -67,7 +69,7 @@ max_distance_matrix = np.loadtxt(output_file)
 if random_state is None:
     random_state = np.random.randint(0, 100000)
 print(f"Feed Distance Matrix to multi-dimensional scaling to get reference centers, random_state = {random_state}")
-mds = MDS(n_components=3, metric=True, dissimilarity='precomputed', n_jobs=-1, eps=1e-10, verbose=0, random_state=random_state,
+mds = MDS(n_components=3, metric=True, dissimilarity='precomputed', n_jobs=jobs, eps=1e-10, verbose=0, random_state=random_state,
           n_init=6, max_iter=300)
 reference_centers = mds.fit_transform(max_distance_matrix)
 

@@ -1,0 +1,11 @@
+{
+  "dataset": "dancer",
+  "editor_dataset": "dancer",
+  "first_index": 5,
+  "last_index": 14,
+  "num_centers": 2000,
+  "key_frame": 4,
+  "file_prefix": "dancer_fr0",
+  "tracking_config": "config/max/config-dancer-max.xml",
+  "centers_dir": "arap-volume-tracking/data/dancer-output-max-2000"
+}

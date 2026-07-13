@@ -76,13 +76,26 @@ for subdir in output_subdirectories:
     if not os.path.exists(path):
         os.makedirs(path)
 
-re_pattern = re.compile('.+?(\d+)\.([a-zA-Z0-9+])')
+re_pattern = re.compile(r'.+?(\d+)\.([a-zA-Z0-9+]+)$')
 
 obj_files = [f for f in os.listdir(mesh_path) if f.endswith('.obj')]
 obj_files = sorted(obj_files, key=lambda x: int(re_pattern.match(x).groups()[0]))
+obj_files = [
+    name for name in obj_files
+    if firstIndex <= int(re_pattern.match(name).groups()[0]) <= lastIndex
+]
 
 xyz_files = [f for f in os.listdir(centers_dir) if f.endswith('.xyz')]
 xyz_files = sorted(xyz_files, key=lambda x: int(re_pattern.match(x).groups()[0]))
+xyz_files = [
+    name for name in xyz_files
+    if firstIndex <= int(re_pattern.match(name).groups()[0]) <= lastIndex
+]
+
+if len(obj_files) != num_frames:
+    raise ValueError(f"Expected {num_frames} OBJ files for indices {firstIndex}-{lastIndex}, found {len(obj_files)}")
+if len(xyz_files) != num_frames:
+    raise ValueError(f"Expected {num_frames} XYZ files for indices {firstIndex}-{lastIndex}, found {len(xyz_files)}")
 
 for obj_file in obj_files[:num_frames]:
     file_path = os.path.join(mesh_path, obj_file)
