@@ -27,7 +27,9 @@ if [[ "${1:-}" == "--docker" ]]; then
     open4d-tvmc "$@"
 fi
 
-if [[ -x "$ROOT/.venv/bin/python" ]]; then
+if [[ -x "$ROOT/.venv/Scripts/python.exe" ]]; then
+  PYTHON="$ROOT/.venv/Scripts/python.exe"
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
   PYTHON="$ROOT/.venv/bin/python"
 else
   PYTHON="${PYTHON:-python3}"

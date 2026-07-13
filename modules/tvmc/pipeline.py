@@ -73,6 +73,18 @@ def executable(name_or_path: str) -> str | None:
     return shutil.which(name_or_path)
 
 
+def default_draco_tool(name: str) -> str:
+    candidates = (
+        ROOT / "draco/build" / name,
+        ROOT / "draco/build" / f"{name}.exe",
+        ROOT / "draco/build/Release" / f"{name}.exe",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return str(candidates[2] if os.name == "nt" else candidates[0])
+
+
 def select_stages(start: str, end: str, only: str | None) -> tuple[str, ...]:
     if only:
         return (only,)
@@ -145,8 +157,8 @@ def preflight(config: dict[str, Any], stages: tuple[str, ...], args: argparse.Na
         errors.append(f"tracked centers are missing: {p['centers_dir']}")
 
     if "evaluation" in stages:
-        encoder = args.encoder or os.environ.get("DRACO_ENCODER") or str(ROOT / "draco/build/draco_encoder")
-        decoder = args.decoder or os.environ.get("DRACO_DECODER") or str(ROOT / "draco/build/draco_decoder")
+        encoder = args.encoder or os.environ.get("DRACO_ENCODER") or default_draco_tool("draco_encoder")
+        decoder = args.decoder or os.environ.get("DRACO_DECODER") or default_draco_tool("draco_decoder")
         found["encoder"] = executable(encoder) or ""
         found["decoder"] = executable(decoder) or ""
         if not found["encoder"] or not found["decoder"]:

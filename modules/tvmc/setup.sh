@@ -44,7 +44,7 @@ fi
 if [[ "$BUILD_ONLY" -eq 0 ]]; then
   PYTHON_BIN="${PYTHON:-}"
   if [[ -z "$PYTHON_BIN" ]]; then
-    for candidate in python3.10 python3.11 python3.9 python3.8 python3; do
+    for candidate in python3.10 python3.11 python3.9 python3.8 python3 python; do
       if command -v "$candidate" >/dev/null 2>&1; then
         PYTHON_BIN="$candidate"
         break
@@ -56,18 +56,28 @@ if [[ "$BUILD_ONLY" -eq 0 ]]; then
     echo "error: Open3D 0.18 requires Python 3.8-3.11; found $($PYTHON_BIN --version)" >&2
     exit 1
   }
-  if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  if [[ ! -x "$ROOT/.venv/bin/python" && ! -x "$ROOT/.venv/Scripts/python.exe" ]]; then
     "$PYTHON_BIN" -m venv "$ROOT/.venv"
   fi
-  "$ROOT/.venv/bin/python" -m pip install --upgrade pip
-  "$ROOT/.venv/bin/python" -m pip install -r "$ROOT/requirements.txt"
+  if [[ -x "$ROOT/.venv/Scripts/python.exe" ]]; then
+    VENV_PYTHON="$ROOT/.venv/Scripts/python.exe"
+  else
+    VENV_PYTHON="$ROOT/.venv/bin/python"
+  fi
+  "$VENV_PYTHON" -m pip install --upgrade pip
+  "$VENV_PYTHON" -m pip install -r "$ROOT/requirements.txt"
 fi
 
 dotnet build "$ROOT/arap-volume-tracking/Client/Client.csproj" -c Release -p:NuGetAudit=false
 dotnet build "$ROOT/tvm-editing/TVMEditor.Test/TVMEditor.Test.csproj" -c Release \
   --output "$ROOT/tvm-editing/TVMEditor.Test/bin/Release/net5.0" -p:NuGetAudit=false
 
-if [[ "$SKIP_DRACO" -eq 0 && ! -x "$ROOT/draco/build/draco_encoder" ]]; then
+DRACO_ENCODER="$ROOT/draco/build/draco_encoder"
+if [[ "${OS:-}" == "Windows_NT" ]]; then
+  DRACO_ENCODER="$ROOT/draco/build/Release/draco_encoder.exe"
+fi
+
+if [[ "$SKIP_DRACO" -eq 0 && ! -x "$DRACO_ENCODER" ]]; then
   if [[ ! -e "$ROOT/draco/.git" ]]; then
     if git -C "$ROOT" submodule status draco >/dev/null 2>&1; then
       git -C "$ROOT" submodule update --init --recursive draco
@@ -76,7 +86,7 @@ if [[ "$SKIP_DRACO" -eq 0 && ! -x "$ROOT/draco/build/draco_encoder" ]]; then
     fi
   fi
   cmake -S "$ROOT/draco" -B "$ROOT/draco/build" -DCMAKE_BUILD_TYPE=Release
-  cmake --build "$ROOT/draco/build" --parallel
+  cmake --build "$ROOT/draco/build" --config Release --parallel
 fi
 
 echo "TVMC setup complete. Try: ./run_pipeline.sh --dry-run basketball"
