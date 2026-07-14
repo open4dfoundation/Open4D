@@ -27,6 +27,46 @@ Useful overrides are `FRAMES`, `VOXEL_RES`, `EPOCHS`, `SAMPLES`, `ARCHIVE`,
 `FROM_STAGE`, `TO_STAGE`, `FORCE=1`, and `DRY_RUN=1`. The pipeline is resumable:
 completed preprocessing, training, and decoding stages are reused unless forced.
 
+## Decode and play an N4MC archive
+
+An `.n4mc` file does not contain OBJ files. It is a ZIP package containing the
+trained neural decoder, one latent feature grid per frame, the generated model
+configuration, and mesh normalization metadata. To obtain OBJ files, extract
+the package and run the N4MC decoder. From `open4d/modules/N4MC`:
+
+```bash
+mkdir -p outputs/basketball/unpacked
+unzip -o outputs/basketball/sequence.n4mc \
+  -d outputs/basketball/unpacked
+
+python n4mc_source/decode.py \
+  --config outputs/basketball/unpacked/config.txt \
+  --checkpoint outputs/basketball/unpacked \
+  --metadata outputs/basketball/unpacked/normalization.json \
+  --output outputs/basketball/archive_decoded
+```
+
+For every latent grid, `decode.py` runs the trained decoder to predict an SDF
+and deformation offsets, extracts the zero level set with dynamic marching
+cubes, reverses the original normalization, and exports an OBJ mesh. The
+decoder automatically uses CUDA when available and otherwise requests CPU.
+
+`run.sh` already performs this decoding before it creates the archive, so its
+normal reconstructed frames can be played directly:
+
+```bash
+python ../tools/mesh_player.py \
+  --mesh-dir outputs/basketball/decoded \
+  --pattern '*.obj' \
+  --fps 10 \
+  --loop
+```
+
+To play meshes decoded from the extracted archive instead, change `--mesh-dir`
+to `outputs/basketball/archive_decoded`. Close the Open3D window to stop. On a
+headless SSH session, copy the decoded OBJ directory to a desktop machine or
+connect with X11 forwarding before starting the player.
+
 The default supported pipeline uses `gen_tsdf_from_meshes.py`, which does not
 need a compiler toolchain. The differentiable-rendering refinement and temporal
 interpolation sections later in this document remain experimental research paths;
