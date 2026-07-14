@@ -55,73 +55,31 @@ Instructions for setting up and running each of them are found in the sections b
 - **Operating System**: Ubuntu Linux 24.04
 - **Python**: 3.12
 
-The compression pipeline mixes **Python** (steps 3, 4, 6, 8, 9, 10), **.NET**
-(ARAP volume tracking on `net7.0`, TVMEditor on `net5.0`; steps 2, 5, 7) and
-**Google Draco** (mesh coding, steps 8-10). SAM3 (step 1) additionally needs a
-CUDA GPU and pretrained checkpoints.
-
 ### Setup
-
-#### Option A - Docker (recommended)
-The provided `Dockerfile` bundles the Python environment, .NET 7.0 + 5.0,
-Draco, and pre-builds the two .NET projects.
-```bash
-cd modules/tsmc
-docker build -t tsmc .
-# GPU + your data mounted in:
-docker run --gpus all -it --rm -v "$PWD/data:/workspace/tsmc/data" tsmc
-# inside the container:
-./run.sh
-```
-> SAM3 (step 1) is not baked into the image because it needs large checkpoints
-> and a GPU at run time. Install it inside the container with `./install_sam3.sh`
-> and provide the checkpoints (see step 1 below).
-
-#### Option B - manual (Conda)
-```bash
-# 1. Python environment
+Our default environment is based on Conda package and environment management:
+```aiignore
 conda env create --file environment.yml
 conda activate tsmc
-
-# 2. .NET SDK 7.0 (ARAP) and 5.0 (TVMEditor)
-./setup.sh dotnet-sdk         # installs into $DOTNET_ROOT (default ~/.dotnet)
+```
+Install .NET 7.0 and 5.0 for Ubuntu 24.04:
+```aiignore
+wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+./dotnet-install.sh --version 7.0.202 
+./dotnet-install.sh --channel 7.0
+./dotnet-install.sh --channel 7.0 --runtime aspnetcore
+./dotnet-install.sh --version 5.0.408
+./dotnet-install.sh --channel 5.0 --runtime aspnetcore
+```
+Set up dotnet path if needed (when you cannot run dotnet commands):
+```aiignore
 export DOTNET_ROOT=$HOME/.dotnet
 export PATH=$HOME/.dotnet:$PATH
-
-# 3. Draco + build the .NET projects
-./setup.sh all                # ./setup.sh draco  and  ./setup.sh dotnet
-
-# 4. SAM3 (only needed for step 1 on a fresh dataset)
-./install_sam3.sh
 ```
-`environment.yml` pins the exact package set (Python 3.12, torch 2.7.0+cu126,
-Open3D 0.19, etc.). `run.sh` and `setup.sh` will build Draco / the .NET
-projects automatically on first run if they are missing.
 
 ### Running
-Prepare your mesh sequences in `./data` or test with our provided sample
-`answering` meshes.
+Prepare your mesh sequences in `./data` or test with our provided sample meshes.
 
-`run.sh` runs the deterministic compression pipeline (steps 2-10) end to end
-for one dataset - it builds any missing native dependencies, runs ARAP volume
-tracking, then the Python compression/evaluation steps:
-```bash
-./run.sh                       # bundled "answering" sample (10 frames)
-DATASET=synthetic ./run.sh     # another dataset
-NUM_EIGENVECTORS=5 ./run.sh    # trade quality vs. bitrate
-```
-Override behaviour with env vars: `DATASET NUM_FRAMES NUM_CENTERS FIRST LAST
-GROUP NUM_EIGENVECTORS PYTHON SKIP_BUILD SKIP_ARAP` (see the header of `run.sh`).
-
-> **Note:** `run.sh` covers steps 2-10. Step 1 (SAM3 decomposition) is a
-> prerequisite that produces the dynamic meshes ARAP consumes and the static
-> background evaluation needs - run it first (see below). ARAP tracking must
-> produce a volume-center file for **every** frame; if it is interrupted and
-> only tracks some frames, the TVMEditor step fails with an
-> `IndexOutOfRangeException`. `run.sh` guards against this and re-runs tracking
-> if the output is incomplete.
-
-Or run each component separately as follows:
+Run `run.sh` to start the whole pipeline. Or you can run each component separately as follows:
 
 #### 1. Static and Dynamic Scene Decomposition
 TSMC's static scene decomposition is based on SAM3, installation instructions and pretrained models can be found [here](https://github.com/facebookresearch/sam3).
@@ -130,17 +88,7 @@ TSMC's static scene decomposition is based on SAM3, installation instructions an
 - `sam3_mesh_segmentation.ipynb`: example using `Answering` dataset.
 - `sam3_mesh_segmentation_auto.ipynb`: example using `Synthetic` dataset with an automatic dynamic part identification based on motion changes.
 
-After running the notebooks, you will find the static and dynamic meshes in
-`./data/<dataset_name>/meshes/dynamic` and `./data/<dataset_name>/meshes/static`
-directories (the static background is also encoded to
-`./data/<dataset_name>/meshes/static/static_backgrounds.drc`, which evaluation
-in step 10 needs).
-
-The **dynamic** meshes are the input to ARAP volume tracking (step 2): place
-them in `arap-volume-tracking/data/<dataset_name>/` named
-`mesh_0000.obj`, `mesh_0001.obj`, ... (matching `fileNamePrefix`/index in the
-config below). This directory and the SAM3 outputs are git-ignored, so they are
-generated per run and not shipped with the repository.
+After running the notebooks, you will find the static and dynamic meshes in `./data/<dataset_name>/dynamic>` and `./data/<dataset_name>/static>` directories.
 
 
 
@@ -188,11 +136,7 @@ Usually you only need to change index and path. You can also change the followin
 Then you can run volume tracking and get centers like this:
 ```
 cd ./arap-volume-tracking/
-dotnet build -c release
-```
-
-```
-dotnet ./bin/Client.dll ./config/<config.xml>
+dotnet ./bin/Client.dll ./config/max/<config.xml>
 ```
 e.g.,
 ```
@@ -214,10 +158,7 @@ python ./get_transformation.py --dataset answering --num_frames 10 --num_centers
 #### 5. Now we have transformations for centers. We use this to deform each frame in the group to reference centers.
 ```
 cd ../tvm-editing/
-dotnet build TVMEditor.sln --configuration Release --no-incremental
-```
 
-```
 TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test answering 1 0 9 "./TVMEditor.Test/bin/Release/net5.0/Data/answering_2000/" "./TVMEditor.Test/bin/Release/net5.0/output/answering_2000/"
 ```
 There are 3 numbers after `<dataset_name>`, the first one is to set the deformation mode, 1 represents deforming meshes into reference shape, and 2 represents deforming reference mesh into different shapes. The following 2 numbers are --firstIndex 0 --lastIndex 9.

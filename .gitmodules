@@ -1,3 +1,9 @@
 [submodule "modules/tvmc/draco"]
 	path = modules/tvmc/draco
 	url = https://github.com/google/draco
+[submodule "open4d/modules/tsmc/draco"]
+	path = open4d/modules/tsmc/draco
+	url = https://github.com/google/draco.git
+[submodule "open4d/modules/Quantized-Neural-Displacement-Fields"]
+	path = open4d/modules/Quantized-Neural-Displacement-Fields
+	url = https://github.com/karthikey97/Quantized-Neural-Displacement-Fields.git

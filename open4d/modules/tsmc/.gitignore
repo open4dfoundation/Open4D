@@ -8,8 +8,6 @@ data/synthetic/render
 data/synthetic/meshes/dynamic
 data/synthetic/meshes/gt
 data/synthetic/meshes/static
-data/300
-
 .codex
 arap-volume-tracking/data
 arap-volume-tracking/output
