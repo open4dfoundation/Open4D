@@ -151,10 +151,6 @@ dependencies:
   - zeromq=4.3.5=h6a678d5_0
   - zlib=1.2.13=h4ab18f5_6
   - pip:
-      # Extra wheel indexes so the CUDA-specific builds below resolve:
-      #   torch-scatter (+pt26cu124) lives on the PyG index, kaolin on NVIDIA's.
-      - --find-links https://data.pyg.org/whl/torch-2.6.0+cu124.html
-      - --find-links https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.6.0_cu124.html
       - accelerate==1.9.0
       - addict==2.4.0
       - aiofiles==24.1.0
@@ -192,8 +188,7 @@ dependencies:
       - fastapi==0.116.0
       - fastrlock==0.8.3
       - filelock==3.18.0
-      # - flash-attn==2.7.0.post1   # OPTIONAL: needs nvcc (CUDA toolkit) to compile and is
-      #                             # not imported anywhere in n4mc. Install separately if needed.
+      - flash-attn==2.7.0.post1
       - flask==3.0.3
       - flatbuffers==25.2.10
       - fonttools==4.57.0
@@ -219,7 +214,7 @@ dependencies:
       - joblib==1.4.2
       - jupyter-client==7.4.9
       - jupyterlab-widgets==3.0.14
-      - kaolin==0.18.0   # was 0.17.0: no wheel exists for torch2.6/cu124; 0.18.0 is the match
+      - kaolin==0.17.0
       - kiwisolver==1.4.8
       - lazy-loader==0.4
       - lightning-utilities==0.14.3
@@ -236,10 +231,7 @@ dependencies:
       - multipledispatch==1.0.0
       - multiprocess==0.70.16
       - multivolumefile==0.2.3
-      # - my-lib-cuda==0.0.0   # REMOVED: locally-built package, not on PyPI. This
-      #                        # unresolvable entry aborted the entire pip stage, which is
-      #                        # why the original `conda env create` left the env with no
-      #                        # pip packages installed.
+      - my-lib-cuda==0.0.0
       - mypy-extensions==1.0.0
       - narwhals==1.36.0
       - natsort==8.4.0
@@ -247,9 +239,7 @@ dependencies:
       - ninja==1.11.1.4
       - numba==0.61.2
       - numpy==1.26.4
-      # - nvdiffrast==0.3.3   # OPTIONAL (step 3 only): not on PyPI + needs nvcc to build.
-      #                       # Install with a CUDA toolkit present:
-      #                       #   pip install git+https://github.com/NVlabs/nvdiffrast.git
+      - nvdiffrast==0.3.3
       - nvidia-cublas-cu12==12.4.5.8
       - nvidia-cuda-cupti-cu12==12.4.127
       - nvidia-cuda-nvrtc-cu12==12.4.127
@@ -302,8 +292,7 @@ dependencies:
       - pyro-ppl==1.9.1
       - python-multipart==0.0.20
       - pytorch-lightning==2.5.1.post0
-      # - pytorch3d==0.7.8   # OPTIONAL (step 5 only): needs nvcc to build from source.
-      #                      # Install separately with a CUDA toolkit present.
+      - pytorch3d==0.7.8
       - pytz==2025.2
       - pyzmq==26.4.0
       - pyzstd==0.17.0
@@ -356,4 +345,4 @@ dependencies:
       - zipp==3.21.0
       - zstandard==0.23.0
       - zstd==1.5.7.0
-
+prefix: /home/frozzzen/anaconda3/envs/pytorch

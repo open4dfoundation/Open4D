@@ -1,0 +1,23 @@
+{
+  "best_metric": 0.1495621085166931,
+  "epoch": 20,
+  "metrics": {
+    "band_loss": 0.04943544864654541,
+    "bits_per_volume": 6621.864306640625,
+    "bits_per_voxel": 0.0031575509579852223,
+    "chamfer_distance": 0.008884422667324542,
+    "compression_ratio": 10134.685356411606,
+    "gt_mesh_vertices": 16016.7,
+    "mae": 0.04278145022690296,
+    "mse": 0.030394046939909457,
+    "narrow_band_mae": 0.04943544850127423,
+    "normal_consistency": 0.5634074138896061,
+    "pred_mesh_vertices": 23254.1,
+    "psnr": 15.241939111728977,
+    "rate_bpv": 0.0031575509579852223,
+    "rec_loss": 0.04278145022690296,
+    "sign_accuracy": 0.9906232833862305,
+    "sign_loss": 0.03954724706709385,
+    "total_loss": 0.1495621085166931
+  }
+}

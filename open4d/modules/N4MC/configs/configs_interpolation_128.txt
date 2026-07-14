@@ -9,10 +9,10 @@ bias: True
 act: gelu
 conv_type: conv
 dataset: SDF_dataset_npz
-data_path: ./TSDF_128
+data_path: /mnt/datadrive/ChromeDownloads/Mesh_dataset/cmu_arena4_scaled_100/TSDF_128
 num_frames: 100
 pin_memory: True
-log_path: ./TSDF_128/log
+log_path: /mnt/datadrive/ChromeDownloads/Mesh_dataset/cmu_arena4_scaled_100/TSDF_128/log
 batch_size: 1
 n_epoch: 1000
 val_frequence: 100
@@ -29,7 +29,7 @@ num_bits: 8
 l1_reg: 0
 embed_dim: 16
 embed_hwd: 8
-autocodec_path: ./path
+autocodec_path: /mnt/datadrive/ChromeDownloads/Mesh_dataset/cmu_arena4_scaled_100/TSDF_128/log/48_36_24_16_12_2025_11_11_21_01_42/checkpoint_0600
 group_size: 5
 latent_dim: 32
 surface_weight: 0
