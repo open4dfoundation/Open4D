@@ -37,6 +37,8 @@ def get_config():
 
     parser.add_argument("--log_path", type=str, default='log_quantized_8bits', 
                             help='')
+    parser.add_argument("--run_dir", type=str, default=None,
+                            help='exact output directory (disables timestamped subdirectory)')
     parser.add_argument("--batch_size", type=int, default=1, 
                             help='')
     parser.add_argument("--n_epoch", type=int, default=300, 
@@ -77,6 +79,8 @@ def get_config():
     parser.add_argument("--latent_dim", type=int, default=32)
     parser.add_argument("--surface_weight", type=float, default=2.0)
     parser.add_argument("--surface_band", type=float, default=0.02)
+    parser.add_argument("--centers_pattern", type=str, default=None,
+                            help='glob for volume-tracking .xyz files used by interpolation')
 
 
     #parser.add_argument('--lr_schedule',type=str,default=None)

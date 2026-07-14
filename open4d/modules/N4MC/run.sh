@@ -1,51 +1,59 @@
 #!/usr/bin/env bash
-# N4MC end-to-end run — Ubuntu + CUDA GPU.
-# Generates TSDF-Def tensors (if missing) and trains the auto-decoder.
-#
-#   bash run.sh
-#   MESH_DIR=/path/to/frames bash run.sh     # use your own mesh sequence
-#
-# Override via env vars: ENV_NAME, MESH_DIR, CONFIG, VOXEL_RES.
-# NOTE: if you change the number of frames, update `num_frames` in the config.
+# Complete N4MC user pipeline:
+# raw mesh sequence -> TSDF -> training -> decoded meshes -> metrics -> .n4mc
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_NAME="${ENV_NAME:-pytorch}"
-SRC="${SCRIPT_DIR}/n4mc_source"
-
 MESH_DIR="${MESH_DIR:-${SCRIPT_DIR}/../tvmc/arap-volume-tracking/data/basketball_player}"
-CONFIG="${CONFIG:-../configs/configs_128.txt}"
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/outputs/basketball}"
+ARCHIVE="${ARCHIVE:-${OUTPUT_DIR}/sequence.n4mc}"
+FRAMES="${FRAMES:-0}"
 VOXEL_RES="${VOXEL_RES:-127}"
+EPOCHS="${EPOCHS:-500}"
+SAMPLES="${SAMPLES:-10000}"
 
-# Locate conda even in a non-interactive shell (PATH may not include it).
+if [ "${SMOKE:-0}" = "1" ]; then
+  FRAMES="${FRAMES_SMOKE:-1}"
+  VOXEL_RES="${VOXEL_RES_SMOKE:-15}"
+  EPOCHS="${EPOCHS_SMOKE:-1}"
+  SAMPLES="${SAMPLES_SMOKE:-500}"
+  OUTPUT_DIR="${OUTPUT_DIR_SMOKE:-${SCRIPT_DIR}/outputs/smoke}"
+  ARCHIVE="${ARCHIVE_SMOKE:-${OUTPUT_DIR}/sequence.n4mc}"
+fi
+
 if ! command -v conda >/dev/null 2>&1; then
-  for c in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" "/opt/conda"; do
+  for c in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" /opt/conda; do
     if [ -f "$c/etc/profile.d/conda.sh" ]; then
-      # shellcheck disable=SC1091
+      # shellcheck disable=SC1090
       source "$c/etc/profile.d/conda.sh"
       break
     fi
   done
 fi
 if ! command -v conda >/dev/null 2>&1; then
-  echo "ERROR: conda not found. Run setup.sh first / install Miniconda." >&2
+  echo "ERROR: conda not found; run setup.sh first." >&2
   exit 1
 fi
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "${ENV_NAME}"
+conda activate "$ENV_NAME"
 
-cd "${SRC}"
+cmd=(python "$SCRIPT_DIR/pipeline.py"
+  --mesh-dir "$MESH_DIR"
+  --output-dir "$OUTPUT_DIR"
+  --archive "$ARCHIVE"
+  --frames "$FRAMES"
+  --voxel-res "$VOXEL_RES"
+  --epochs "$EPOCHS"
+  --samples "$SAMPLES"
+  --from "${FROM_STAGE:-prepare}"
+  --to "${TO_STAGE:-package}")
 
-if [ ! -f "./TSDF_128/data/0000.npz" ]; then
-  echo "[run] generating TSDF tensors from: ${MESH_DIR}"
-  python gen_tsdf_from_meshes.py \
-      --mesh_dir "${MESH_DIR}" \
-      --save_path "./TSDF_128" \
-      --voxel_grid_res "${VOXEL_RES}"
-else
-  echo "[run] found ./TSDF_128/data — skipping generation (delete it to regenerate)"
-fi
+if [ "${FORCE:-0}" = "1" ]; then cmd+=(--force); fi
+if [ "${DRY_RUN:-0}" = "1" ]; then cmd+=(--dry-run); fi
 
-echo "[run] training: python train_quant.py --config=${CONFIG}"
-python train_quant.py --config="${CONFIG}"
+printf '[run] input: %s\n' "$MESH_DIR"
+printf '[run] output: %s\n' "$OUTPUT_DIR"
+printf '[run] frames=%s resolution=%s epochs=%s\n' "$FRAMES" "$VOXEL_RES" "$EPOCHS"
+"${cmd[@]}"

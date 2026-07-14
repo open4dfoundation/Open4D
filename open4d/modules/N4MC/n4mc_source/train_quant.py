@@ -22,7 +22,10 @@ def mse(t1, t2):
 
 
 def train(args):
-    args.log_path=os.path.join(args.log_path,args.decoder_dim_list+'_'+time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime()) )
+    args.log_path = args.run_dir or os.path.join(
+        args.log_path,
+        args.decoder_dim_list+'_'+time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
+    )
     os.makedirs(args.log_path,exist_ok=True)
 
     voxel_dataset=get_dataset(args.dataset, args) 
@@ -73,9 +76,11 @@ def train(args):
 
             loss=torch.mean(torch.abs(gt_sdf_offset-pred_sdf_offset))
             emb_loss = torch.mean(torch.abs(gt_sdf_offset-pred_sdf_offset))
+            mask_loss = torch.zeros((), device=args.device)
+            ssim_loss = torch.zeros((), device=args.device)
 
             if args.important_weight:
-                mask_loss = args.important_weight*torch.sum(gt_mask*torch.abs(gt_sdf_offset-pred_sdf_offset))/torch.sum(gt_mask)
+                mask_loss = args.important_weight*torch.sum(gt_mask*torch.abs(gt_sdf_offset-pred_sdf_offset))/torch.sum(gt_mask).clamp_min(1)
                 loss+=mask_loss
 
             if args.ssim_weight:
@@ -137,13 +142,11 @@ def train(args):
                     vertices, faces=dynamic_marching_cubes(grid_verts,cube_fx8,pred_sdf)
                     end=time.time()
                     decoding_time_network.append(end-start)
-                    if epoch%100==0 :
-                        mesh_np = trimesh.Trimesh(vertices = vertices.detach().cpu().numpy(), faces=faces.detach().cpu().numpy(), process=False)
-                        mesh_np.export(os.path.join(args.log_path,'checkpoint_%04d'%epoch,'rec_mesh','rec_mesh_%04d.obj'%int(index_t)))
-                        np.save(os.path.join(args.log_path,'checkpoint_%04d'%epoch,'embed_features','embed_feature_%04d.npy'%index_t),quant_embed_features.cpu().detach().numpy())
+                    mesh_np = trimesh.Trimesh(vertices = vertices.detach().cpu().numpy(), faces=faces.detach().cpu().numpy(), process=False)
+                    mesh_np.export(os.path.join(args.log_path,'checkpoint_%04d'%epoch,'rec_mesh','rec_mesh_%04d.obj'%int(index_t)))
+                    np.save(os.path.join(args.log_path,'checkpoint_%04d'%epoch,'embed_features','embed_feature_%04d.npy'%index_t),quant_embed_features.cpu().detach().numpy())
                 except Exception as e:
-                    print("Error at sample", index_t, e)
-                    pass
+                    raise RuntimeError(f"validation failed at sample {index_t}: {e}") from e
             print('decoding time network: ', decoding_time_network)
             print(decoding_time, np.mean(decoding_time_network))
 

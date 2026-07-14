@@ -41,9 +41,19 @@ import torch
 print(f"[setup] torch {torch.__version__} | CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"[setup] GPU: {torch.cuda.get_device_name(0)}")
+    assert torch.ones(1, device="cuda").item() == 1
+
+required = (
+    "configargparse", "natsort", "numpy", "point_cloud_utils", "scipy",
+    "torch", "trimesh",
+)
+for module in required:
+    __import__(module)
+    print(f"[setup] import OK: {module}")
 PY
 
-echo "[setup] Steps 3 & 5 additionally need a system CUDA toolkit (nvcc), then:"
-echo "          pip install git+https://github.com/NVlabs/nvdiffrast.git   # Step 3"
-echo "          pip install pytorch3d                                       # Step 5"
+python "${SCRIPT_DIR}/pipeline.py" --help >/dev/null
+echo "[setup] pipeline CLI OK"
+echo "[setup] Experimental differentiable TSDF refinement and temporal interpolation"
+echo "        remain optional research components and are not used by run.sh."
 echo "[setup] done. Activate with: conda activate ${ENV_NAME}"

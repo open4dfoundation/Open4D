@@ -73,7 +73,9 @@ def train_interpolation(args):
     ssim_3_channel = SSIM3D(channel=3).to(args.device)
 
 
-    centers_pattern = "./frame_0res_2000_*"
+    if not args.centers_pattern:
+        raise ValueError("centers_pattern is required for interpolation training")
+    centers_pattern = args.centers_pattern
     centers = load_frame_points(
         pattern=centers_pattern,
         device=args.device,

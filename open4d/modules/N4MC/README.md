@@ -4,16 +4,33 @@
 
 ## Quick Start
 
-**Ubuntu + NVIDIA GPU only.** Two scripts do everything (run from this
-directory, `modules/N4MC`):
+**Ubuntu + NVIDIA GPU only.** Two scripts run the supported end-to-end codec
+workflow (run from `modules/N4MC`):
 
 ```bash
 bash setup.sh    # create the conda env from environment.yml + verify GPU torch
-bash run.sh      # generate TSDF data from the basketball meshes + train
+bash run.sh      # prepare + train + decode + evaluate + package
 ```
 
-`run.sh` takes optional overrides, e.g. `MESH_DIR=/path/to/frames bash run.sh`
-(remember to set `num_frames` in the config to match your frame count).
+The result is written to `outputs/basketball/`: reconstructed OBJ files,
+`evaluation.json`, training artifacts, and a portable `sequence.n4mc` archive.
+Frame count and configuration are generated automatically.
+
+Use your own sequence or run a quick GPU smoke test:
+
+```bash
+MESH_DIR=/path/to/frames OUTPUT_DIR=/path/to/output bash run.sh
+SMOKE=1 FORCE=1 bash run.sh
+```
+
+Useful overrides are `FRAMES`, `VOXEL_RES`, `EPOCHS`, `SAMPLES`, `ARCHIVE`,
+`FROM_STAGE`, `TO_STAGE`, `FORCE=1`, and `DRY_RUN=1`. The pipeline is resumable:
+completed preprocessing, training, and decoding stages are reused unless forced.
+
+The default supported pipeline uses `gen_tsdf_from_meshes.py`, which does not
+need a compiler toolchain. The differentiable-rendering refinement and temporal
+interpolation sections later in this document remain experimental research paths;
+they require external renderer/tracking outputs and are not invoked by `run.sh`.
 
 The manual equivalent of those scripts:
 
