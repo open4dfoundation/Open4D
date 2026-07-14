@@ -1,0 +1,3 @@
+[submodule "ssp_remesh/libigl"]
+	path = ssp_remesh/libigl
+	url = https://github.com/libigl/libigl.git

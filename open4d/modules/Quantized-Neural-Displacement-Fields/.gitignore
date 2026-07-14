@@ -1,0 +1,6 @@
+__pycache__/
+**/__pycache__/
+*.obj
+**/*.obj
+experiments/
+ssp_remesh/build/
