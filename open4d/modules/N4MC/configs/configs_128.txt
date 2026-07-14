@@ -10,7 +10,7 @@ act: gelu
 conv_type: conv
 dataset: SDF_dataset_npz
 data_path: ./TSDF_128
-num_frames: 100
+num_frames: 10
 pin_memory: True
 log_path: ./TSDF_128/log
 batch_size: 1
