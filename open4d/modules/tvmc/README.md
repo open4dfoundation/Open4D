@@ -59,7 +59,7 @@ cmake --version
 From the Open4D repository root:
 
 ```bash
-cd modules/tvmc
+cd open4d/modules/tvmc
 ```
 
 The ten basketball sample meshes are included in the repository.
@@ -108,7 +108,7 @@ TVMC/basketball_player_outputs/metrics.json
 
 ## View the outputs
 
-TVMC produces a sequence of decoded OBJ meshes. From `modules/tvmc`, use the
+TVMC produces a sequence of decoded OBJ meshes. From `open4d/modules/tvmc`, use the
 Open4D OBJ-sequence player to view them:
 
 ```bash
@@ -126,14 +126,14 @@ remote repository path:
 
 ```bash
 rsync -avP \
-  USER@SSH_HOST:/path/to/Open4D/modules/tvmc/TVMC/basketball_player_outputs/ \
-  /path/to/local/Open4D/modules/tvmc/TVMC/basketball_player_outputs/
+  USER@SSH_HOST:/path/to/Open4D/open4d/modules/tvmc/TVMC/basketball_player_outputs/ \
+  /path/to/local/Open4D/open4d/modules/tvmc/TVMC/basketball_player_outputs/
 ```
 
 Then enter the local TVMC directory and launch the player:
 
 ```bash
-cd /path/to/local/Open4D/modules/tvmc
+cd /path/to/local/Open4D/open4d/modules/tvmc
 
 .venv/bin/python ../tsmc/tsmc/player.py \
   --mesh-dir TVMC/basketball_player_outputs \

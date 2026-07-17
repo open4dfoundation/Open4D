@@ -71,8 +71,8 @@ The preferred path for the clean restart now lives in modular packages:
 
 Default configs:
 
-- [configs/train_tsdf.yaml](/home/frozzzen/Documents/Github/Implicit-mesh-compression/configs/train_tsdf.yaml)
-- [configs/eval_tsdf.yaml](/home/frozzzen/Documents/Github/Implicit-mesh-compression/configs/eval_tsdf.yaml)
+- [`configs/train_tsdf.yaml`](configs/train_tsdf.yaml)
+- [`configs/eval_tsdf.yaml`](configs/eval_tsdf.yaml)
 
 Commands:
 
@@ -100,3 +100,31 @@ Latent reuse:
 - it is produced after the encoder and quantizer, before the decoder
 - validation and reconstruction now save both `*_quantized_latent.npy` and `*_latent_pack.npz`
 - `*_latent_pack.npz` includes `latent`, `quantized_latent`, `original_shape`, `padded_shape`, and `bottleneck_shape`
+
+## Basketball sequence
+
+The maintained basketball configuration trains on eight frames, validates on
+one, and holds out one test frame. Reconstruction then evaluates all ten frames
+and the restore helper maps the decoded meshes back to the source coordinates.
+
+The complete managed workflow is:
+
+```bash
+python scripts/run_basketball_sequence.py
+```
+
+Its status and final manifest are written to
+`outputs/basketball_sequence_n4mc/status.json` and `summary.json`.
+
+```bash
+python -m training.train --config configs/train_basketball.yaml
+python -m evaluation.reconstruct \
+  --config configs/eval_basketball.yaml \
+  --checkpoint outputs/<basketball-run>/best.pt \
+  --split test \
+  --output-dir outputs/basketball_sequence_n4mc/normalized
+python -m evaluation.restore_sequence \
+  --input-dir outputs/basketball_sequence_n4mc/normalized \
+  --normalization datasets/basketball_normalized/normalization.npz \
+  --output-dir outputs/basketball_sequence_n4mc/original_scale
+```

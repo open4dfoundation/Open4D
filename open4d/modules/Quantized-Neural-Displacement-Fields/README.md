@@ -15,3 +15,27 @@ Step 5. Run:
 For Example:
 
  ```python compress.py pegasus -ns 3 -cs 7000 -hd 96 -nl 32```
+
+## Disconnected meshes (basketball player)
+
+The original SSP preprocessing can collapse small disconnected parts or project
+them onto an unrelated surface. Use `build_dataset_open3d.py` for disconnected
+meshes. It removes zero-area triangles, allocates the coarse-face budget across
+all connected components, and simplifies, subdivides, and projects each component
+independently. A JSON transform is saved beside the training pair so decoded
+vertices can be restored to the input coordinate system.
+
+Run the complete basketball sequence with:
+
+```bash
+conda activate pytorch
+mkdir -p outputs/basketball_sequence_qndf
+nohup python run_basketball_sequence.py \
+  --source-dir ../tvmc/arap-volume-tracking/data/basketball_player \
+  --gpus 0,1 > outputs/basketball_sequence_qndf/runner.log 2>&1 &
+```
+
+The sequence runner is resumable and records per-frame state in
+`outputs/basketball_sequence_qndf/status.json`. Each completed frame retains its
+training log, normalization transform, normalized reconstruction, and decoded
+mesh restored to the original scale.

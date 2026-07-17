@@ -1,114 +1,143 @@
 # Open4D
 
-**Open4D** is an open, research-driven platform for the representation, compression, processing, evaluation, and streaming of
-time-varying 4D geometry data. It is designed as shared infrastructure for application domains such as **XR systems, robotics,
-teleoperation, digital twins, and autonomous systems**, where geometry evolves and varies
-over time and must be processed under tight latency, bandwidth, and accuracy constraints.
+Open4D is a research repository for representing, compressing, evaluating, and
+playing time-varying 3D geometry. It brings several mesh-compression systems,
+an experimental Open4D container format, viewers, and benchmark tooling into
+one workspace for XR, teleoperation, digital-twin, robotics, and graphics
+research.
 
----
-
-## Ecosystem Overview
+> **Project status:** Open4D is under active development. The individual
+> research modules contain working pipelines, while the shared 4D data model,
+> common metrics API, and repository-wide benchmark suite are not yet stable.
 
 <p align="center">
-  <img src="docs/assets/open4d-ecosystem.png" width="90%">
+  <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
 </p>
 
-**Open4D ecosystem layers:**
-- **Core (`open4d/`)**: Canonical 4D data models, IO, metrics
-- **Modules (`modules/`)**: Research algorithms (e.g., TVMC, ARAP-based tracking)
-- **Benchmarks (`benchmarks/`)**: Paper-reproducible evaluation code, including Open4D methods, reimplemented baselines, configs, metrics, and scripts.
-- **Apps (`apps/`)**: End-to-end pipelines and demos
-- **Bindings (`cpp/`, `python/`)**: Performance-critical + research-friendly APIs
+## Repository layout
 
----
-
-
-## Why Open4D?
-
-Today, 4D geometry pipelines are fragmented:
-- algorithms live in paper-specific codebases,
-- evaluation scripts are ad hoc,
-- datasets and metrics are inconsistent,
-- systems integration is repeatedly re-implemented.
-
-Open4D provides a **common substrate**:
-- stable 4D data abstractions,
-- reusable IO and metrics,
-- modular research algorithms,
-- reproducible benchmarks,
-- end-to-end system pipelines.
-
-The goal is to let research **compound**, not reset with every paper.
-
----
-
-## Repository Structure
-
-```
+```text
 Open4D/
-├── open4d/ # Core public API (stable)
-│ ├── core/ # 4D data structures
-│ ├── io/ # Readers / writers
-│ ├── metrics/ # Quality + temporal metrics
-│ └── utils/
-├── modules/ # Research systems and algorithms
-│ ├── N4MC/
-│ ├── tsmc/
-│ ├── tvmc/
-│ └── unity_decoder/
-├── benchmarks/ # Reproducible experiments
-├── apps/ # End-to-end pipelines
-├── examples/ # Minimal usage examples
-├── cpp/ # C++ core + bindings
-├── tests/ # Unit + integration tests
-├── docs/ # Documentation and figures
-└── docker/ # Reproducible environments
+├── open4d/
+│   ├── core/          planned shared sequence and metadata abstractions
+│   ├── io/            experimental .o4d mesh and point-cloud containers
+│   ├── player/        PyQt/OpenGL sequence viewers
+│   ├── tools/         conversion utilities for .o4d files
+│   └── modules/
+│       ├── N4MC/
+│       ├── Quantized-Neural-Displacement-Fields/
+│       ├── tsmc/
+│       ├── tvmc/
+│       └── unity_decoder/
+├── benchmark_app/     Streamlit multi-codec benchmark dashboard
+├── benchmarks/        benchmark scaffolding and research baselines
+├── examples/          minimal .o4d playback examples
+├── scripts/           repository-level setup utilities
+├── tests/             repository test-suite placeholder
+└── docs/              architecture and repository policies
 ```
 
----
+There are currently no top-level `cpp/`, `python/`, or `docker/` directories.
+Native C++, C#, and build files are owned by the research modules that require
+them.
 
-## Design Principles
+## Components
 
-- **4D-first**: time is a first-class signal, not an afterthought
-- **Separation of concerns**: core abstractions vs. research modules
-- **Reproducibility**: benchmarks are explicit and scriptable
-- **Systems-aware**: metrics include bitrate, latency, and temporal stability
-- **Cross-domain**: XR, robotics, and autonomy share the same foundations
+### Open4D IO and players
 
----
+`open4d/io` implements version-1 chunked containers for mesh sequences, raw
+point-cloud sequences, and Draco-compressed point-cloud sequences. The matching
+tools convert folders of geometry files into `.o4d` containers, and the players
+provide local desktop playback.
 
-## Current Modules
+The abstractions described in `open4d/core/README.md`—including
+`MeshSequence`, `PointCloudSequence`, transforms, timestamps, and frame
+metadata—are planned work. Research modules do not yet share a single stable
+Python API.
 
-- **N4MC** — Neural Time-varying Mesh Compression
-- **TSMC** — Time-Varying 4D Scene Mesh Compression  
-- **TVMC** — Time-Varying Mesh Compression  
-- **Unity Decoder Plugin** - a 4D mesh decoder plugin for Unity that can run on XR headsets like Meta Quest3
+### Research modules
 
-## Future Modules (Additional modules are expected to evolve independently on top of the core API.)
-- **ARAP Volume Tracking** — deformation-aware temporal alignment  
-- **Temporal Mesh Editing** — structured editing of dynamic geometry  
+- **N4MC** — neural TSDF-based mesh compression, including a newer modular
+  codec under its `data`, `models`, `losses`, `training`, and `evaluation`
+  packages.
+- **Quantized Neural Displacement Fields (QNDF)** — static mesh compression
+  using an SSP coarse mesh and an implicit displacement decoder.
+- **TVMC** — a Python, .NET, and Draco pipeline for tracked time-varying mesh
+  compression. It includes setup and resumable pipeline scripts.
+- **TSMC** — scene-mesh compression with optional SAM-based static/dynamic
+  separation, ARAP volume tracking, deformation, displacement compression, and
+  evaluation.
+- **Unity decoder** — a C++ decoder backend and C# Unity front end for playback
+  on XR targets.
 
+Each module has its own README and environment requirements. TVMC currently
+targets Python 3.10; TSMC targets Python 3.12. Treat module environments as
+independent until a shared environment is documented.
 
----
+### Benchmark dashboard
 
-## Installation (Development)
+`benchmark_app` is an experimental Streamlit application that can run N4MC,
+QNDF, TVMC, and TSMC sequentially and compare decoded geometry using shared
+surface-sampling metrics. For a single uploaded mesh, TVMC and TSMC currently
+receive ten duplicate frames to exercise their sequence pipelines. This is a
+pipeline smoke test, not a representative temporal compression benchmark.
+
+See `benchmark_app/README.md` for setup, operation, and current limitations.
+
+## Installation
+
+Clone with submodules so both TVMC and TSMC receive their pinned Draco source:
 
 ```bash
-git clone https://github.com/SINRG-Lab/Open4D.git
+git clone --recurse-submodules https://github.com/SINRG-Lab/Open4D.git
 cd Open4D
-pip install -e .
-pip install -e ".[player]" # for visualization
-pip install -e ".[all]" # everything
 ```
+
+For the lightweight `.o4d` IO package:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+Optional local tooling is available through extras:
+
+```bash
+python -m pip install -e ".[tools]"   # trimesh conversion tools
+python -m pip install -e ".[draco]"  # Draco point-cloud support
+python -m pip install -e ".[player]" # desktop viewers
+python -m pip install -e ".[all]"
+```
+
+These extras do not install the heavyweight research-module environments. Use
+the setup instructions inside the selected module before running a codec.
+
+If an existing clone is missing Draco, initialize and build both copies with:
+
+```bash
+./scripts/setup_draco.sh
+```
+
+## Reproducibility and artifacts
+
+Do not commit local datasets, virtual environments, benchmark jobs, training
+runs, checkpoints, logs, or decoded outputs. The expected local directories,
+publication-manifest requirements, and policy for existing historical fixtures
+are documented in [`docs/artifacts.md`](docs/artifacts.md).
+
+The repository-wide `benchmarks/` and `tests/` directories are currently
+scaffolding rather than a complete validation suite. Results should identify
+the exact module revision, configuration, dataset/frame range, encoded byte
+count, runtime environment, and metric implementation.
 
 ## Contributing
 
-Open4D is an open research platform. Contributions are welcome in the form of:
-- new modules
-- benchmarks and datasets
-- metrics
-- documentation
-- performance improvements
+Contributions are welcome, especially around shared data abstractions, common
+metrics, reproducible benchmark fixtures, module adapters, tests, documentation,
+and performance. Keep research-module dependencies isolated and document any
+new binary fixture or external artifact alongside the code that consumes it.
 
-Please reach out if you'd like to contribute!
-
+Please contact the Open4D maintainers before adding a large dataset, checkpoint,
+or third-party source tree.
