@@ -1,0 +1,8 @@
+# draco_baseline.py needs only the built Draco binaries (see setup_draco.sh);
+# these are for evaluation.py (D1/D2 PSNR + SSIM).
+numpy
+open3d
+pymeshlab
+opencv-python
+point-cloud-utils
+py7zr

@@ -7,3 +7,6 @@
 [submodule "open4d/modules/tsmc/third_party/sam3"]
 	path = open4d/modules/tsmc/third_party/sam3
 	url = https://github.com/facebookresearch/sam3.git
+[submodule "open4d/modules/Draco/draco"]
+	path = open4d/modules/Draco/draco
+	url = https://github.com/google/draco.git

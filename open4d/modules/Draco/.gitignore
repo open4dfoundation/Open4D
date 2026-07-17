@@ -1,0 +1,5 @@
+__pycache__/
+outputs/
+*.drc
+*.obj
+draco/build/

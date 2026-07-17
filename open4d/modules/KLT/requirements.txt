@@ -1,0 +1,16 @@
+# Core KLT compression pipeline
+numpy
+torch
+trimesh
+zstd
+tqdm
+scikit-image
+
+# Optional: --evaluate path (D1/D2 PSNR + SSIM)
+open3d
+pymeshlab
+opencv-python
+point-cloud-utils
+py7zr
+constriction
+# kaolin: install from https://github.com/NVIDIAGameWorks/kaolin matching your torch/CUDA

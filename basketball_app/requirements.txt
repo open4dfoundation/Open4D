@@ -1,0 +1,7 @@
+streamlit
+numpy
+trimesh
+open3d
+scipy
+matplotlib
+pillow

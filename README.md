@@ -24,6 +24,8 @@ Open4D/
 │   ├── player/        PyQt/OpenGL sequence viewers
 │   ├── tools/         conversion utilities for .o4d files
 │   └── modules/
+│       ├── Draco/
+│       ├── KLT/
 │       ├── N4MC/
 │       ├── Quantized-Neural-Displacement-Fields/
 │       ├── tsmc/
@@ -68,6 +70,12 @@ Python API.
   evaluation.
 - **Unity decoder** — a C++ decoder backend and C# Unity front end for playback
   on XR targets.
+- **Draco** — Google Draco mesh-compression baseline. Wraps the vendored
+  `draco_encoder`/`draco_decoder` binaries into a per-frame encode/decode/eval
+  pipeline for benchmarking against the neural codecs.
+- **KLT** — Karhunen–Loève Transform baseline that compresses TSDF voxel blocks
+  with a learned linear basis and quantized coefficients, reconstructing meshes
+  via marching cubes.
 
 Each module has its own README and environment requirements. TVMC currently
 targets Python 3.10; TSMC targets Python 3.12. Treat module environments as

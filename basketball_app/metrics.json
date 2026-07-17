@@ -1,0 +1,40 @@
+{
+  "N4MC": {
+    "chamfer_nrmse_pct": 0.557,
+    "p95_pct": 0.925,
+    "faces": 30960.2,
+    "decoded_kb": 577.62
+  },
+  "QNDF": {
+    "chamfer_nrmse_pct": 0.186,
+    "p95_pct": 0.32,
+    "faces": 319507.2,
+    "decoded_kb": 11009.42
+  },
+  "TVMC": {
+    "chamfer_nrmse_pct": 0.227,
+    "p95_pct": 0.339,
+    "faces": 39352.0,
+    "decoded_kb": 1239.39
+  },
+  "TSMC": {
+    "chamfer_nrmse_pct": 0.313,
+    "p95_pct": 0.423,
+    "faces": 39393.0,
+    "decoded_kb": 1239.58
+  },
+  "Draco": {
+    "chamfer_nrmse_pct": 0.184,
+    "p95_pct": 0.318,
+    "faces": 39369.9,
+    "decoded_kb": 1291.44,
+    "compressed_kb": 38.691
+  },
+  "KLT": {
+    "chamfer_nrmse_pct": 0.465,
+    "p95_pct": 0.832,
+    "faces": 25748.4,
+    "decoded_kb": 893.63,
+    "compressed_kb": 210.694
+  }
+}
