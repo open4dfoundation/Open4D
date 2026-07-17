@@ -73,6 +73,16 @@ Each module has its own README and environment requirements. TVMC currently
 targets Python 3.10; TSMC targets Python 3.12. Treat module environments as
 independent until a shared environment is documented.
 
+### Basketball sequence comparison
+
+Side-by-side playback of the N4MC, QNDF, TVMC, and TSMC decodes of the
+`basketball_player` sequence, with a toggle for a shared-scale surface-error
+heatmap.
+
+<p align="center">
+  <img src="docs/assets/basketball_comparison_demo.gif" width="90%" alt="Basketball 4D codec comparison">
+</p>
+
 ## Installation
 
 Clone with submodules so both TVMC and TSMC receive their pinned Draco source:
