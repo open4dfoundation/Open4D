@@ -90,6 +90,8 @@ def parse_args():
     pr.add_argument("--input_scale", "-is", type=float, default=1000, help="Scale factor of the inputs")
     pr.add_argument("--output_scale", "-os", type=float, default=1414, help="Scale factor of the outputs")
     pr.add_argument("--run_suffix", "-rs", type=str, default="", help="a suffix to add to the run name")
+    pr.add_argument("--output-dir", type=str, default="", help="directory in which to retain run artifacts")
+    pr.add_argument("--keep-artifacts", action="store_true", help="retain the reconstruction and model files")
     
     pr.add_argument("--learning_rate", "-lr", type=float, default=0.001, help="Learning rate")
     pr.add_argument("--num_epochs", "-ne", type=int, default=4000, help="Number of epochs")
@@ -154,7 +156,13 @@ if __name__=="__main__":
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, args.num_epochs)
 
     
-    mlflow.set_tracking_uri("http://127.0.0.1:8080")
+    output_dir = os.path.abspath(args.output_dir) if args.output_dir else os.getcwd()
+    os.makedirs(output_dir, exist_ok=True)
+    best_model_path = os.path.join(output_dir, "best_model.pth")
+    prequant_path = os.path.join(output_dir, "prequant_reconstruction.obj")
+    reconstruction_path = os.path.join(output_dir, "reconstruction_normalized.obj" if args.output_dir else "reconstruction.obj")
+
+    mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:8080"))
     mlflow.set_experiment(args.mesh_name)
     run_name = f'ns{args.num_subdiv}_cs{args.coarse_size}_hd{args.hidden_dim}_nl{args.num_layers}_{args.run_suffix}'
     artifact_path = run_name
@@ -199,14 +207,14 @@ if __name__=="__main__":
                     b=e
                     mlflow.log_metric("best_eval_loss", f"{e}", step=suff)
                     if suff==len(args.prune_steps):
-                        torch.save(model.state_dict(), f'best_model.pth')
+                        torch.save(model.state_dict(), best_model_path)
                         try:
-                            mlflow.log_artifact(f'best_model.pth', artifact_path=artifact_path)
+                            mlflow.log_artifact(best_model_path, artifact_path=artifact_path)
                         except:
                             pass
-                        save_obj(f'prequant_reconstruction.obj', tv, lf)
+                        save_obj(prequant_path, tv, lf)
                         try:
-                            mlflow.log_artifact(f'prequant_reconstruction.obj', artifact_path=artifact_path)
+                            mlflow.log_artifact(prequant_path, artifact_path=artifact_path)
                         except:
                             pass
                 mlflow.log_metric("eval_loss", f"{e}", step=epoch)
@@ -232,9 +240,9 @@ if __name__=="__main__":
         ne = normal_error(tv, lf, ov, of)
         print(f'Normal Error obtained: {ne}')
         mlflow.log_metric("Normal Error", f"{ne}")
-        save_obj(f'reconstruction.obj', tv, lf)
+        save_obj(reconstruction_path, tv, lf)
         try:
-            mlflow.log_artifact(f'reconstruction.obj', artifact_path=artifact_path)
+            mlflow.log_artifact(reconstruction_path, artifact_path=artifact_path)
         except:
             pass
 
@@ -297,10 +305,9 @@ if __name__=="__main__":
         mlflow.log_metric("Compressed Representation Size", f"{size+coarse_mem}")
         print(f'Total Size of Compressed Representation is {((size+coarse_mem)/1024):.2f}KB')
 
-        try:
-            os.remove('best_model.pth')
-            os.remove('prequant_reconstruction.obj')
-            os.remove('reconstruction.obj')
-            os.remove('coded_weights.bin')
-        except:
-            pass
+        if not args.keep_artifacts:
+            for path in (best_model_path, prequant_path, reconstruction_path, os.path.join(output_dir, 'coded_weights.bin')):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass

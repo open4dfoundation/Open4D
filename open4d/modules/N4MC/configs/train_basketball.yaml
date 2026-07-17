@@ -1,0 +1,57 @@
+experiment:
+  name: basketball_full_default_300
+  output_root: outputs
+  seed: 7
+
+data:
+  root: datasets/basketball_tsdf_128
+  pattern: data/TSDF/*.npz
+  tsdf_key: sdf
+  split_ratio: [0.8, 0.1, 0.1]
+  split_seed: 7
+  value_range: [-1.0, 1.0]
+  range_tolerance: 0.00001
+  narrow_band_threshold: 0.1
+  batch_size: 1
+  workers: 0
+  pin_memory: true
+
+model:
+  in_channels: 1
+  out_channels: 1
+  hidden_channels: [24, 48, 96]
+  embed_dim: 64
+  embed_hwd: 4
+  quantization_mode: ste
+  prior_scale_init: 1.0
+
+loss:
+  reconstruction: l1
+  narrow_band_threshold: 0.1
+  narrow_band_mode: hard
+  narrow_band_alpha: 8.0
+  sign_temperature: 0.1
+  lambda_rate: 0.0001
+  lambda_rec: 1.0
+  lambda_band: 2.0
+  lambda_sign: 0.2
+  lambda_ssim: 0.1
+  ssim_window_size: 5
+  ssim_sigma: 1.5
+
+optimizer:
+  lr: 0.0001
+  weight_decay: 0.0
+
+training:
+  device: cuda:0
+  amp: true
+  epochs: 300
+  validate_every: 10
+  log_interval: 8
+  grad_clip_norm: 1.0
+  best_metric: total_loss
+
+evaluation:
+  mesh_num_samples: 2048
+  raw_bits_per_value: 32
