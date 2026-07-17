@@ -20,3 +20,47 @@ env/
 .DS_Store
 *.swp
 *.swo
+
+# Test and analysis caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local logs and process state
+*.log
+*.lock
+*.pid
+
+# Benchmark dashboard runtime data
+benchmark_app/data/
+benchmark_app/outputs/
+benchmark_app/runs/
+benchmark_app/archives/
+
+# Research datasets, training runs, and generated reconstructions
+# Existing tracked paper fixtures remain tracked; these rules prevent new local
+# runs from silently expanding the source repository.
+open4d/modules/*/datasets/
+open4d/modules/*/outputs/
+open4d/modules/*/experiments/
+open4d/modules/*/checkpoints/
+open4d/modules/*/logs/
+open4d/modules/*/data/bench_*/
+open4d/modules/tvmc/arap-volume-tracking/data/*/
+
+# Common generated model artifacts
+*.ckpt
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# Basketball comparison app generated render assets (frames/videos/heatmaps)
+basketball_comparison_app/assets/
+basketball_comparison_app/outputs/
+
+# QNDF-INT8 local setup symlinks (point into the sibling QNDF module on this host)
+open4d/modules/Quantized-Neural-Displacement-Fields-INT8/experiments
+open4d/modules/Quantized-Neural-Displacement-Fields-INT8/objs_original
