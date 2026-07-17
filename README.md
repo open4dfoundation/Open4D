@@ -29,7 +29,6 @@ Open4D/
 │       ├── tsmc/
 │       ├── tvmc/
 │       └── unity_decoder/
-├── benchmark_app/     Streamlit multi-codec benchmark dashboard
 ├── benchmarks/        benchmark scaffolding and research baselines
 ├── examples/          minimal .o4d playback examples
 ├── scripts/           repository-level setup utilities
@@ -73,16 +72,6 @@ Python API.
 Each module has its own README and environment requirements. TVMC currently
 targets Python 3.10; TSMC targets Python 3.12. Treat module environments as
 independent until a shared environment is documented.
-
-### Benchmark dashboard
-
-`benchmark_app` is an experimental Streamlit application that can run N4MC,
-QNDF, TVMC, and TSMC sequentially and compare decoded geometry using shared
-surface-sampling metrics. For a single uploaded mesh, TVMC and TSMC currently
-receive ten duplicate frames to exercise their sequence pipelines. This is a
-pipeline smoke test, not a representative temporal compression benchmark.
-
-See `benchmark_app/README.md` for setup, operation, and current limitations.
 
 ## Installation
 
