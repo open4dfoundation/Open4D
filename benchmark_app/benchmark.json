@@ -1,0 +1,36 @@
+{
+  "reference": {
+    "name": "Stanford bunny · archived four-codec run",
+    "mesh": "data/reference_bunny_fr0001.obj"
+  },
+  "methods": [
+    {
+      "name": "TVMC",
+      "variant": "10 duplicated frames · QP 10 · native 7.882 Mbps",
+      "mesh": "data/tvmc_bunny_fr0001.obj",
+      "encoded_bytes": null,
+      "size_status": "native bitrate reported; bitstream bytes not retained"
+    },
+    {
+      "name": "N4MC",
+      "variant": "trained 300 epochs · native rate proxy 10,758 bits/volume",
+      "mesh": "data/n4mc_bunny_fr0001.obj",
+      "encoded_bytes": null,
+      "size_status": "native rate proxy only; standalone bitstream not retained"
+    },
+    {
+      "name": "TSMC",
+      "variant": "all-dynamic adapter · 10 duplicated frames",
+      "mesh": "data/tsmc_bunny_fr0001.obj",
+      "encoded_bytes": null,
+      "size_status": "bitstream size not measured"
+    },
+    {
+      "name": "QNDF",
+      "variant": "SSP · 300 epochs · cs3000/ns2 · estimated 104.82 KB",
+      "mesh": "data/qndf_bunny_fr0001.obj",
+      "encoded_bytes": null,
+      "size_status": "estimated model/coarse size only; no coded bitstream"
+    }
+  ]
+}

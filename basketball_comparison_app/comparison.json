@@ -1,0 +1,500 @@
+{
+  "dataset": "basketball_player_fr0011\u2013fr0020",
+  "samples": 12000,
+  "heatmap": {
+    "metric": "decoded-to-reference point-to-surface distance",
+    "units": "% of source bounding-box diagonal",
+    "max_pct": 1.5,
+    "colormap": "turbo"
+  },
+  "native_context": {
+    "N4MC": {
+      "label": "Mean entropy-model rate",
+      "value": "9,657 bits / volume"
+    },
+    "QNDF": {
+      "label": "Estimated representation",
+      "value": "126.42 KiB / frame"
+    },
+    "TVMC": {
+      "label": "Native stream bitrate",
+      "value": "7.039 Mbps",
+      "raw": {
+        "bitrate_mbps": 7.038528,
+        "d1_mean": 83.46255452216607,
+        "d2_mean": 88.2403041165929,
+        "log10_mse_mean": -5.705493364648086,
+        "log10_rmse_mean": -2.852746682324043,
+        "decoding_time_ms": 28.939733505249023,
+        "num_frames": 10,
+        "qp": 10
+      }
+    },
+    "TSMC": {
+      "label": "Native stream bitrate",
+      "value": "not reported"
+    }
+  },
+  "methods": {
+    "N4MC": {
+      "color": "#F6C453",
+      "variant": "basketball-trained TSDF autoencoder \u00b7 300 epochs",
+      "video": "assets/n4mc.mp4",
+      "heatmap_video": "assets/n4mc_heatmap.mp4",
+      "aggregate": {
+        "chamfer_nrmse_pct": 0.6559406701419238,
+        "p95_distance_pct": 1.1057850789741508,
+        "sampled_hausdorff_pct": 5.022436842279487,
+        "normal_consistency": 0.8903164536259907
+      }
+    },
+    "QNDF": {
+      "color": "#FF746C",
+      "variant": "component-preserving Open3D SSP \u00b7 300 epochs",
+      "video": "assets/qndf.mp4",
+      "heatmap_video": "assets/qndf_heatmap.mp4",
+      "aggregate": {
+        "chamfer_nrmse_pct": 0.37644189453171073,
+        "p95_distance_pct": 0.6495749742682684,
+        "sampled_hausdorff_pct": 1.2284436140270774,
+        "normal_consistency": 0.9620362265467104
+      }
+    },
+    "TVMC": {
+      "color": "#31C6A5",
+      "variant": "QP 10 \u00b7 2,000 tracked centers",
+      "video": "assets/tvmc.mp4",
+      "heatmap_video": "assets/tvmc_heatmap.mp4",
+      "aggregate": {
+        "chamfer_nrmse_pct": 0.39975530681226495,
+        "p95_distance_pct": 0.672557510613917,
+        "sampled_hausdorff_pct": 2.4975072807002583,
+        "normal_consistency": 0.9465635803208616
+      }
+    },
+    "TSMC": {
+      "color": "#9A7DFF",
+      "variant": "all-dynamic adapter \u00b7 5 eigenvectors",
+      "video": "assets/tsmc.mp4",
+      "heatmap_video": "assets/tsmc_heatmap.mp4",
+      "aggregate": {
+        "chamfer_nrmse_pct": 0.4639103052404862,
+        "p95_distance_pct": 0.7365282082830303,
+        "sampled_hausdorff_pct": 3.1044291396293033,
+        "normal_consistency": 0.9346132666411242
+      }
+    }
+  },
+  "frames": [
+    {
+      "frame": "basketball_player_fr0011",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.5788405386225576,
+          "p95_distance_pct": 0.7851852193099198,
+          "sampled_hausdorff_pct": 4.898958560677292,
+          "normal_consistency": 0.9162601593853533,
+          "vertices": 14675,
+          "faces": 28742,
+          "decoded_bytes": 549965
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3776543972516237,
+          "p95_distance_pct": 0.65413184695588,
+          "sampled_hausdorff_pct": 1.1697057747466286,
+          "normal_consistency": 0.9625928178822553,
+          "vertices": 162969,
+          "faces": 319808,
+          "decoded_bytes": 11266907
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.4011756715589995,
+          "p95_distance_pct": 0.6699596301096843,
+          "sampled_hausdorff_pct": 2.5123911890416952,
+          "normal_consistency": 0.9438693577050487,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1268866
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4157834709244497,
+          "p95_distance_pct": 0.6844308681356531,
+          "sampled_hausdorff_pct": 2.4818244401880465,
+          "normal_consistency": 0.9245729339701041,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269207
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0012",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.575185075093698,
+          "p95_distance_pct": 0.796690577975484,
+          "sampled_hausdorff_pct": 5.037209085680342,
+          "normal_consistency": 0.9154443695518139,
+          "vertices": 14650,
+          "faces": 28684,
+          "decoded_bytes": 548911
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.37403448653531757,
+          "p95_distance_pct": 0.6429110141360096,
+          "sampled_hausdorff_pct": 1.2496371595362785,
+          "normal_consistency": 0.9626809905773999,
+          "vertices": 162884,
+          "faces": 319616,
+          "decoded_bytes": 11242498
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.40368644099643225,
+          "p95_distance_pct": 0.6781520932800468,
+          "sampled_hausdorff_pct": 2.4321049889501016,
+          "normal_consistency": 0.944819366888315,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1268938
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4136264184910328,
+          "p95_distance_pct": 0.6866636636633816,
+          "sampled_hausdorff_pct": 2.5085532664918584,
+          "normal_consistency": 0.9286691999335761,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269164
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0013",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.5788494749960722,
+          "p95_distance_pct": 0.8014652733501847,
+          "sampled_hausdorff_pct": 4.774964154180809,
+          "normal_consistency": 0.916430128373073,
+          "vertices": 14660,
+          "faces": 28684,
+          "decoded_bytes": 549031
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3747374471230491,
+          "p95_distance_pct": 0.6489458128603627,
+          "sampled_hausdorff_pct": 1.3277652366617496,
+          "normal_consistency": 0.964160887649033,
+          "vertices": 163305,
+          "faces": 319808,
+          "decoded_bytes": 11280922
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.4019037923647133,
+          "p95_distance_pct": 0.6716439312915122,
+          "sampled_hausdorff_pct": 2.5249623297290547,
+          "normal_consistency": 0.9457805278599019,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269005
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4073788618058445,
+          "p95_distance_pct": 0.6794622592379006,
+          "sampled_hausdorff_pct": 2.5556630141564787,
+          "normal_consistency": 0.937297258886368,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269172
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0014",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.58631638672684,
+          "p95_distance_pct": 0.8227911692743,
+          "sampled_hausdorff_pct": 4.849791356143186,
+          "normal_consistency": 0.9115447775592858,
+          "vertices": 14786,
+          "faces": 29020,
+          "decoded_bytes": 554911
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.37890382972922904,
+          "p95_distance_pct": 0.6559751574225586,
+          "sampled_hausdorff_pct": 1.3282133656367683,
+          "normal_consistency": 0.963158423525087,
+          "vertices": 163078,
+          "faces": 319424,
+          "decoded_bytes": 11269358
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.39917164543721234,
+          "p95_distance_pct": 0.6710639088862065,
+          "sampled_hausdorff_pct": 2.544335483649209,
+          "normal_consistency": 0.946121957479354,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269266
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.40752114527475164,
+          "p95_distance_pct": 0.6763543988643699,
+          "sampled_hausdorff_pct": 2.5115440625304966,
+          "normal_consistency": 0.9462639253451092,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269457
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0015",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.6019483887768498,
+          "p95_distance_pct": 0.901656037752281,
+          "sampled_hausdorff_pct": 5.105233038830722,
+          "normal_consistency": 0.8982029128721501,
+          "vertices": 15142,
+          "faces": 29864,
+          "decoded_bytes": 570155
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3776966184182441,
+          "p95_distance_pct": 0.6514069764383812,
+          "sampled_hausdorff_pct": 1.2365273607117624,
+          "normal_consistency": 0.9625100058061298,
+          "vertices": 163402,
+          "faces": 319680,
+          "decoded_bytes": 11279964
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.39927855084497704,
+          "p95_distance_pct": 0.6720190377134035,
+          "sampled_hausdorff_pct": 2.5224671946563486,
+          "normal_consistency": 0.9457212396465374,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269325
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4056161765551655,
+          "p95_distance_pct": 0.673960361429958,
+          "sampled_hausdorff_pct": 2.6593179580193795,
+          "normal_consistency": 0.9544619617082538,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269350
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0016",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.6376050962439981,
+          "p95_distance_pct": 0.9981050732577369,
+          "sampled_hausdorff_pct": 5.491839208406649,
+          "normal_consistency": 0.8789652161497158,
+          "vertices": 15785,
+          "faces": 31142,
+          "decoded_bytes": 594485
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3761002155998459,
+          "p95_distance_pct": 0.6507206174748376,
+          "sampled_hausdorff_pct": 1.2766197660532497,
+          "normal_consistency": 0.9608128397821456,
+          "vertices": 163023,
+          "faces": 319488,
+          "decoded_bytes": 11274561
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.39903341917047364,
+          "p95_distance_pct": 0.6748289419308177,
+          "sampled_hausdorff_pct": 2.323064916268599,
+          "normal_consistency": 0.9456897644323802,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269101
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4196296747621183,
+          "p95_distance_pct": 0.6976461221050863,
+          "sampled_hausdorff_pct": 2.6507244164948873,
+          "normal_consistency": 0.9493701888620447,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269630
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0017",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.6336367479184815,
+          "p95_distance_pct": 1.118449397470417,
+          "sampled_hausdorff_pct": 4.6063064264732265,
+          "normal_consistency": 0.8884542544556582,
+          "vertices": 15992,
+          "faces": 31528,
+          "decoded_bytes": 601987
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3776365717141143,
+          "p95_distance_pct": 0.6502287268005013,
+          "sampled_hausdorff_pct": 1.1592914220090853,
+          "normal_consistency": 0.9599967599355806,
+          "vertices": 163343,
+          "faces": 319424,
+          "decoded_bytes": 11282111
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.3992312925123809,
+          "p95_distance_pct": 0.6714422556852464,
+          "sampled_hausdorff_pct": 2.5859187735408016,
+          "normal_consistency": 0.9462723389071657,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269653
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4355368724510888,
+          "p95_distance_pct": 0.7152275514306204,
+          "sampled_hausdorff_pct": 2.7575825676732237,
+          "normal_consistency": 0.9409866764918849,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269563
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0018",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.6958609446397485,
+          "p95_distance_pct": 1.3210983639270768,
+          "sampled_hausdorff_pct": 5.014020421233621,
+          "normal_consistency": 0.8749806170619276,
+          "vertices": 16901,
+          "faces": 33366,
+          "decoded_bytes": 636789
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3796035952464915,
+          "p95_distance_pct": 0.6534616950612404,
+          "sampled_hausdorff_pct": 1.167310383162039,
+          "normal_consistency": 0.9608538462538367,
+          "vertices": 163333,
+          "faces": 319488,
+          "decoded_bytes": 11287160
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.4003542048565138,
+          "p95_distance_pct": 0.6759808393594547,
+          "sampled_hausdorff_pct": 2.4267323835154855,
+          "normal_consistency": 0.9473744079145153,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269418
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.4530424954784656,
+          "p95_distance_pct": 0.7330235121190654,
+          "sampled_hausdorff_pct": 3.250064795995751,
+          "normal_consistency": 0.9362680159153439,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269318
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0019",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.7524780488406131,
+          "p95_distance_pct": 1.4957906175464417,
+          "sampled_hausdorff_pct": 5.1604240940543065,
+          "normal_consistency": 0.868295277605766,
+          "vertices": 17336,
+          "faces": 34228,
+          "decoded_bytes": 653215
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.37446443745174124,
+          "p95_distance_pct": 0.6432677602412865,
+          "sampled_hausdorff_pct": 1.1626310720021042,
+          "normal_consistency": 0.9609366798448258,
+          "vertices": 163648,
+          "faces": 319104,
+          "decoded_bytes": 11276494
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.3956448402515544,
+          "p95_distance_pct": 0.6699400409004068,
+          "sampled_hausdorff_pct": 2.506526475585823,
+          "normal_consistency": 0.9505967927965683,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1269075
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.5176226995083427,
+          "p95_distance_pct": 0.7471954479299883,
+          "sampled_hausdorff_pct": 4.289524511269236,
+          "normal_consistency": 0.9315322701749411,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269260
+        }
+      }
+    },
+    {
+      "frame": "basketball_player_fr0020",
+      "methods": {
+        "N4MC": {
+          "chamfer_nrmse_pct": 0.9186859995603794,
+          "p95_distance_pct": 2.016619059877666,
+          "sampled_hausdorff_pct": 5.285622077114713,
+          "normal_consistency": 0.8345868232451621,
+          "vertices": 17378,
+          "faces": 34344,
+          "decoded_bytes": 655227
+        },
+        "QNDF": {
+          "chamfer_nrmse_pct": 0.3735873462474506,
+          "p95_distance_pct": 0.6447001352916262,
+          "sampled_hausdorff_pct": 1.2067345997511074,
+          "normal_consistency": 0.9626590142108115,
+          "vertices": 163755,
+          "faces": 319232,
+          "decoded_bytes": 11276619
+        },
+        "TVMC": {
+          "chamfer_nrmse_pct": 0.39807321012939245,
+          "p95_distance_pct": 0.6705444269823904,
+          "sampled_hausdorff_pct": 2.5965690720654644,
+          "normal_consistency": 0.9493900495788288,
+          "vertices": 19670,
+          "faces": 39352,
+          "decoded_bytes": 1268611
+        },
+        "TSMC": {
+          "chamfer_nrmse_pct": 0.7633452371536033,
+          "p95_distance_pct": 1.0713178979142801,
+          "sampled_hausdorff_pct": 5.3794923634736795,
+          "normal_consistency": 0.8967102351236154,
+          "vertices": 19693,
+          "faces": 39393,
+          "decoded_bytes": 1269138
+        }
+      }
+    }
+  ]
+}
