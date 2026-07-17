@@ -1,6 +1,9 @@
-[submodule "modules/tvmc/draco"]
-	path = modules/tvmc/draco
-	url = https://github.com/google/draco
+[submodule "open4d/modules/tvmc/draco"]
+	path = open4d/modules/tvmc/draco
+	url = https://github.com/google/draco.git
 [submodule "open4d/modules/tsmc/draco"]
 	path = open4d/modules/tsmc/draco
 	url = https://github.com/google/draco.git
+[submodule "open4d/modules/tsmc/third_party/sam3"]
+	path = open4d/modules/tsmc/third_party/sam3
+	url = https://github.com/facebookresearch/sam3.git
