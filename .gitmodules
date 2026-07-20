@@ -10,3 +10,6 @@
 [submodule "open4d/modules/Draco/draco"]
 	path = open4d/modules/Draco/draco
 	url = https://github.com/google/draco.git
+[submodule "open4d/modules/mpeg-vdmc-tm"]
+	path = open4d/modules/mpeg-vdmc-tm
+	url = https://github.com/MPEGGroup/mpeg-vdmc-tm.git

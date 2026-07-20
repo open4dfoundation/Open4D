@@ -36,5 +36,12 @@
     "faces": 25748.4,
     "decoded_kb": 893.63,
     "compressed_kb": 210.694
+  },
+  "VDMC": {
+    "chamfer_nrmse_pct": 0.186,
+    "p95_pct": 0.319,
+    "faces": 151084.8,
+    "decoded_kb": 13245.64,
+    "compressed_kb": 6.482
   }
 }

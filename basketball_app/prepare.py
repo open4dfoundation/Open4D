@@ -1,10 +1,11 @@
 """Build comparison animations and metrics for the basketball codec app.
 
 One-time asset builder. For the source reference and each codec (N4MC, QNDF,
-TVMC, TSMC, Draco) it renders the 10-frame basketball sequence as a shaded GIF
-and an error-heatmap GIF (decoded surface distance to the source, shared scale),
-and writes shared surface metrics to metrics.json. Codecs that expose a
-per-frame compressed bitstream (Draco's .drc) also report compressed_kb.
+TVMC, TSMC, Draco, KLT, V-DMC) it renders the 10-frame basketball sequence as a
+shaded GIF and an error-heatmap GIF (decoded surface distance to the source,
+shared scale), and writes shared surface metrics to metrics.json. Codecs that
+expose a compressed bitstream (Draco's .drc, KLT coefficients, V-DMC's .vmesh)
+also report compressed_kb.
 
 Usage:
     python prepare.py            # build every asset
@@ -40,7 +41,7 @@ SAMPLES = 50000                       # surface samples for metrics
 ELEV, AZIM = 8, -80                   # fixed camera
 FPS = 6
 
-METHODS = ["N4MC", "QNDF", "TVMC", "TSMC", "Draco", "KLT"]
+METHODS = ["N4MC", "QNDF", "TVMC", "TSMC", "Draco", "KLT", "VDMC"]
 DRACO_QP = 11                        # Draco operating point shown in the app
 COLORS = {
     "reference": "#B8C0CC",
@@ -50,6 +51,7 @@ COLORS = {
     "TSMC": "#9A7DFF",
     "Draco": "#5B9BD5",
     "KLT": "#E08A3C",
+    "VDMC": "#D6409F",
 }
 
 REF_DIR = ROOT / "open4d/modules/tvmc/arap-volume-tracking/data/basketball_player"
@@ -79,7 +81,17 @@ def method_path(method: str, n: int) -> Path | None:
     if method == "KLT":
         return m / ("KLT/outputs/basketball_sequence_klt/decoded/"
                     f"decoded_basketball_player_fr{n:04d}.obj")
+    if method == "VDMC":
+        return m / ("mpeg-vdmc-tm/outputs/basketball_sequence_vdmc/decoded/"
+                    f"decoded_basketball_player_fr{n:04d}.obj")
     return None
+
+
+# Codecs whose compressed bitstream is a single sequence-level file rather than
+# one file per frame. Reported per-frame as (total size / frame count).
+SEQ_BITSTREAM = {
+    "VDMC": "mpeg-vdmc-tm/outputs/basketball_sequence_vdmc/compressed/basketball_sequence.vmesh",
+}
 
 
 def compressed_paths(method: str, n: int) -> list[Path]:
@@ -243,6 +255,12 @@ def build() -> None:
         # True compressed bitstream size, when the codec exposes one (e.g. Draco .drc)
         if comp_kb:
             metrics[method]["compressed_kb"] = round(float(np.mean(comp_kb)), 3)
+        # Sequence-level bitstream (e.g. V-DMC .vmesh): report total / frame count
+        elif method in SEQ_BITSTREAM:
+            seq = ROOT / "open4d/modules" / SEQ_BITSTREAM[method]
+            if seq.exists():
+                metrics[method]["compressed_kb"] = round(
+                    seq.stat().st_size / 1024 / len(FRAMES), 3)
 
     (APP / "metrics.json").write_text(json.dumps(metrics, indent=2))
     colorbar()

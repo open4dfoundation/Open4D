@@ -1,6 +1,6 @@
 """Basketball 4D mesh codec comparison — a simple single-page Streamlit app.
 
-Shows the source and the N4MC, QNDF, TVMC, TSMC, Draco, and KLT decoded
+Shows the source and the N4MC, QNDF, TVMC, TSMC, Draco, KLT, and V-DMC decoded
 sequences side by side as looping animations, with one toggle to switch to an
 error-heatmap view. Assets are built once by prepare.py.
 """
@@ -11,12 +11,12 @@ import streamlit as st
 
 APP = Path(__file__).resolve().parent
 ASSETS = APP / "assets"
-METHODS = ["N4MC", "QNDF", "TVMC", "TSMC", "Draco", "KLT"]
+METHODS = ["N4MC", "QNDF", "TVMC", "TSMC", "Draco", "KLT", "VDMC"]
 
 st.set_page_config(page_title="Basketball 4D codec comparison", layout="wide")
 st.title("Basketball player · 4D mesh codec comparison")
-st.caption("N4MC, QNDF, TVMC, TSMC, Draco, and KLT decoded from the 10-frame "
-           "basketball_player sequence (fr0011–fr0020).")
+st.caption("N4MC, QNDF, TVMC, TSMC, Draco, KLT, and V-DMC (MPEG standard) "
+           "decoded from the 10-frame basketball_player sequence (fr0011–fr0020).")
 
 if not (ASSETS / "reference.gif").exists():
     st.warning("Assets not built yet. Run:  `python prepare.py`  then reload.")
@@ -60,6 +60,9 @@ if metrics_file.exists():
     st.caption("Distances are % of the source bounding-box diagonal (lower is better). "
                "Decoded size is the on-disk mesh file. Compressed size is the actual "
                "codec bitstream where available (Draco .drc; KLT per-frame coefficients "
-               "+ codebook, excluding the amortized basis); “—” means the codec does not "
+               "+ codebook, excluding the amortized basis; V-DMC .vmesh sequence "
+               "bitstream reported as total / frame count); “—” means the codec does not "
                "expose a comparable per-frame bitstream here. KLT is reconstructed from a "
-               "128³ TSDF and aligned to the source, so it is resampled geometry.")
+               "128³ TSDF and aligned to the source, so it is resampled geometry. "
+               "V-DMC is the MPEG standard (test model v14.0), geometry-only, encoded "
+               "from 12-bit quantized input.")
