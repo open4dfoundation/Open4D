@@ -26,6 +26,7 @@ Open4D/
 │   └── modules/
 │       ├── Draco/
 │       ├── KLT/
+│       ├── MeshReduce/
 │       ├── N4MC/
 │       ├── Quantized-Neural-Displacement-Fields/
 │       ├── tsmc/
@@ -76,6 +77,9 @@ Python API.
 - **KLT** — Karhunen–Loève Transform baseline that compresses TSDF voxel blocks
   with a learned linear basis and quantized coefficients, reconstructing meshes
   via marching cubes.
+- **MeshReduce** — live K4A-compatible RGB-D capture and CUDA TSDF
+  reconstruction with QEM reduction, projective texturing, Google Draco
+  geometry encoding, and raw or Draco-framed TCP output.
 
 Each module has its own README and environment requirements. TVMC currently
 targets Python 3.10; TSMC targets Python 3.12. Treat module environments as

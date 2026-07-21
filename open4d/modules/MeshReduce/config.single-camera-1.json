@@ -1,0 +1,30 @@
+{
+  "devices": [
+    {
+      "index": 0,
+      "serial": "CL8K14101EY",
+      "world_to_camera": [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "calibrated": true
+    }
+  ],
+  "capture": {
+    "frames": 30,
+    "max_timestamp_skew_usec": 20000
+  },
+  "reconstruction": {
+    "voxel_size": 0.005,
+    "block_count": 20000,
+    "depth_scale": 1000.0,
+    "depth_max": 3.0,
+    "trunc_voxel_multiplier": 4.0
+  },
+  "output": {
+    "camera_0": "/tmp/meshreduce_camera_1_single.ply",
+    "shared": "/tmp/meshreduce_camera_1_single_shared.ply"
+  }
+}

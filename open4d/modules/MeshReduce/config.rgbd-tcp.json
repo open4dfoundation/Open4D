@@ -1,0 +1,42 @@
+{
+  "device": {
+    "index": 0,
+    "serial": "CL8K14101EY"
+  },
+  "capture": {
+    "frames": 3,
+    "fps": 15,
+    "color_resolution": "1080p",
+    "depth_mode": "nfov_unbinned",
+    "startup_attempts": 6,
+    "timeout_ms": 5000
+  },
+  "reconstruction": {
+    "voxel_size": 0.01,
+    "block_count": 20000,
+    "depth_scale": 1000.0,
+    "depth_max": 3.0,
+    "trunc_voxel_multiplier": 4.0
+  },
+  "reduction": {
+    "enabled": true,
+    "target_reduction": 0.5
+  },
+  "draco": {
+    "enabled": true,
+    "encoding_speed": 5,
+    "decoding_speed": 5,
+    "position_quantization_bits": 11,
+    "normal_quantization_bits": 8,
+    "texcoord_quantization_bits": 10
+  },
+  "output": {
+    "prefix": "/tmp/meshreduce_rgbd_tcp"
+  },
+  "network": {
+    "enabled": true,
+    "format": "draco",
+    "bind_address": "127.0.0.1",
+    "port": 33669
+  }
+}
