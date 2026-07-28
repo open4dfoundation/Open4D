@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -77,6 +78,21 @@ Tensor ParseMatrix4(const Json::Value &value) {
     return matrix;
 }
 
+k4a_wired_sync_mode_t ParseSyncMode(const std::string &value) {
+    if (value == "standalone") return K4A_WIRED_SYNC_MODE_STANDALONE;
+    if (value == "primary" || value == "master") {
+        return K4A_WIRED_SYNC_MODE_MASTER;
+    }
+    if (value == "subordinate") return K4A_WIRED_SYNC_MODE_SUBORDINATE;
+    throw std::runtime_error("sync_mode must be standalone, primary, or subordinate");
+}
+
+const char *SyncModeName(k4a_wired_sync_mode_t mode) {
+    if (mode == K4A_WIRED_SYNC_MODE_MASTER) return "primary";
+    if (mode == K4A_WIRED_SYNC_MODE_SUBORDINATE) return "subordinate";
+    return "standalone";
+}
+
 CaptureFrame GetFrame(Camera &camera) {
     CaptureFrame frame;
     for (int attempt = 0; attempt < 6; ++attempt) {
@@ -88,8 +104,7 @@ CaptureFrame GetFrame(Camera &camera) {
         frame.depth = frame.capture.get_depth_image();
         if (!frame.depth.is_valid()) continue;
         frame.timestamp_usec = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
+            frame.depth.get_device_timestamp().count());
         return frame;
     }
     throw std::runtime_error("capture timeout for " + camera.serial);
@@ -184,11 +199,25 @@ int main(int argc, char **argv) {
             throw std::runtime_error("one or two devices are required");
         }
 
-        k4a_device_configuration_t camera_config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
-        camera_config.camera_fps = K4A_FRAMES_PER_SECOND_15;
-        camera_config.depth_mode = K4A_DEPTH_MODE_NFOV_UNBINNED;
-        camera_config.synchronized_images_only = false;
-        camera_config.wired_sync_mode = K4A_WIRED_SYNC_MODE_STANDALONE;
+        std::vector<k4a_device_configuration_t> camera_configs(devices.size());
+        for (Json::ArrayIndex wanted = 0; wanted < devices.size(); ++wanted) {
+            auto &camera_config = camera_configs[wanted];
+            camera_config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
+            camera_config.camera_fps = K4A_FRAMES_PER_SECOND_15;
+            camera_config.depth_mode = K4A_DEPTH_MODE_NFOV_UNBINNED;
+            camera_config.wired_sync_mode = ParseSyncMode(
+                devices[wanted].get("sync_mode", "standalone").asString());
+            camera_config.subordinate_delay_off_master_usec =
+                devices[wanted].get("subordinate_delay_usec", 0).asInt();
+            if (camera_config.wired_sync_mode != K4A_WIRED_SYNC_MODE_STANDALONE) {
+                // K4A-compatible synchronization is tied to the color capture
+                // cadence, so keep color enabled even though this tool only
+                // integrates depth.
+                camera_config.color_format = K4A_IMAGE_FORMAT_COLOR_BGRA32;
+                camera_config.color_resolution = K4A_COLOR_RESOLUTION_720P;
+                camera_config.synchronized_images_only = true;
+            }
+        }
 
         std::vector<Camera> cameras;
         const uint32_t installed = k4a::device::get_installed_count();
@@ -225,14 +254,29 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("device index " + std::to_string(device_index) +
                     " is " + detected_serial + ", expected " + serial);
             }
-            cameras.emplace_back(device_index, serial, std::move(opened), camera_config,
+            cameras.emplace_back(device_index, serial, std::move(opened),
+                                 camera_configs[wanted],
                                  ParseMatrix4(devices[wanted]["world_to_camera"]));
         }
 
-        for (auto &camera : cameras) {
-            camera.device.start_cameras(&camera_config);
-            std::cout << "started index=" << camera.index
-                      << " serial=" << camera.serial << '\n';
+        // Subordinates must be listening before the primary begins emitting
+        // synchronization pulses.
+        const k4a_wired_sync_mode_t start_order[] = {
+            K4A_WIRED_SYNC_MODE_SUBORDINATE,
+            K4A_WIRED_SYNC_MODE_MASTER,
+            K4A_WIRED_SYNC_MODE_STANDALONE};
+        for (const auto mode : start_order) {
+            for (size_t camera_index = 0; camera_index < cameras.size(); ++camera_index) {
+                if (camera_configs[camera_index].wired_sync_mode != mode) continue;
+                cameras[camera_index].device.start_cameras(&camera_configs[camera_index]);
+                std::cout << "started index=" << cameras[camera_index].index
+                          << " serial=" << cameras[camera_index].serial
+                          << " sync_mode=" << SyncModeName(mode)
+                          << " subordinate_delay_us="
+                          << camera_configs[camera_index].subordinate_delay_off_master_usec
+                          << '\n';
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
         }
 
         const auto &rc = config["reconstruction"];

@@ -1,4 +1,5 @@
 #include <k4a/k4a.hpp>
+#include <k4arecord/playback.hpp>
 #include <jsoncpp/json/json.h>
 #include <open3d/Open3D.h>
 #include <open3d/core/CUDAUtils.h>
@@ -19,6 +20,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -33,6 +35,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "reconstruction/texture_mapping.hpp"
 
 namespace {
 
@@ -144,11 +148,31 @@ Image DepthToCuda(const k4a::image &depth) {
 }
 
 cv::Mat ColorToRgb(const k4a::image &color) {
+    if (color.get_format() == K4A_IMAGE_FORMAT_COLOR_MJPG) {
+        const cv::Mat encoded(
+            1, static_cast<int>(color.get_size()), CV_8UC1,
+            const_cast<uint8_t *>(color.get_buffer()));
+        cv::Mat bgr = cv::imdecode(encoded, cv::IMREAD_COLOR);
+        if (bgr.empty()) throw std::runtime_error("failed to decode MJPEG color frame");
+        cv::Mat rgb;
+        cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+        return rgb;
+    }
+    if (color.get_format() != K4A_IMAGE_FORMAT_COLOR_BGRA32) {
+        throw std::runtime_error("unsupported K4A color format");
+    }
     cv::Mat bgra(color.get_height_pixels(), color.get_width_pixels(), CV_8UC4,
                  const_cast<uint8_t *>(color.get_buffer()), color.get_stride_bytes());
     cv::Mat rgb;
     cv::cvtColor(bgra, rgb, cv::COLOR_BGRA2RGB);
     return rgb;
+}
+
+cv::Mat DepthToCv(const k4a::image &depth) {
+    cv::Mat view(depth.get_height_pixels(), depth.get_width_pixels(), CV_16UC1,
+                 const_cast<uint8_t *>(depth.get_buffer()),
+                 depth.get_stride_bytes());
+    return view.clone();
 }
 
 Tensor MakeIntrinsic(const k4a::calibration &calibration) {
@@ -177,23 +201,24 @@ void Integrate(VoxelBlockGrid &grid, const Image &depth, const Tensor &intrinsic
 
 std::vector<Eigen::Vector2d> ProjectUvs(
     const open3d::geometry::TriangleMesh &mesh,
-    const k4a::calibration &calibration,
-    int width,
-    int height) {
-    const auto &p = calibration.color_camera_calibration.intrinsics.parameters.param;
-    std::vector<Eigen::Vector2d> uvs;
-    uvs.reserve(mesh.triangles_.size() * 3);
-    for (const auto &triangle : mesh.triangles_) {
-        for (int corner = 0; corner < 3; ++corner) {
-            const Eigen::Vector3d &point = mesh.vertices_.at(triangle(corner));
-            double u = 0.0;
-            double v = 0.0;
-            if (point.z() > 0.0) {
-                u = (p.fx * point.x() / point.z() + p.cx) / width;
-                v = 1.0 - (p.fy * point.y() / point.z() + p.cy) / height;
-            }
-            uvs.emplace_back(std::clamp(u, 0.0, 1.0), std::clamp(v, 0.0, 1.0));
-        }
+    const Tensor &intrinsic,
+    const cv::Mat &depth) {
+    auto tensor_mesh = open3d::t::geometry::TriangleMesh::FromLegacy(
+        mesh, Dtype::Float32, Dtype::Int32, kCpu);
+    std::vector<Tensor> intrinsics{intrinsic};
+    std::vector<Tensor> extrinsics{
+        Tensor::Eye(4, Dtype::Float64, kCpu)};
+    std::vector<cv::Mat> depths{depth};
+    optimized_multi_cam_uv(
+        &tensor_mesh, std::move(intrinsics), std::move(extrinsics), &depths);
+
+    Tensor uv_tensor =
+        tensor_mesh.GetTriangleAttr("texture_uvs").To(kCpu).Contiguous();
+    const float *values = uv_tensor.GetDataPtr<float>();
+    std::vector<Eigen::Vector2d> uvs(
+        static_cast<size_t>(uv_tensor.NumElements() / 2));
+    for (size_t index = 0; index < uvs.size(); ++index) {
+        uvs[index] = Eigen::Vector2d(values[index * 2], values[index * 2 + 1]);
     }
     return uvs;
 }
@@ -461,6 +486,12 @@ void SendDracoFrame(const Json::Value &network,
 
 int main(int argc, char **argv) {
     try {
+        using Clock = std::chrono::steady_clock;
+        const auto total_start = Clock::now();
+        const auto elapsed_ms = [](Clock::time_point start,
+                                   Clock::time_point end) {
+            return std::chrono::duration<double, std::milli>(end - start).count();
+        };
         if (argc != 2) {
             std::cerr << "usage: " << argv[0] << " <config.rgbd.json>\n";
             return 2;
@@ -473,6 +504,8 @@ int main(int argc, char **argv) {
         }
 
         const Json::Value capture = config["capture"];
+        const std::string recording_path =
+            config["input"].get("recording", "").asString();
         k4a_device_configuration_t camera_config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
         camera_config.camera_fps = ParseFps(capture.get("fps", 15).asInt());
         camera_config.color_format = K4A_IMAGE_FORMAT_COLOR_BGRA32;
@@ -483,16 +516,29 @@ int main(int argc, char **argv) {
         camera_config.synchronized_images_only = true;
         camera_config.wired_sync_mode = K4A_WIRED_SYNC_MODE_STANDALONE;
 
-        const uint32_t device_index = ResolveDevice(config["device"]);
-        auto device = k4a::device::open(device_index);
-        const std::string serial = device.get_serialnum();
-        const auto calibration = device.get_calibration(
-            camera_config.depth_mode, camera_config.color_resolution);
+        std::unique_ptr<k4a::device> device;
+        std::unique_ptr<k4a::playback> playback;
+        k4a::calibration calibration;
+        std::string source_name;
+        if (!recording_path.empty()) {
+            playback = std::make_unique<k4a::playback>(
+                k4a::playback::open(recording_path.c_str()));
+            calibration = playback->get_calibration();
+            source_name = recording_path;
+            std::cout << "opened RGB-D recording=" << recording_path << '\n';
+        } else {
+            const uint32_t device_index = ResolveDevice(config["device"]);
+            device = std::make_unique<k4a::device>(
+                k4a::device::open(device_index));
+            source_name = device->get_serialnum();
+            calibration = device->get_calibration(
+                camera_config.depth_mode, camera_config.color_resolution);
+            device->start_cameras(&camera_config);
+            std::cout << "started RGB-D camera index=" << device_index
+                      << " serial=" << source_name << '\n';
+        }
         const Tensor intrinsic = MakeIntrinsic(calibration);
         auto transformation = k4a::transformation(calibration);
-        device.start_cameras(&camera_config);
-        std::cout << "started RGB-D camera index=" << device_index
-                  << " serial=" << serial << '\n';
 
         SingleFrameQueue queue;
         std::exception_ptr capture_error;
@@ -503,15 +549,22 @@ int main(int argc, char **argv) {
             try {
                 int produced = 0;
                 int failures = 0;
-                while (produced < frame_count) {
+                while (frame_count <= 0 || produced < frame_count) {
                     k4a::capture captured;
-                    if (!device.get_capture(&captured, std::chrono::milliseconds(timeout_ms))) {
-                        if (++failures >= attempts) {
-                            throw std::runtime_error("timed out waiting for RGB-D capture");
+                    if (playback) {
+                        if (!playback->get_next_capture(&captured)) break;
+                    } else {
+                        if (!device->get_capture(
+                                &captured,
+                                std::chrono::milliseconds(timeout_ms))) {
+                            if (++failures >= attempts) {
+                                throw std::runtime_error(
+                                    "timed out waiting for RGB-D capture");
+                            }
+                            std::cerr << "waiting for valid RGB-D frame attempt="
+                                      << failures << '/' << attempts << '\n';
+                            continue;
                         }
-                        std::cerr << "waiting for valid RGB-D frame attempt="
-                                  << failures << '/' << attempts << '\n';
-                        continue;
                     }
                     k4a::image color = captured.get_color_image();
                     k4a::image depth = captured.get_depth_image();
@@ -532,33 +585,67 @@ int main(int argc, char **argv) {
         auto grid = MakeGrid(reconstruction.get("voxel_size", 0.01).asFloat(),
                              reconstruction.get("block_count", 20000).asInt());
         cv::Mat last_texture;
+        cv::Mat last_depth;
+        double integration_ms = 0.0;
         int integrated = 0;
         Frame frame;
         while (queue.Get(frame)) {
+            const auto integration_start = Clock::now();
             Image depth = DepthToCuda(frame.depth_in_color);
             Integrate(*grid, depth, intrinsic,
                       reconstruction.get("depth_scale", 1000.0).asFloat(),
                       reconstruction.get("depth_max", 3.0).asFloat(),
                       reconstruction.get("trunc_voxel_multiplier", 4.0).asFloat());
+            open3d::core::cuda::Synchronize(kCuda);
+            integration_ms += elapsed_ms(integration_start, Clock::now());
             last_texture = ColorToRgb(frame.color).clone();
+            last_depth = DepthToCv(frame.depth_in_color);
             std::cout << "integrated RGB-D frame=" << integrated++ << '\n';
         }
         producer.join();
-        device.stop_cameras();
+        if (device) device->stop_cameras();
         if (capture_error) std::rethrow_exception(capture_error);
         if (integrated == 0 || last_texture.empty()) {
             throw std::runtime_error("no RGB-D frames were integrated");
         }
 
-        auto tensor_mesh = grid->ExtractTriangleMesh(0.0f, -1).To(kCpu);
+        const float weight_threshold = reconstruction.get(
+            "weight_threshold", 3.0).asFloat();
+        const auto extraction_start = Clock::now();
+        auto tensor_mesh = grid->ExtractTriangleMesh(weight_threshold, -1).To(kCpu);
+        const double extraction_ms = elapsed_ms(extraction_start, Clock::now());
+        const auto cleanup_start = Clock::now();
         auto mesh = tensor_mesh.ToLegacy();
         mesh.RemoveDuplicatedVertices();
         mesh.RemoveDuplicatedTriangles();
         mesh.RemoveDegenerateTriangles();
         mesh.RemoveUnreferencedVertices();
+
+        const size_t faces_before_component_filter = mesh.triangles_.size();
+        const size_t min_component_triangles = static_cast<size_t>(std::max(
+            0, reconstruction.get("min_component_triangles", 0).asInt()));
+        if (min_component_triangles > 0 && !mesh.triangles_.empty()) {
+            const auto [triangle_clusters, cluster_sizes, cluster_areas] =
+                mesh.ClusterConnectedTriangles();
+            std::vector<bool> remove(mesh.triangles_.size(), false);
+            for (size_t triangle = 0; triangle < triangle_clusters.size(); ++triangle) {
+                const int cluster = triangle_clusters[triangle];
+                remove[triangle] = cluster < 0 ||
+                    cluster_sizes[static_cast<size_t>(cluster)] < min_component_triangles;
+            }
+            mesh.RemoveTrianglesByMask(remove);
+            mesh.RemoveUnreferencedVertices();
+        }
+        const double cleanup_ms = elapsed_ms(cleanup_start, Clock::now());
+        std::cout << "extraction weight_threshold=" << weight_threshold
+                  << " faces_before_component_filter="
+                  << faces_before_component_filter
+                  << " faces_after_component_filter=" << mesh.triangles_.size()
+                  << '\n';
         const size_t original_faces = mesh.triangles_.size();
 
         const Json::Value reduction = config["reduction"];
+        const auto qem_start = Clock::now();
         if (reduction.get("enabled", false).asBool() && original_faces > 4) {
             const double target_reduction = std::clamp(
                 reduction.get("target_reduction", 0.5).asDouble(), 0.0, 0.99);
@@ -571,16 +658,26 @@ int main(int argc, char **argv) {
             mesh.RemoveUnreferencedVertices();
         }
         mesh.ComputeVertexNormals();
-        const auto uvs = ProjectUvs(mesh, calibration,
-                                    last_texture.cols, last_texture.rows);
+        const double qem_ms = elapsed_ms(qem_start, Clock::now());
 
-        const std::string prefix = config["output"].get(
-            "prefix", "/tmp/meshreduce_rgbd").asString();
+        const auto uv_start = Clock::now();
+        const auto uvs = ProjectUvs(mesh, intrinsic, last_depth);
+        const double uv_ms = elapsed_ms(uv_start, Clock::now());
+
+        const char *prefix_override = std::getenv("MESHREDUCE_OUTPUT_PREFIX");
+        const std::string prefix =
+            prefix_override != nullptr
+                ? prefix_override
+                : config["output"].get(
+                      "prefix", "/tmp/meshreduce_rgbd").asString();
         std::filesystem::create_directories(std::filesystem::path(prefix).parent_path());
+        const auto mesh_output_start = Clock::now();
         if (!open3d::io::WriteTriangleMesh(prefix + ".ply", mesh, true, false, true)) {
             throw std::runtime_error("failed to write PLY output");
         }
         WriteTexturedObj(prefix, mesh, uvs, last_texture);
+        const double mesh_output_ms =
+            elapsed_ms(mesh_output_start, Clock::now());
 
         const Json::Value draco_options = config["draco"];
         const Json::Value network = config["network"];
@@ -589,7 +686,9 @@ int main(int argc, char **argv) {
         const bool draco_enabled = draco_options.get("enabled", false).asBool() ||
                                    (network_enabled && network_format == "draco");
         std::vector<uint8_t> draco_data;
+        double draco_ms = 0.0;
         if (draco_enabled) {
+            const auto draco_start = Clock::now();
             draco_data = EncodeDraco(mesh, uvs, draco_options);
             const std::string draco_path = prefix + ".drc";
             std::ofstream draco_output(draco_path, std::ios::binary);
@@ -598,6 +697,7 @@ int main(int argc, char **argv) {
             if (!draco_output) {
                 throw std::runtime_error("failed to write " + draco_path);
             }
+            draco_ms = elapsed_ms(draco_start, Clock::now());
             std::cout << "wrote " << draco_path << " bytes=" << draco_data.size()
                       << '\n';
         }
@@ -615,6 +715,56 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("network.format must be raw or draco");
             }
         }
+
+        const char *cuda_disabled =
+            std::getenv("MESHREDUCE_DISABLE_CUDA_TEXTURE_MAPPING");
+        const char *omp_threads = std::getenv("OMP_NUM_THREADS");
+        const bool cpu_mapping =
+            cuda_disabled != nullptr && std::string(cuda_disabled) != "0";
+        const std::string texture_mode =
+            cpu_mapping
+                ? ((omp_threads != nullptr && std::string(omp_threads) == "1")
+                       ? "serial_cpu"
+                       : "openmp_cpu")
+                : "cuda";
+        const double total_ms = elapsed_ms(total_start, Clock::now());
+
+        Json::Value metrics;
+        metrics["source"] = source_name;
+        metrics["texture_mapping_mode"] = texture_mode;
+        metrics["frames_integrated"] = integrated;
+        metrics["vertices"] = static_cast<Json::UInt64>(mesh.vertices_.size());
+        metrics["faces_before_qem"] = static_cast<Json::UInt64>(original_faces);
+        metrics["faces_after_qem"] =
+            static_cast<Json::UInt64>(mesh.triangles_.size());
+        metrics["timing_ms"]["integration"] = integration_ms;
+        metrics["timing_ms"]["extraction"] = extraction_ms;
+        metrics["timing_ms"]["cleanup"] = cleanup_ms;
+        metrics["timing_ms"]["qem_and_normals"] = qem_ms;
+        metrics["timing_ms"]["texture_mapping"] = uv_ms;
+        metrics["timing_ms"]["mesh_outputs"] = mesh_output_ms;
+        metrics["timing_ms"]["draco"] = draco_ms;
+        metrics["timing_ms"]["total"] = total_ms;
+        metrics["artifact_bytes"]["ply"] =
+            static_cast<Json::UInt64>(std::filesystem::file_size(prefix + ".ply"));
+        metrics["artifact_bytes"]["obj"] =
+            static_cast<Json::UInt64>(std::filesystem::file_size(prefix + ".obj"));
+        metrics["artifact_bytes"]["texture_png"] = static_cast<Json::UInt64>(
+            std::filesystem::file_size(prefix + "_texture.png"));
+        if (draco_enabled) {
+            metrics["artifact_bytes"]["drc"] = static_cast<Json::UInt64>(
+                std::filesystem::file_size(prefix + ".drc"));
+        }
+        const std::string metrics_path = prefix + "_metrics.json";
+        std::ofstream metrics_output(metrics_path);
+        metrics_output << metrics << '\n';
+        if (!metrics_output) {
+            throw std::runtime_error("failed to write " + metrics_path);
+        }
+        Json::StreamWriterBuilder compact;
+        compact["indentation"] = "";
+        std::cout << "MESHREDUCE_METRICS "
+                  << Json::writeString(compact, metrics) << '\n';
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "fatal: " << error.what() << '\n';

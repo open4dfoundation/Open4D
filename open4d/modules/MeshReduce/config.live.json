@@ -1,0 +1,32 @@
+{
+  "device": {
+    "index": 0,
+    "serial": "CL8K14101EY"
+  },
+  "capture": {
+    "fps": 15,
+    "color_resolution": "720p",
+    "depth_mode": "nfov_2x2binned",
+    "timeout_ms": 2000,
+    "max_frames": 0
+  },
+  "geometry": {
+    "stride": 4,
+    "edge_threshold_mm": 50,
+    "min_depth_mm": 200,
+    "max_depth_mm": 3000
+  },
+  "draco": {
+    "encoding_speed": 8,
+    "decoding_speed": 8,
+    "position_quantization_bits": 11,
+    "texcoord_quantization_bits": 10
+  },
+  "image": {
+    "jpeg_quality": 75
+  },
+  "network": {
+    "bind_address": "0.0.0.0",
+    "port": 33669
+  }
+}

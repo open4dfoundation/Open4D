@@ -32,6 +32,28 @@ cmake --build build --target rgbd_streamer -j2
 ./build/app/rgbd_streamer config.rgbd.json
 ```
 
+### Texture-mapping acceleration
+
+The reconstruction library uses a custom CUDA path for multi-camera vertex
+projection, depth-occlusion testing, camera selection, and triangle-UV
+generation. If CUDA cannot be initialized or the depth inputs are incompatible,
+the same operation falls back to OpenMP-parallel CPU loops.
+
+CUDA kernels and OpenMP are enabled by default. They can be configured
+independently:
+
+```bash
+CUDACXX=/usr/local/cuda/bin/nvcc cmake -S . -B build \
+  -DMESHREDUCE_ENABLE_CUDA_KERNELS=ON \
+  -DMESHREDUCE_ENABLE_OPENMP=ON
+cmake --build build --target sensor_client -j8
+ctest --test-dir build --output-on-failure
+```
+
+Set `MESHREDUCE_DISABLE_CUDA_TEXTURE_MAPPING=1` at runtime to force the OpenMP
+fallback for comparison. `MESHREDUCE_CUDA_DEVICE` selects the CUDA device
+(default `0`), and `OMP_NUM_THREADS` controls the CPU worker count.
+
 The output prefix is configured in `config.rgbd.json`. The application writes
 geometry as PLY and a textured OBJ/MTL/PNG set. Set `network.enabled` to `true`
 to listen for one TCP receiver. `tools/receive_mesh_frame.py` is a protocol

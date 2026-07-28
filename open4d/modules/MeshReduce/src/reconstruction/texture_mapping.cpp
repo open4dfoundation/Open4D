@@ -1,15 +1,154 @@
 #include "texture_mapping.hpp"
 
 #include <Eigen/Core>
+#include <cstdlib>
 #include <cmath>
+#include <cstring>
 #include <opencv2/opencv.hpp>
+#include <string>
+#include <vector>
 
 #include "open3d/Open3D.h"
+
+#ifdef MESHREDUCE_HAS_CUDA_TEXTURE_MAPPING
+#include "texture_mapping_cuda.hpp"
+#endif
 
 using namespace open3d;
 
 uint32_t H_RES, V_RES;
 uint32_t device_count;
+
+namespace {
+
+#ifdef MESHREDUCE_HAS_CUDA_TEXTURE_MAPPING
+bool cuda_texture_mapping_enabled()
+{
+  const char* disabled = std::getenv("MESHREDUCE_DISABLE_CUDA_TEXTURE_MAPPING");
+  return disabled == nullptr || std::string(disabled) == "0";
+}
+
+bool try_cuda_texture_mapping(
+    const Eigen::MatrixXf& vertices,
+    const Eigen::MatrixXi& triangles,
+    const std::vector<core::Tensor>& intrinsic_list,
+    const std::vector<core::Tensor>& extrinsic_list,
+    const std::vector<cv::Mat>& depth_images,
+    core::Tensor* output,
+    std::string* error)
+{
+  if (intrinsic_list.empty() || intrinsic_list.size() != extrinsic_list.size()
+      || intrinsic_list.size() != depth_images.size())
+  {
+    *error = "camera calibration and depth-image counts do not match";
+    return false;
+  }
+
+  const int width = depth_images.front().cols;
+  const int height = depth_images.front().rows;
+  const int camera_count = static_cast<int>(intrinsic_list.size());
+  std::vector<float> packed_vertices(
+      static_cast<std::size_t>(vertices.rows()) * 3);
+  std::vector<int> packed_triangles(
+      static_cast<std::size_t>(triangles.rows()) * 3);
+  std::vector<float> packed_intrinsics(
+      static_cast<std::size_t>(camera_count) * 9);
+  std::vector<float> packed_extrinsics(
+      static_cast<std::size_t>(camera_count) * 16);
+  std::vector<std::uint16_t> packed_depth(
+      static_cast<std::size_t>(camera_count) * width * height);
+
+#pragma omp parallel for schedule(static)
+  for (Eigen::Index vertex = 0; vertex < vertices.rows(); ++vertex)
+  {
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      packed_vertices[static_cast<std::size_t>(vertex) * 3 + axis]
+          = vertices(vertex, axis);
+    }
+  }
+
+#pragma omp parallel for schedule(static)
+  for (Eigen::Index triangle = 0; triangle < triangles.rows(); ++triangle)
+  {
+    for (int corner = 0; corner < 3; ++corner)
+    {
+      packed_triangles[static_cast<std::size_t>(triangle) * 3 + corner]
+          = triangles(triangle, corner);
+    }
+  }
+
+  for (int camera = 0; camera < camera_count; ++camera)
+  {
+    const cv::Mat& depth = depth_images[camera];
+    if (depth.type() != CV_16UC1 || depth.cols != width || depth.rows != height)
+    {
+      *error = "CUDA texture mapping requires equal-size CV_16UC1 depth images";
+      return false;
+    }
+
+    const Eigen::MatrixXf intrinsic
+        = core::eigen_converter::TensorToEigenMatrixXf(
+            intrinsic_list[camera]);
+    const Eigen::MatrixXf extrinsic
+        = core::eigen_converter::TensorToEigenMatrixXf(
+            extrinsic_list[camera]);
+    if (intrinsic.rows() < 3 || intrinsic.cols() < 3
+        || extrinsic.rows() < 4 || extrinsic.cols() < 4)
+    {
+      *error = "CUDA texture mapping received an invalid calibration matrix";
+      return false;
+    }
+
+    for (int row = 0; row < 3; ++row)
+    {
+      for (int column = 0; column < 3; ++column)
+      {
+        packed_intrinsics[
+            static_cast<std::size_t>(camera) * 9 + row * 3 + column]
+            = intrinsic(row, column);
+      }
+    }
+    for (int row = 0; row < 4; ++row)
+    {
+      for (int column = 0; column < 4; ++column)
+      {
+        packed_extrinsics[
+            static_cast<std::size_t>(camera) * 16 + row * 4 + column]
+            = extrinsic(row, column);
+      }
+    }
+    std::uint16_t* destination
+        = packed_depth.data()
+          + static_cast<std::size_t>(camera) * width * height;
+#pragma omp parallel for schedule(static)
+    for (int row = 0; row < height; ++row)
+    {
+      std::memcpy(
+          destination + static_cast<std::size_t>(row) * width,
+          depth.ptr<std::uint16_t>(row),
+          static_cast<std::size_t>(width) * sizeof(std::uint16_t));
+    }
+  }
+
+  return compute_texture_coordinates_cuda(
+      packed_vertices.data(),
+      static_cast<std::size_t>(vertices.rows()),
+      packed_triangles.data(),
+      static_cast<std::size_t>(triangles.rows()),
+      packed_intrinsics.data(),
+      packed_extrinsics.data(),
+      packed_depth.data(),
+      camera_count,
+      width,
+      height,
+      50.0f,
+      output->GetDataPtr<float>(),
+      error);
+}
+#endif
+
+} // namespace
 
 void vertices_to_uv(
     Eigen::MatrixXf camera_intrinsic,
@@ -40,6 +179,9 @@ void multi_vertices_uv_to_triangle_uv(
   Eigen::MatrixXd shift_val(1, 2);
   shift_val << H_RES, 0;
 
+  mesh_uvs->resize(
+      static_cast<std::size_t>(triangle_indices_m->rows()) * 3);
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < triangle_indices_m->rows(); i++)
   {
     Eigen::Vector3i vertex_index = triangle_indices_m->row(i);
@@ -66,9 +208,9 @@ void multi_vertices_uv_to_triangle_uv(
     texture_uv_2(1) /= V_RES;
     texture_uv_2(1) = abs(1.0 - texture_uv_2(1));
 
-    mesh_uvs->push_back(texture_uv_0);
-    mesh_uvs->push_back(texture_uv_1);
-    mesh_uvs->push_back(texture_uv_2);
+    (*mesh_uvs)[static_cast<std::size_t>(i) * 3 + 0] = texture_uv_0;
+    (*mesh_uvs)[static_cast<std::size_t>(i) * 3 + 1] = texture_uv_1;
+    (*mesh_uvs)[static_cast<std::size_t>(i) * 3 + 2] = texture_uv_2;
   }
 }
 
@@ -88,6 +230,7 @@ void tensor_vertices_uv_to_triangle_uv(
   }
   float* texture_uvs_ptr = mesh_uvs->GetDataPtr<float>();
 
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < triangle_indices_m->rows(); i++)
   {
     Eigen::Vector3i vertex_index = triangle_indices_m->row(i);
@@ -141,6 +284,37 @@ void optimized_multi_cam_uv(
   Eigen::MatrixXf triangle_vertices_m
       = core::eigen_converter::TensorToEigenMatrixXf(triangle_vertices);
 
+  const int num_triangles = triangle_indices_m.rows();
+  core::Tensor tensor_mesh_uvs(
+      {num_triangles, 3, 2}, core::Float32, core::Device("CPU:0"));
+
+#ifdef MESHREDUCE_HAS_CUDA_TEXTURE_MAPPING
+  if (cuda_texture_mapping_enabled())
+  {
+    std::string cuda_error;
+    if (try_cuda_texture_mapping(
+            triangle_vertices_m,
+            triangle_indices_m,
+            intrinsic_list,
+            extrinsic_tf_list,
+            *cv_depth_img_list,
+            &tensor_mesh_uvs,
+            &cuda_error))
+    {
+      mesh->SetTriangleAttr("texture_uvs", tensor_mesh_uvs);
+      return;
+    }
+
+    static bool cuda_warning_emitted = false;
+    if (!cuda_warning_emitted)
+    {
+      std::cerr << "CUDA texture mapping unavailable (" << cuda_error
+                << "); using the OpenMP CPU fallback." << std::endl;
+      cuda_warning_emitted = true;
+    }
+  }
+#endif
+
   Eigen::MatrixXf z_error_m(triangle_vertices_m.rows(), device_count);
   std::vector<Eigen::MatrixXd> mesh_uvs(device_count);
   std::vector<Eigen::MatrixXf> all_triangle_vertices_tf;
@@ -175,9 +349,9 @@ void optimized_multi_cam_uv(
   // }
 
   Eigen::VectorXi min_indices(z_error_m.rows());
-  float min_threshold = 50; // Adjust the threshold as per your requirements
   float max_threshold = 50; // Adjust the threshold as per your requirements
 
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < z_error_m.rows(); i++)
   {
     Eigen::MatrixXf::Index min_index
@@ -196,9 +370,6 @@ void optimized_multi_cam_uv(
     min_indices(i) = min_index;
   }
 
-  int num_triangles = triangle_indices_m.rows();
-  core::Tensor tensor_mesh_uvs(
-      {num_triangles, 3, 2}, core::Float32, core::Device("CPU:0"));
   tensor_vertices_uv_to_triangle_uv(
       &mesh_uvs, &triangle_indices_m, &min_indices, &tensor_mesh_uvs);
 
@@ -217,6 +388,7 @@ void multi_occlusion_test(
   Eigen::VectorXf vertex_z = float_vertices_tf->col(2) * 1000;
   Eigen::VectorXf depth_m(vertex_z.rows());
 
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < uvs.rows(); i++)
   {
     Eigen::Vector2d uv = uvs.row(i);
@@ -285,6 +457,7 @@ void test_depth_optimized_multi_cam_uv(
   }
 
   Eigen::VectorXi min_indeces(z_error_m.rows());
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < z_error_m.rows(); i++)
   {
     Eigen::MatrixXf::Index min_index;
@@ -314,6 +487,7 @@ void test_depth_occlusion_test(
   Eigen::VectorXf vertex_z = float_vertices_tf->col(2) * 1000;
   Eigen::VectorXf depth_m(vertex_z.rows());
 
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < uvs.rows(); i++)
   {
     Eigen::Vector2d uv = uvs.row(i);
@@ -342,6 +516,7 @@ void vertices_uv_to_triangle_uv(
 
   int num_triangles = triangle_indices_m->rows();
   float* texture_uvs_ptr = mesh_uvs->GetDataPtr<float>();
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < num_triangles; i++)
   {
     Eigen::Vector3i xyz = triangle_indices_m->row(i);
