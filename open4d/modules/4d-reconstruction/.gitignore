@@ -1,5 +1,6 @@
 .DS_Store
 build/
+output/
 outputs/
 output_backup/
 *.ply

@@ -2,6 +2,19 @@
   "devices": [
     {
       "serial": "CL8K14101J3",
+      "sync_mode": "subordinate",
+      "subordinate_delay_usec": 160,
+      "world_to_camera": [
+        [0.966593120143280, 0.029673482756548, -0.254592271118162, 0.243474131249933],
+        [-0.026576838672533, 0.999525118880559, 0.015595139419728, -0.024623219289603],
+        [0.254934132155914, -0.008307896754151, 0.966922730684010, 0.024247649253842],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "calibrated": true
+    },
+    {
+      "serial": "CL8K14101EY",
+      "sync_mode": "primary",
       "world_to_camera": [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
@@ -9,32 +22,22 @@
         [0.0, 0.0, 0.0, 1.0]
       ],
       "calibrated": true
-    },
-    {
-      "serial": "CL8K14101EY",
-      "world_to_camera": [
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0]
-      ],
-      "calibrated": false
     }
   ],
   "capture": {
     "frames": 15,
-    "max_timestamp_skew_usec": 20000
+    "max_timestamp_skew_usec": 3000
   },
   "reconstruction": {
     "voxel_size": 0.01,
     "block_count": 10000,
     "depth_scale": 1000.0,
-    "depth_max": 5.0,
+    "depth_max": 3.86,
     "trunc_voxel_multiplier": 4.0
   },
   "output": {
     "camera_0": "/tmp/meshreduce_camera_0.ply",
     "camera_1": "/tmp/meshreduce_camera_1.ply",
-    "shared": "/tmp/meshreduce_shared_uncalibrated.ply"
+    "shared": "/tmp/4d-reconstruction_two_camera_fused.ply"
   }
 }
