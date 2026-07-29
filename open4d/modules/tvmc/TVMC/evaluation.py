@@ -1,12 +1,11 @@
 import argparse
 import open3d as o3d
 import numpy as np
-from copy import deepcopy
 import trimesh
 import subprocess
 import os
 import time
-from scipy.spatial.distance import directed_hausdorff
+from scipy.spatial import cKDTree
 import re
 import json
 
@@ -40,21 +39,25 @@ outputPath = args.outputPath
 decoding_time = 0
 
 
+def is_fresh(path, *inputs):
+    if not os.path.exists(path):
+        return False
+    output_mtime = os.path.getmtime(path)
+    return all(os.path.exists(item) and os.path.getmtime(item) <= output_mtime
+               for item in inputs)
+
+
 def subdivide_surface_fitting(decimated_mesh, target_mesh, iterations=1):
     subdivided_mesh = o3d.geometry.TriangleMesh.subdivide_midpoint(decimated_mesh, number_of_iterations=iterations)
     #print(subdivided_mesh)
     subdivided_mesh.compute_vertex_normals()
 
-    pcd_target = o3d.geometry.PointCloud()
-    pcd_target.points = o3d.utility.Vector3dVector(target_mesh.vertices)
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd_target)
-    subdivided_vertices = np.array(subdivided_mesh.vertices)
-    target_vertices = np.array(target_mesh.vertices)
-    fitting_vertices = deepcopy(subdivided_vertices)
-
-    for i in range(0, len(subdivided_vertices)):
-        [k, index, _] = pcd_tree.search_knn_vector_3d(subdivided_vertices[i], 1)
-        fitting_vertices[i] = target_vertices[np.asarray(index)]
+    subdivided_vertices = np.asarray(subdivided_mesh.vertices)
+    target_vertices = np.asarray(target_mesh.vertices)
+    _, indices = cKDTree(target_vertices).query(
+        subdivided_vertices, k=1, workers=-1
+    )
+    fitting_vertices = target_vertices[indices]
 
     subdivided_mesh.vertices = o3d.utility.Vector3dVector(fitting_vertices)
     return subdivided_mesh
@@ -96,115 +99,92 @@ def read_triangle_mesh_with_trimesh(avatar_name, enable_post_processing=False):
     return mesh
 
 
-def compute_D1_psnr(original_mesh, decoded_mesh):
-    original_vertices = np.array(original_mesh.vertices)
-    decoded_vertices = np.array(decoded_mesh.vertices)
-
-    pcd_original = o3d.geometry.PointCloud()
-    pcd_original.points = o3d.utility.Vector3dVector(original_vertices)
-
-    pcd_decoded = o3d.geometry.PointCloud()
-    pcd_decoded.points = o3d.utility.Vector3dVector(decoded_vertices)
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd_decoded)
-
-    MSE = 0
-    for i in range(0, len(original_vertices)):
-        [k, index, _] = pcd_tree.search_knn_vector_3d(original_vertices[i], 1)
-        MSE += np.square(np.linalg.norm(original_vertices[i] - decoded_vertices[index]))
-    MSE = MSE / len(original_vertices)
-    aabb = pcd_original.get_axis_aligned_bounding_box()
-    min_bound = aabb.get_min_bound()
-
-    max_bound = aabb.get_max_bound()
-
-    signal_peak = np.linalg.norm(max_bound - min_bound)
-    psnr = 20 * np.log10(signal_peak) - 10 * np.log10(MSE)
-    return psnr
+def directed_metrics(source_mesh, target_mesh):
+    source_vertices = np.asarray(source_mesh.vertices)
+    target_vertices = np.asarray(target_mesh.vertices)
+    target_normals = np.asarray(target_mesh.vertex_normals)
+    distances, indices = cKDTree(target_vertices).query(
+        source_vertices, k=1, workers=-1
+    )
+    mse = np.mean(distances * distances)
+    diff = source_vertices - target_vertices[indices]
+    point_to_plane_mse = np.mean(
+        np.sum(diff * target_normals[indices], axis=1) ** 2
+    )
+    signal_peak = np.linalg.norm(
+        source_mesh.get_max_bound() - source_mesh.get_min_bound()
+    )
+    d1 = 20 * np.log10(signal_peak) - 10 * np.log10(mse)
+    d2 = 20 * np.log10(signal_peak) - 10 * np.log10(point_to_plane_mse)
+    return d1, d2, np.log10(mse), np.log10(np.sqrt(mse))
 
 
-def compute_D2_psnr(original_mesh, decoded_mesh):
-    decoded_mesh.compute_vertex_normals()
-
-    original_vertices = np.asarray(original_mesh.vertices)
-    decoded_vertices = np.asarray(decoded_mesh.vertices)
-    decoded_normals = np.asarray(decoded_mesh.vertex_normals)
-
-    pcd_decoded = o3d.geometry.PointCloud()
-    pcd_decoded.points = o3d.utility.Vector3dVector(decoded_vertices)
-    pcd_decoded.normals = o3d.utility.Vector3dVector(decoded_normals)
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd_decoded)
-
-    indices = np.array([pcd_tree.search_knn_vector_3d(v, 1)[1][0] for v in original_vertices])
-
-    diff = original_vertices - decoded_vertices[indices]
-    MSE = np.mean(np.sum(diff * decoded_normals[indices], axis=1) ** 2)
-
-    min_bound, max_bound = original_mesh.get_min_bound(), original_mesh.get_max_bound()
-    signal_peak = np.linalg.norm(max_bound - min_bound)
-
-    psnr = 20 * np.log10(signal_peak) - 10 * np.log10(MSE)
-
-    return psnr
-
-
-def compute_MSE_RMSE(original_mesh, decoded_mesh):
-    original_vertices = np.array(original_mesh.vertices)
-
-    decoded_vertices = np.array(decoded_mesh.vertices)
-
-    pcd_original = o3d.geometry.PointCloud()
-    pcd_original.points = o3d.utility.Vector3dVector(original_vertices)
-
-    pcd_decoded = o3d.geometry.PointCloud()
-    pcd_decoded.points = o3d.utility.Vector3dVector(decoded_vertices)
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd_decoded)
-
-    MSE = 0
-    for i in range(0, len(original_vertices)):
-        [k, index, _] = pcd_tree.search_knn_vector_3d(original_vertices[i], 1)
-        MSE += np.square(np.linalg.norm(original_vertices[i] - decoded_vertices[index]))
-    MSE = MSE / len(original_vertices)
-    RMSE = np.sqrt(MSE)
-
-    return np.log10(MSE), np.log10(RMSE)
-
-def compute_Hausdorff(original_mesh, decoded_mesh):
-    original_vertices = np.array(original_mesh.vertices)
-    decoded_vertices = np.array(decoded_mesh.vertices)
-    hausdorff = directed_hausdorff(original_vertices, decoded_vertices)
-    return hausdorff[0] * 1e4
-
+reference_output_dir = (
+    f'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/'
+    f'output/{dataset}_{num_centers}/reference'
+)
+reference_data_dir = (
+    f'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/'
+    f'Data/{dataset}_{num_centers}/reference_mesh'
+)
 
 for i in range(firstIndex, lastIndex + 1):
-    dynamic_deformed = o3d.io.read_triangle_mesh(fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/deformed_reference_mesh_{i:03}.obj')
-    original_i = o3d.io.read_triangle_mesh(fr'../arap-volume-tracking/data/{dataset}/{fileNamePrefix}{i:03}.obj')
+    fitting_path = os.path.join(reference_output_dir, f'fitting_mesh_{i:03}.obj')
+    dynamic_path = os.path.join(
+        reference_output_dir, f'deformed_reference_mesh_{i:03}.obj'
+    )
+    original_path = (
+        f'../arap-volume-tracking/data/{dataset}/{fileNamePrefix}{i:03}.obj'
+    )
+    if is_fresh(fitting_path, dynamic_path, original_path):
+        continue
+    dynamic_deformed = o3d.io.read_triangle_mesh(
+        dynamic_path
+    )
+    original_i = o3d.io.read_triangle_mesh(original_path)
     dynamic_deformed.compute_vertex_normals()
     original_i.compute_vertex_normals()
-    fitting_mesh_dancer_i = subdivide_surface_fitting(dynamic_deformed, original_i, 1)
+    fitting_mesh_dancer_i = subdivide_surface_fitting(
+        dynamic_deformed, original_i, 1
+    )
     o3d.io.write_triangle_mesh(
-        fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/fitting_mesh_{i:03}.obj',
-        fitting_mesh_dancer_i, write_vertex_normals=False, write_vertex_colors=False, write_triangle_uvs=False)
-    # o3d.visualization.draw_geometries([fitting_mesh_dancer_i])
+        fitting_path, fitting_mesh_dancer_i, write_vertex_normals=False,
+        write_vertex_colors=False, write_triangle_uvs=False
+    )
 
 loaded_decimated_reference_mesh = o3d.io.read_triangle_mesh(
-    fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/decimated_reference_mesh.obj', enable_post_processing=False)
+    os.path.join(reference_data_dir, 'decimated_reference_mesh.obj'),
+    enable_post_processing=False
+)
 subdivided_decimated_reference_mesh = o3d.geometry.TriangleMesh.subdivide_midpoint(loaded_decimated_reference_mesh, number_of_iterations=1)
 subdivided_decimated_reference_mesh_vertices = np.array(subdivided_decimated_reference_mesh.vertices)
 # o3d.visualization.draw_geometries([subdivided_decimated_reference_mesh])
 
 displacements = []
 for i in range(firstIndex, lastIndex + 1):
-    fitting_mesh_dancer_i = read_triangle_mesh_with_trimesh(
-        fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/fitting_mesh_{i:03}.obj', enable_post_processing=False)
-    fitting_mesh_vertices = np.array(fitting_mesh_dancer_i.vertices)
-    displacement_i = fitting_mesh_vertices - subdivided_decimated_reference_mesh_vertices
-    np.savetxt(fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/displacements_{dataset}_{i:03}.txt', displacement_i, fmt='%8f')
+    fitting_path = os.path.join(reference_output_dir, f'fitting_mesh_{i:03}.obj')
+    displacement_path = os.path.join(
+        reference_output_dir, f'displacements_{dataset}_{i:03}.txt'
+    )
+    reference_mesh_path = os.path.join(
+        reference_data_dir, 'decimated_reference_mesh.obj'
+    )
+    if is_fresh(displacement_path, fitting_path, reference_mesh_path):
+        displacement_i = np.loadtxt(displacement_path)
+    else:
+        fitting_mesh_dancer_i = read_triangle_mesh_with_trimesh(
+            fitting_path,
+            enable_post_processing=False
+        )
+        fitting_mesh_vertices = np.asarray(fitting_mesh_dancer_i.vertices)
+        displacement_i = (
+            fitting_mesh_vertices - subdivided_decimated_reference_mesh_vertices
+        )
+        np.savetxt(displacement_path, displacement_i, fmt='%8f')
     displacements.append(displacement_i)
 
 
-for i in range(firstIndex, lastIndex):
-    displacement = np.loadtxt(
-        fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/displacements_{dataset}_{i:03}.txt')
+for i, displacement in zip(range(firstIndex, lastIndex + 1), displacements):
     pcd = o3d.geometry.PointCloud()
     points = displacement
     pcd.points = o3d.utility.Vector3dVector(points)
@@ -212,7 +192,10 @@ for i in range(firstIndex, lastIndex):
     dtype = o3d.core.float32
     p_tensor = o3d.core.Tensor(points, dtype=dtype)
     pc = o3d.t.geometry.PointCloud(p_tensor)
-    o3d.t.io.write_point_cloud(fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/dis_{dataset}_{i:03}.ply', pc, write_ascii=True)
+    o3d.t.io.write_point_cloud(
+        os.path.join(reference_data_dir, f'dis_{dataset}_{i:03}.ply'),
+        pc, write_ascii=True
+    )
 
 input_reference_mesh_path = fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/decimated_reference_mesh.obj'
 input_decimated_reference_mesh = o3d.io.read_triangle_mesh(input_reference_mesh_path, enable_post_processing=False)
@@ -326,20 +309,12 @@ print(f"Reference Bitrate: {reference_bitrate:.2f} Mbps")
 print(f"Displacements Bitrate: {displacements_bitrate:.2f} Mbps")
 print(f"Overall Bitrate: {bitrate_mbps:.2f} Mbps")
 
-original_displacements = []
+original_displacements = displacements
 decoded_displacements = []
-dis_plys = []
 for i in range(firstIndex, lastIndex + 1):
-    original_displacement = np.loadtxt(
-        fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}/reference/displacements_{dataset}_{i:03}.txt')
     decoded_displacement = o3d.io.read_point_cloud(
         fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/GoF{num_frames}/decoded_{dataset}_{i:03}_displacements.ply')
-    dis_ply = o3d.io.read_point_cloud(
-        fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/GoF{num_frames}/decoded_{dataset}_{i:03}_displacements.ply')
-    original_displacements.append(original_displacement)
     decoded_displacements.append(decoded_displacement)
-    dis_plys.append(dis_ply)
-#print(decoded_displacements.__len__())
 
 d1s = []
 d2s = []
@@ -351,44 +326,42 @@ if not os.path.exists(outputPath):
 
 subdivision_times = 0
 deform_times = 0
+decode_decimated_reference_mesh = o3d.io.read_triangle_mesh(
+    os.path.join(reference_data_dir, 'decode_decimated_reference_mesh.obj'),
+    enable_post_processing=False
+)
+start = time.perf_counter()
+subdivided_decoded_mesh = o3d.geometry.TriangleMesh.subdivide_midpoint(
+    decode_decimated_reference_mesh, number_of_iterations=1
+)
+subdivision_times = time.perf_counter() - start
+subdivided_decoded_mesh_vertices = np.asarray(
+    subdivided_decoded_mesh.vertices
+).copy()
+input_decimated_reference_mesh = o3d.io.read_triangle_mesh(
+    os.path.join(reference_data_dir, 'decimated_reference_mesh.obj'),
+    enable_post_processing=False
+)
+subdivided_mesh = o3d.geometry.TriangleMesh.subdivide_midpoint(
+    input_decimated_reference_mesh, number_of_iterations=1
+)
+_, reference_indices = cKDTree(np.asarray(subdivided_mesh.vertices)).query(
+    subdivided_decoded_mesh_vertices, k=1, workers=-1
+)
+
 for m in range(0, num_frames):
     offset = firstIndex
-    decode_decimated_reference_mesh = o3d.io.read_triangle_mesh(
-        fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/decode_decimated_reference_mesh.obj',
-        enable_post_processing=False)
-    np.array(decode_decimated_reference_mesh.vertices)
-    start = time.time()
-    subdivided_decoded_mesh = o3d.geometry.TriangleMesh.subdivide_midpoint(decode_decimated_reference_mesh, number_of_iterations=1)
-    end = time.time()
-    subdivision_times += end - start
-    mesh = deepcopy(subdivided_decoded_mesh)
-    triangles = deepcopy(mesh.triangles)
-    input_decimated_reference_mesh = o3d.io.read_triangle_mesh(fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/decimated_reference_mesh.obj', enable_post_processing=False)
-    subdivided_mesh = o3d.geometry.TriangleMesh.subdivide_midpoint(input_decimated_reference_mesh, number_of_iterations=1)
     original_mesh = o3d.io.read_triangle_mesh(fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/meshes/{fileNamePrefix}{m + offset:03}.obj')
-    decoded_mesh_vertices = np.array(decode_decimated_reference_mesh.vertices)
-    subdivided_decoded_mesh_vertices = np.array(subdivided_decoded_mesh.vertices)
+    displacement = np.asarray(decoded_displacements[m].points)
 
-    displacement = np.array(decoded_displacements[m].points)
-
-    dis_indexer = o3d.geometry.PointCloud()
-    dis_indexer.points = o3d.utility.Vector3dVector(displacement)
-    dis_tree = o3d.geometry.KDTreeFlann(dis_indexer)
-
-    pcd_indexer = o3d.geometry.PointCloud()
-    pcd_indexer.points = o3d.utility.Vector3dVector(subdivided_mesh.vertices)
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd_indexer)
-
-    reordered_vertices = deepcopy(subdivided_decoded_mesh_vertices)
-    start = time.time()
-    for i in range(0, len(subdivided_decoded_mesh_vertices)):
-        [k, index, _] = pcd_tree.search_knn_vector_3d(subdivided_decoded_mesh_vertices[i], 1)
-        [j, dis_index, _] = dis_tree.search_knn_vector_3d(original_displacements[m][index[0]], 1)
-        start = time.time()
-        reordered_vertices[i] += displacement[dis_index[0]]
-        end = time.time()
-        deform_times += end - start
-    #print("time ",deform_times)
+    start = time.perf_counter()
+    _, displacement_indices = cKDTree(displacement).query(
+        original_displacements[m][reference_indices], k=1, workers=-1
+    )
+    reordered_vertices = (
+        subdivided_decoded_mesh_vertices + displacement[displacement_indices]
+    )
+    deform_times += time.perf_counter() - start
     reconstruct_mesh = o3d.geometry.TriangleMesh()
     reconstruct_mesh.triangles = subdivided_decoded_mesh.triangles
     reconstruct_mesh.vertices = o3d.utility.Vector3dVector(reordered_vertices)
@@ -396,18 +369,20 @@ for m in range(0, num_frames):
     #o3d.visualization.draw_geometries([reconstruct_mesh])
     o3d.io.write_triangle_mesh(os.path.join(outputPath, f"decoded_{dataset}_fr0{m+offset:03}.obj"), reconstruct_mesh, write_vertex_normals=False, write_vertex_colors=False, write_triangle_uvs=False)
     print(f"Mesh 0{m+offset:03} saved! Objective Evaluation:\n")
-    d1 = max(compute_D1_psnr(original_mesh, reconstruct_mesh), compute_D1_psnr(reconstruct_mesh, original_mesh))
+    original_mesh.compute_vertex_normals()
+    forward = directed_metrics(original_mesh, reconstruct_mesh)
+    reverse = directed_metrics(reconstruct_mesh, original_mesh)
+
+    d1 = max(forward[0], reverse[0])
     print("D1:", d1)
     d1s.append(d1)
 
-    d2 = max(compute_D2_psnr(original_mesh, reconstruct_mesh), compute_D2_psnr(reconstruct_mesh, original_mesh))
+    d2 = max(forward[1], reverse[1])
     print("D2:", d2)
     d2s.append(d2)
 
-    logmse1, logrmse1 = compute_MSE_RMSE(original_mesh, reconstruct_mesh)
-    logmse2, logrmse2 = compute_MSE_RMSE(reconstruct_mesh, original_mesh)
-    logmse = min(logmse1, logmse2)
-    logrmse = min(logrmse1, logrmse2)
+    logmse = min(forward[2], reverse[2])
+    logrmse = min(forward[3], reverse[3])
     print("log10 of mse:", logmse, ", log10 of rmse:", logrmse)
     mses.append(logmse)
     rmses.append(logrmse)

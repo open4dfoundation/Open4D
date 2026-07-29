@@ -2,9 +2,9 @@ import argparse
 import os
 import open3d as o3d
 import numpy as np
-from copy import deepcopy
 import trimesh
 import re
+from scipy.spatial import cKDTree
 
 
 def subdivide_surface_fitting(decimated_mesh, target_mesh, iterations=1):
@@ -12,16 +12,12 @@ def subdivide_surface_fitting(decimated_mesh, target_mesh, iterations=1):
     #print(subdivided_mesh)
     subdivided_mesh.compute_vertex_normals()
 
-    pcd_target = o3d.geometry.PointCloud()
-    pcd_target.points = o3d.utility.Vector3dVector(target_mesh.vertices)
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd_target)
-    subdivided_vertices = np.array(subdivided_mesh.vertices)
-    target_vertices = np.array(target_mesh.vertices)
-    fitting_vertices = deepcopy(subdivided_vertices)
-
-    for i in range(0, len(subdivided_vertices)):
-        [k, index, _] = pcd_tree.search_knn_vector_3d(subdivided_vertices[i], 1)
-        fitting_vertices[i] = target_vertices[np.asarray(index)]
+    subdivided_vertices = np.asarray(subdivided_mesh.vertices)
+    target_vertices = np.asarray(target_mesh.vertices)
+    _, indices = cKDTree(target_vertices).query(
+        subdivided_vertices, k=1, workers=-1
+    )
+    fitting_vertices = target_vertices[indices]
 
     subdivided_mesh.vertices = o3d.utility.Vector3dVector(fitting_vertices)
     return subdivided_mesh

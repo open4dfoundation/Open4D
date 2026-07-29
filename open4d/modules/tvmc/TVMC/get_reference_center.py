@@ -4,6 +4,7 @@ import re
 
 import numpy as np
 import open3d as o3d
+from scipy.spatial.distance import cdist
 from sklearn.manifold import MDS
 
 # Command-line argument parser
@@ -41,20 +42,16 @@ if not os.path.exists(output_file):
 
     for xyz_file in xyz_files[0:num_frames]:
         print("Loading and processing: ", xyz_file)
-        all_points = []
         filename = os.path.join(centers_dir, xyz_file)
-        with open(filename, 'r') as file:
-            for line in file:
-                points = list(map(float, line.split()))
-                all_points.append(points)
-            all_points = np.array(all_points)
-            #print(all_points[0])
-            for i in range(num_centers):
-                for j in range(i + 1, num_centers):
-                    if np.max(np.linalg.norm(all_points[i] - all_points[j], axis=0)) > max_distance_matrix[i, j]:
-                        max_distance_matrix[i, j] = np.max(np.linalg.norm(all_points[i] - all_points[j], axis=0))
-
-                    max_distance_matrix[j, i] = max_distance_matrix[i, j]
+        all_points = np.loadtxt(filename)
+        if all_points.shape != (num_centers, 3):
+            raise ValueError(
+                f"Expected {num_centers} 3D centers in {filename}, got {all_points.shape}"
+            )
+        max_distance_matrix = np.maximum(
+            max_distance_matrix,
+            cdist(all_points, all_points, metric="euclidean"),
+        )
 
 
     np.savetxt(output_file, max_distance_matrix)
