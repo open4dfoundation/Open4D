@@ -1,165 +1,377 @@
-# 4D Reconstruction: Scalable and Bandwidth Efficient 3D Scene Capture
+# 4D Reconstruction
 
-This module was formerly named `MeshReduce`.
+Two synchronized RGB-D cameras stream to an Ubuntu GPU machine for live
+point-cloud fusion and CUDA mesh reconstruction. The result is viewed in a web
+browser.
 
-For the two remotely attached Orbbec Femto Bolt cameras used by this system,
-see [`REMOTE_TWO_CAMERA.md`](REMOTE_TWO_CAMERA.md). It documents the calibrated
-Windows-capture to GPU-reconstruction path and its output artifacts.
+This module was formerly named `MeshReduce`. The original C++ reconstruction
+applications are still included.
 
-## Hardware Components
-- Microsoft Azure Kinect cameras
-- Orbbec Femto Bolt cameras through the K4A compatibility wrapper
+## Data path
 
-## Software Environment
-Open3D 0.18.0
-
-OpenCV 4.5
-
-Eigen3.4
-
-Google Draco 1.5.6 or newer (`sudo apt install libdraco-dev draco` on Ubuntu)
-
-## Working applications
-
-`dual_camera_fusion` is the depth-only one/two-camera CUDA TSDF tool.
-
-`rgbd_streamer` implements the repository's usable single-camera path:
-
-```
-K4A-compatible RGB-D camera -> capture producer thread -> CUDA TSDF
--> triangle extraction -> optional QEM -> projective UVs
--> PLY plus textured OBJ plus Draco -> optional MRD1/MRD2 TCP frame
+```text
+Camera 1 + Camera 2
+  -> capture host (RGB JPEG + compressed depth)
+  -> SSH tunnel
+  -> Ubuntu receiver
+       - decode both frames
+       - transform camera 2 into camera 1 coordinates
+       - display a live fused point cloud
+       - reconstruct and merge CUDA meshes
+  -> Open3D WebRTC
+  -> browser
 ```
 
-Build and run:
+The point cloud updates for every processed camera pair. The mesh is rebuilt
+periodically and is not a video stream.
+
+Networking and frame preparation run on the CPU. CUDA handles TSDF integration
+and mesh extraction. This is not a GPUDirect or RDMA pipeline.
+
+## Requirements
+
+- Two hardware-synchronized RGB-D cameras
+- A capture host with the camera SDK and an OBP1-compatible sender
+- A reconstruction host with Python 3.10+, OpenCV, NumPy, Zstandard, and
+  Open3D
+- An NVIDIA GPU and CUDA-enabled Open3D for GPU mesh reconstruction
+- Intrinsic calibration for both cameras
+- A rigid transform from camera 2 into camera 1 coordinates
+
+The tested cameras are Orbbec Femto Bolts on a Windows capture host using the
+Orbbec K4A wrapper. Other cameras can be used if the sender produces the same
+RGB-D packet format and the receiver constants match their resolutions.
+
+Create a Python environment on the reconstruction host:
 
 ```bash
-cmake -S . -B build -G Ninja
-cmake --build build --target rgbd_streamer -j2
-./build/app/rgbd_streamer config.rgbd.json
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install numpy opencv-python zstandard
 ```
 
-## Live streaming
-
-The lab setup uses two Femto Bolt cameras connected to a Windows capture
-machine. Windows pairs the hardware-synchronized color and depth frames and
-sends them to the GPU machine over TCP. The receiver checks the timestamps,
-applies the calibrated J3-to-EY transform, and places both depth images in one
-coordinate system.
-
-Two outputs are maintained:
-
-- A fused point cloud for responsive viewing.
-- A TSDF mesh rebuilt from a short window of recent frames.
-
-The browser viewer and the bounded reconstruction command use the same camera
-calibration and fusion code. The viewer keeps running until it is stopped. The
-bounded command exits after a chosen number of pairs and writes a PLY mesh,
-point cloud, and JSON report under `output/two-camera-fusion`.
+Install a CUDA-enabled Open3D build in that environment. The standard pip wheel
+may not include CUDA. Verify the installation:
 
 ```bash
-MAX_PAIRS=30 ./tools/run_remote_two_camera_fusion.sh
+python -c \
+  "import open3d as o3d; print(o3d.__version__, o3d.core.cuda.is_available())"
 ```
 
-The Windows sender must already be running, and its SSH data tunnel must map
-Windows `127.0.0.1:17000` to the same address and port on this machine. Only one
-receiver can own port 17000 at a time. Stop the browser receiver before running
-the bounded command, then restart it afterward.
+The second value should be `True` for GPU meshes.
 
-See [`REMOTE_TWO_CAMERA.md`](REMOTE_TWO_CAMERA.md) for paths and saved-sequence
-reconstruction.
+### Use your own cameras
 
-## Writing your own implementation
+1. Choose camera 1 as the reference coordinate system.
+2. Configure the sender with your two serial numbers and sync roles.
+3. Export the depth/color factory calibration for each camera.
+4. Calibrate camera 2 relative to camera 1.
+5. Store the files in this layout:
 
-A replacement sender or receiver does not need to use the browser code, but it
-must preserve the capture contract:
+```text
+<calibration-dir>/
+├── source/work/calibration_stepwise/factory/
+│   ├── ey_factory_calibration.json
+│   └── j3_factory_calibration.json
+└── final_validated_fusion/
+    └── j3_depth_to_ey_depth_refined.txt
+```
 
-1. Select the cameras by serial number, not USB enumeration order.
-2. Start J3 as the subordinate and EY as the primary, with a 160 microsecond
-   subordinate delay.
-3. Pair frames using device timestamps. Do not pair them by host arrival time.
-4. Send one frame containing EY color, EY depth, J3 color, and J3 depth.
-5. Preserve the serial number, device timestamp, image dimensions, codec, and
-   payload checksum for every image.
-6. Reject a pair when the adjusted camera timestamp difference exceeds 3
-   milliseconds.
-7. Transform J3 depth geometry into the EY depth coordinate frame before
-   combining or integrating it.
+`EY` and `J3` are legacy labels for camera 1 and camera 2. They do not need to
+match your serial numbers. This module consumes calibration files but does not
+currently generate them. Recalibrate after moving either camera.
 
-The current transport uses the `OBP1` frame format. Color is camera-produced
-1280x720 MJPEG. Depth is 640x576 little-endian `uint16`, compressed losslessly
-with Zstandard. The receiver returns an `OBA1` acknowledgement for each accepted
-pair.
+## Start a live session
 
-For a simple implementation, first decode and validate all four payloads. Build
-one point cloud per camera from the depth intrinsics, transform the J3 cloud
-with the calibrated matrix, and concatenate the clouds. Once that result is
-correct, feed both registered RGB-D images into a shared TSDF volume to obtain
-a connected mesh. Keep the calibration matrix external to the program so it
-can be replaced without recompiling.
+Start these components in order.
 
-The existing module launchers are useful as reference points:
-
-- `tools/run_remote_two_camera_fusion.sh` shows the required calibration and
-  reconstruction arguments.
-- `tools/reconstruct_saved_two_camera.py` shows how to reproduce a fused mesh
-  without a live sender.
-- `tools/receive_live_stream.py` is a small example for the module's separate
-  MRD3 Draco/JPEG mesh-stream format.
-
-### Texture-mapping acceleration
-
-The reconstruction library uses a custom CUDA path for multi-camera vertex
-projection, depth-occlusion testing, camera selection, and triangle-UV
-generation. If CUDA cannot be initialized or the depth inputs are incompatible,
-the same operation falls back to OpenMP-parallel CPU loops.
-
-CUDA kernels and OpenMP are enabled by default. They can be configured
-independently:
+### 1. Ubuntu receiver
 
 ```bash
-CUDACXX=/usr/local/cuda/bin/nvcc cmake -S . -B build \
-  -DMESHREDUCE_ENABLE_CUDA_KERNELS=ON \
-  -DMESHREDUCE_ENABLE_OPENMP=ON
-cmake --build build --target sensor_client -j8
+cd /path/to/Open4D/open4d/modules/4d-reconstruction
+
+export FOURD_CALIBRATION_DIR=/absolute/path/to/calibration
+export PYTHON=/path/to/python-with-open3d
+export FOURD_CUDA_DEVICE=0
+export FOURD_CAMERA1_SERIAL=your-camera-1-serial
+export FOURD_CAMERA2_SERIAL=your-camera-2-serial
+
+DISPLAY_MODE=pointcloud \
+MESH_WINDOW=1 \
+./tools/run_browser_viewer.sh
+```
+
+Expected:
+
+```text
+Live fusion receiver listening on 127.0.0.1:17000
+Browser viewer ready through Ubuntu 127.0.0.1:8888
+```
+
+Leave this terminal open.
+
+### 2. Windows data tunnel
+
+Close Orbbec Viewer and anything else using the cameras. In PowerShell:
+
+```powershell
+$GpuUser = "your-user"
+$GpuHost = "192.168.1.50"
+
+ssh -o ExitOnForwardFailure=yes `
+  -o ServerAliveInterval=30 `
+  -o ServerAliveCountMax=3 `
+  -N `
+  -L 127.0.0.1:17000:127.0.0.1:17000 `
+  "$GpuUser@$GpuHost"
+```
+
+The command stays quiet after login. Leave it running.
+
+In another PowerShell window, check the tunnel:
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 17000
+```
+
+Expected:
+
+```text
+TcpTestSucceeded : True
+```
+
+### 3. Windows camera sender
+
+Start an OBP1-compatible sender and point it at the local end of the tunnel.
+The receiver and protocol are included in this module; the tested Windows
+capture sender is currently a separate companion script. Copy that script and
+`protocol.py` to the capture host, or provide another sender that implements
+OBP1. For the tested Python sender:
+
+```powershell
+$Python = "C:\path\to\python.exe"
+$Sender = "C:\path\to\windows_sender.py"
+$Report = "C:\path\to\sender_report.json"
+
+& $Python $Sender `
+  --sdk-bin "C:\path\to\OrbbecSDK-K4A-Wrapper\bin" `
+  --host 127.0.0.1 `
+  --port 17000 `
+  --fps 5 `
+  --report $Report
+```
+
+The companion sender must be configured with your camera serial numbers before
+use. A healthy sender prints:
+
+```text
+{"produced_pairs": 30, "sync_error_us": ..., "queue_dropped": 0, ...}
+```
+
+Expected on Ubuntu:
+
+```text
+Sender connected from 127.0.0.1
+{"processed_pairs": 10, "latest_pair": 10, "live_points": ...}
+```
+
+The sender defaults to 5 FPS. Higher input rates currently cause frame
+replacement during CPU point-cloud preparation.
+
+### 4. Browser tunnel
+
+On the viewing machine:
+
+```bash
+GPU_USER=your-user
+GPU_HOST=192.168.1.50
+
+ssh -N \
+  -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18888:127.0.0.1:8888 \
+  "$GPU_USER@$GPU_HOST"
+```
+
+Open [http://127.0.0.1:18888/](http://127.0.0.1:18888/).
+
+If the page opens but the scene does not move, the Windows sender is not
+connected. The Ubuntu log must show `Sender connected` and increasing
+`processed_pairs`.
+
+To stop, press `Ctrl+C` in the Windows sender first. Then stop the Windows data
+tunnel and Ubuntu receiver.
+
+If capture, reconstruction, and viewing all run on the same host, skip both SSH
+tunnels. Send to `127.0.0.1:17000` and open
+`http://127.0.0.1:8888/`.
+
+## Viewer modes
+
+Set `DISPLAY_MODE` when starting the browser viewer:
+
+| Value | Display |
+|---|---|
+| `pointcloud` | Latest fused point cloud; use this for motion |
+| `auto` | Point cloud until the first mesh, then mesh only |
+| `mesh` | Mesh only; use this for stationary scenes |
+| `both` | Point cloud and mesh together; useful for debugging but can look doubled |
+
+Recommended live view:
+
+```bash
+DISPLAY_MODE=pointcloud MESH_WINDOW=1 ./tools/run_browser_viewer.sh
+```
+
+Recommended stationary mesh:
+
+```bash
+DISPLAY_MODE=mesh MESH_WINDOW=7 ./tools/run_browser_viewer.sh
+```
+
+## Fusion modes
+
+The live point cloud always transforms J3 points into EY coordinates and
+concatenates the two aligned point sets.
+
+The default mesh path is `independent-merge`:
+
+1. Reconstruct EY in its own CUDA TSDF volume.
+2. Reconstruct J3 in a second CUDA TSDF volume.
+3. Transform the J3 mesh into EY coordinates.
+4. Merge the partial meshes.
+
+Controls:
+
+```bash
+MESH_FUSION_MODE=independent-merge  # separate per-camera meshes
+MESH_FUSION_MODE=shared-tsdf        # both cameras in one TSDF volume
+
+MESH_MERGE_MODE=concatenate         # keep every triangle
+MESH_MERGE_MODE=weld                # merge nearby vertices
+MESH_WELD_RADIUS=0.003              # metres
+```
+
+`concatenate` does not crop, decimate, remove components, or fill holes. It can
+show two nearby surfaces where the camera views overlap. `shared-tsdf` usually
+looks cleaner.
+
+The full MeshReduce paper merger removes redundant overlap with raycasting and
+then stitches boundaries. That step is not implemented yet.
+
+## Output
+
+The browser launcher writes to `output/two-camera-fusion/`:
+
+| File | Contents |
+|---|---|
+| `latest_live_full_scene_pointcloud.ply` | latest fused point cloud |
+| `latest_live_full_scene_mesh.ply` | latest mesh |
+| `live_fusion_report.json` | receiver and synchronization summary |
+| `live_browser.log` | startup, frame, and mesh logs |
+
+A successful mesh log includes:
+
+```text
+"backend": "CUDA:0"
+"fusion_mode": "independent-merge"
+"partial_vertices": [<camera-1>, <camera-2>]
+"vertices": <sum-of-partials>
+```
+
+For `concatenate`, the final vertex count equals the sum of the two partial
+counts.
+
+## Replay without cameras
+
+Start the Ubuntu browser receiver as above. In a second Ubuntu terminal:
+
+```bash
+cd /path/to/Open4D/open4d/modules/4d-reconstruction
+
+"$PYTHON" \
+  tools/replay_obp1_sender.py \
+  --captures-root /absolute/path/to/saved-pairs \
+  --fps 2
+```
+
+This exercises transport, reconstruction, and browser rendering with recorded
+frames. It is not a live camera feed.
+
+For a one-shot saved reconstruction:
+
+```bash
+export FOURD_CAPTURE_ROOT=/path/to/capture-data
+./tools/reconstruct_saved_two_camera.py
+```
+
+## Original C++ pipeline
+
+The original application accepts a live K4A-compatible camera or recorded
+`.mkv`, then writes PLY, textured OBJ, Draco geometry, and stage metrics.
+
+Dependencies: CUDA 12.x, CUDA-enabled Open3D 0.18, OpenCV, Eigen, jsoncpp,
+Draco, the Azure Kinect SDK or Orbbec K4A wrapper, CMake, and Ninja.
+
+```bash
+sudo apt install -y build-essential cmake ninja-build git \
+  libopencv-dev libeigen3-dev libjsoncpp-dev libdraco-dev draco
+
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target rgbd_streamer -j"$(nproc)"
+./build/app/rgbd_streamer config.playback.json
+```
+
+Expected final output:
+
+```text
+mesh faces before_qem=... after_qem=... vertices=...
+wrote output/playback/mesh.ply, .obj, .mtl, and _texture.png
+MESHREDUCE_METRICS {...}
+```
+
+Run tests:
+
+```bash
 ctest --test-dir build --output-on-failure
 ```
 
-Set `MESHREDUCE_DISABLE_CUDA_TEXTURE_MAPPING=1` at runtime to force the OpenMP
-fallback for comparison. `MESHREDUCE_CUDA_DEVICE` selects the CUDA device
-(default `0`), and `OMP_NUM_THREADS` controls the CPU worker count.
+## Troubleshooting
 
-The output prefix is configured in `config.rgbd.json`. The application writes
-geometry as PLY and a textured OBJ/MTL/PNG set. Set `network.enabled` to `true`
-to listen for one TCP receiver. `tools/receive_mesh_frame.py` is a protocol
-validator and example receiver. The `draco` config block controls compression;
-when enabled, the application writes `<prefix>.drc`. Set `network.format` to
-`"draco"` for compressed MRD2 geometry or `"raw"` for the legacy MRD1 frame.
+**Browser opens but nothing moves:** check
+`output/two-camera-fusion/live_browser.log`. The sender is live only when the
+log shows `Sender connected` and increasing `processed_pairs`.
 
-The default Draco settings use 11 position bits, 8 normal bits, 10 UV bits,
-and encoder/decoder speed 5. Lower speed values improve compression at the cost
-of more CPU time. Validate a generated file with:
+**`Hardware MFT failed to start`:** close Orbbec Viewer and other camera
+programs. If it continues, place the cameras on separate USB 3 controllers.
+
+**Port 17000 is busy:** another receiver is running. Find it with:
 
 ```bash
-draco_decoder -i /tmp/meshreduce_rgbd.drc -o /tmp/decoded.obj
+ss -ltnp | grep :17000
 ```
 
-### MRD1 protocol
+**Mesh looks doubled:** avoid `DISPLAY_MODE=both`. If the mesh alone is
+doubled, use `MESH_FUSION_MODE=shared-tsdf` or implement overlap removal.
 
-The fixed 44-byte header is eleven unsigned 32-bit integers in network byte
-order: magic `MRD1`, version, vertex count, face count, position bytes, normal
-bytes, index bytes, UV bytes, texture width, texture height, and texture bytes.
-Payloads follow in that order. Numeric mesh payloads are little-endian float32
-or uint32; texture data is tightly packed RGB8. UV data contains three UV pairs
-per face. A Unity receiver must parse this protocol and create a mesh and RGB
-texture from the five payload blocks.
+**Moving people leave several silhouettes:** use `MESH_WINDOW=1`.
 
-### MRD2 protocol (Draco)
+**Walls are missing:** the cameras returned no valid depth for those pixels.
+Distant, dark, reflective, and occluded surfaces commonly produce holes.
 
-The fixed 28-byte header is seven unsigned 32-bit integers in network byte
-order: magic `MRD2`, version, Draco byte count, texture width, texture height,
-texture byte count, and texture encoding (`1` = tightly packed RGB8). The Draco
-payload comes first, followed by the RGB texture. The Draco mesh contains
-position, normal, triangle connectivity, and per-vertex texture-coordinate
-attributes. This compresses geometry only; H.264 texture compression remains a
-separate future integration.
+**CUDA is inactive:**
+
+```bash
+"$PYTHON" -c \
+  "import open3d as o3d; print(o3d.core.cuda.is_available())"
+```
+
+Expected output is `True`.
+
+## Related files
+
+- [`docs/artifacts.md`](../../../docs/artifacts.md): generated-data policy
+- `python/protocol.py`: OBP1 packet definitions
+- `tools/receive_mesh_frame.py`: MRD1/MRD2 reference receiver
+- `tools/receive_live_stream.py`: MRD3 reference receiver
+
+Generated datasets and output directories are git-ignored.

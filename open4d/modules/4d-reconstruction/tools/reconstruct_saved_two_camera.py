@@ -1,11 +1,27 @@
 #!/usr/bin/env python3
-"""Reconstruct a full-scene mesh from saved synchronized two-camera frames."""
+"""Reconstruct a full-scene mesh from saved synchronized two-camera frames.
+
+This is the no-live-sender path: it replays saved synchronized capture pairs
+through the same fusion code the live receiver uses, so it needs no cameras and
+no network.
+
+Capture data lives outside the repository (see docs/artifacts.md). Point the
+script at your capture set in one of three ways, in order of precedence:
+
+  1. --capture-root /path/to/captures
+  2. export FOURD_CAPTURE_ROOT=/path/to/captures
+  3. place or symlink the capture set at <module>/datasets/two-camera
+
+The capture root is expected to contain a calibration directory and a metadata
+directory; override the individual paths below if your layout differs.
+"""
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,10 +29,32 @@ import cv2
 import numpy as np
 import open3d as o3d
 
+MODULE_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_FUSION_SOURCE = MODULE_ROOT / "python" / "live_two_camera_fusion.py"
+DEFAULT_CAPTURE_ROOT = MODULE_ROOT / "datasets" / "two-camera"
+DEFAULT_CALIBRATION_NAME = "calibration_2026-07-29"
+DEFAULT_METADATA_NAME = "captures_dense_attempt2_20260729"
+DEFAULT_RAW_NAME = "dense_attempt2_raw"
+
+
+def resolve_capture_root(explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit
+    from_env = os.environ.get("FOURD_CAPTURE_ROOT")
+    if from_env:
+        return Path(from_env)
+    return DEFAULT_CAPTURE_ROOT
+
 
 def load_live_module(path: Path):
+    if not path.is_file():
+        raise SystemExit(
+            f"fusion implementation not found: {path}\n"
+            "Pass --fusion-source, or check that python/live_two_camera_fusion.py "
+            "is present in the module."
+        )
     sys.path.insert(0, str(path.resolve().parent))
-    spec = importlib.util.spec_from_file_location("orbbec_live_fusion", path)
+    spec = importlib.util.spec_from_file_location("live_two_camera_fusion", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot import fusion implementation: {path}")
     module = importlib.util.module_from_spec(spec)
@@ -25,52 +63,85 @@ def load_live_module(path: Path):
     return module
 
 
-def main() -> None:
-    stream_root = Path("/home/ryan/camera_streaming_windows")
-    calibration = stream_root / "calibration_2026-07-29"
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--raw-root",
-        type=Path,
-        default=calibration / "dense_attempt2_raw",
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument(
+        "--capture-root",
+        type=Path,
+        default=None,
+        help="directory holding the calibration and capture directories "
+        "(default: $FOURD_CAPTURE_ROOT, else <module>/datasets/two-camera)",
+    )
+    parser.add_argument("--calibration-dir", type=Path, default=None,
+                        help=f"default: <capture-root>/{DEFAULT_CALIBRATION_NAME}")
+    parser.add_argument("--raw-root", type=Path, default=None,
+                        help=f"default: <calibration-dir>/{DEFAULT_RAW_NAME}")
+    parser.add_argument("--metadata-root", type=Path, default=None,
+                        help=f"default: <capture-root>/{DEFAULT_METADATA_NAME}")
     parser.add_argument("--start", type=int, default=84)
     parser.add_argument("--end", type=int, default=90)
-    parser.add_argument(
-        "--fusion-source",
-        type=Path,
-        default=stream_root / "live_two_camera_fusion.py",
-    )
-    parser.add_argument(
-        "--ey-factory",
-        type=Path,
-        default=calibration
-        / "source/work/calibration_stepwise/factory/ey_factory_calibration.json",
-    )
-    parser.add_argument(
-        "--j3-factory",
-        type=Path,
-        default=calibration
-        / "source/work/calibration_stepwise/factory/j3_factory_calibration.json",
-    )
-    parser.add_argument(
-        "--j3-to-ey",
-        type=Path,
-        default=calibration
-        / "final_validated_fusion/j3_depth_to_ey_depth_refined.txt",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path(__file__).resolve().parents[1]
-        / "output/two-camera-fusion",
-    )
+    parser.add_argument("--fusion-source", type=Path, default=DEFAULT_FUSION_SOURCE)
+    parser.add_argument("--ey-factory", type=Path, default=None)
+    parser.add_argument("--j3-factory", type=Path, default=None)
+    parser.add_argument("--j3-to-ey", type=Path, default=None)
+    parser.add_argument("--output-dir", type=Path,
+                        default=MODULE_ROOT / "output" / "two-camera-fusion")
     parser.add_argument("--voxel", type=float, default=0.006)
     parser.add_argument("--truncation", type=float, default=0.03)
     args = parser.parse_args()
 
+    capture_root = resolve_capture_root(args.capture_root)
+    if args.calibration_dir is None:
+        args.calibration_dir = capture_root / DEFAULT_CALIBRATION_NAME
+    if args.raw_root is None:
+        args.raw_root = args.calibration_dir / DEFAULT_RAW_NAME
+    if args.metadata_root is None:
+        args.metadata_root = capture_root / DEFAULT_METADATA_NAME
+    factory = args.calibration_dir / "source/work/calibration_stepwise/factory"
+    if args.ey_factory is None:
+        args.ey_factory = factory / "ey_factory_calibration.json"
+    if args.j3_factory is None:
+        args.j3_factory = factory / "j3_factory_calibration.json"
+    if args.j3_to_ey is None:
+        args.j3_to_ey = (
+            args.calibration_dir
+            / "final_validated_fusion/j3_depth_to_ey_depth_refined.txt"
+        )
+    args.capture_root = capture_root
+
     if args.end < args.start:
         parser.error("--end must be at least --start")
+    return args
+
+
+def check_inputs(args: argparse.Namespace) -> None:
+    """Fail early with an actionable message instead of a bare traceback."""
+    required = {
+        "capture root": args.capture_root,
+        "raw frame directory (--raw-root)": args.raw_root,
+        "metadata directory (--metadata-root)": args.metadata_root,
+        "EY factory calibration (--ey-factory)": args.ey_factory,
+        "J3 factory calibration (--j3-factory)": args.j3_factory,
+        "J3-to-EY transform (--j3-to-ey)": args.j3_to_ey,
+    }
+    missing = [f"  {label}: {path}" for label, path in required.items()
+               if not path.exists()]
+    if missing:
+        raise SystemExit(
+            "Missing required capture inputs:\n"
+            + "\n".join(missing)
+            + "\n\nSet --capture-root or FOURD_CAPTURE_ROOT to the directory "
+            "holding your\ncalibration and capture data. See the module README "
+            "for the expected layout."
+        )
+
+
+def main() -> None:
+    args = parse_args()
+    check_inputs(args)
     fusion = load_live_module(args.fusion_source)
     ey = fusion.CameraProjector(args.ey_factory)
     j3 = fusion.CameraProjector(args.j3_factory)
@@ -80,11 +151,7 @@ def main() -> None:
     sync_errors = []
     for number in range(args.start, args.end + 1):
         pair_dir = args.raw_root / f"pair_{number:012d}"
-        metadata_path = (
-            calibration.parent
-            / "captures_dense_attempt2_20260729"
-            / f"pair_{number:012d}/metadata.json"
-        )
+        metadata_path = args.metadata_root / f"pair_{number:012d}/metadata.json"
         metadata = json.loads(metadata_path.read_text())
         sync_errors.append(abs(int(metadata["sync_error_us"])))
         ey_depth = np.fromfile(
