@@ -24,11 +24,12 @@ Open4D/
 │   ├── player/        PyQt/OpenGL sequence viewers
 │   ├── tools/         conversion utilities for .o4d files
 │   └── modules/
+│       ├── 4d-reconstruction/
 │       ├── Draco/
 │       ├── KLT/
-│       ├── MeshReduce/
 │       ├── N4MC/
 │       ├── Quantized-Neural-Displacement-Fields/
+│       ├── mpeg-vdmc-tm/
 │       ├── tsmc/
 │       ├── tvmc/
 │       └── unity_decoder/
@@ -77,9 +78,14 @@ Python API.
 - **KLT** — Karhunen–Loève Transform baseline that compresses TSDF voxel blocks
   with a learned linear basis and quantized coefficients, reconstructing meshes
   via marching cubes.
-- **MeshReduce** — live K4A-compatible RGB-D capture and CUDA TSDF
-  reconstruction with QEM reduction, projective texturing, Google Draco
-  geometry encoding, and raw or Draco-framed TCP output.
+- **4D reconstruction** — synchronized multi-camera RGB-D ingestion, calibrated
+  point-cloud fusion, CUDA TSDF mesh reconstruction, and live browser playback.
+  It includes both the original native reconstruction code and the Python
+  two-camera streaming pipeline.
+- **MPEG V-DMC test model** — the pinned MPEG reference implementation for
+  video-based dynamic mesh coding. The `mpeg-vdmc-tm` submodule provides the
+  standard's reference encoder, decoder, metric tools, and unit tests; it is
+  separate from Open4D's TVMC research pipeline.
 
 Each module has its own README and environment requirements. TVMC currently
 targets Python 3.10; TSMC targets Python 3.12. Treat module environments as
@@ -97,7 +103,7 @@ heatmap.
 
 ## Installation
 
-Clone with submodules so both TVMC and TSMC receive their pinned Draco source:
+Clone with submodules to obtain the pinned Draco, SAM3, and MPEG V-DMC source:
 
 ```bash
 git clone --recurse-submodules https://github.com/SINRG-Lab/Open4D.git

@@ -92,6 +92,41 @@ If a later stage fails, resume without repeating volume tracking:
 ./run_pipeline.sh basketball --from reference-centers
 ```
 
+## CPU performance
+
+TVMC's Python preprocessing and evaluation paths are optimized for multicore
+CPUs:
+
+- nearest-neighbor searches use SciPy `cKDTree` with all available workers
+  instead of per-vertex Python loops;
+- distance matrices and mesh deformation are calculated with vectorized NumPy
+  and SciPy operations;
+- subdivision results and vertex mappings that do not change between frames
+  are computed once and reused; and
+- fresh fitted meshes and displacement files are reused when the source files
+  have not changed.
+
+These changes accelerate surface fitting, displacement generation,
+reconstruction, and objective evaluation. They do not accelerate the .NET
+tracking stages or the external Draco encoder and decoder.
+
+The largest improvement is expected for high-resolution meshes and multicore
+machines. A repeated run should also be faster when its intermediate files are
+still current. Decoded meshes and reported metrics should remain equivalent to
+the previous implementation within normal floating-point tolerance. There is
+no fixed expected speedup because runtime depends on mesh size, frame count,
+storage, and CPU core count.
+
+To time the optimized evaluation stage after the earlier stages have produced
+their inputs:
+
+```bash
+time ./run_pipeline.sh basketball --only evaluation
+```
+
+Record the CPU model, core count, TVMC revision, configuration, frame range,
+and whether intermediate files were already present when reporting results.
+
 ## Results
 
 Reconstructed meshes are written to:
