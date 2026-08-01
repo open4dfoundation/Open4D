@@ -60,6 +60,65 @@ python -c \
 
 The second value should be `True` for GPU meshes.
 
+## Tested environment
+
+The following setup was validated from July 28–30, 2026. It is a reference
+configuration, not a minimum requirement.
+
+### Hardware and software
+
+| Component | Tested configuration |
+|---|---|
+| Capture computer | Dell Inspiron 14 Plus 7440 |
+| Capture OS | Windows 11 Home 25H2 x64, build `26200.8875` |
+| Capture CPU | Intel Core Ultra 9 185H, 16 cores / 22 logical processors |
+| Capture memory | 31.46 GiB usable LPDDR, 6400 MT/s |
+| Capture GPU | Integrated Intel Arc Graphics; no NVIDIA GPU |
+| Cameras | Two Orbbec Femto Bolt RGB-D cameras, firmware 1.0.9 |
+| Camera connection | Separate USB 3 SuperSpeed ports on the same Intel xHCI controller |
+| Synchronization | Orbbec Sync Hub Pro; primary/subordinate wiring; 160 us subordinate delay |
+| Camera software | Orbbec K4A Wrapper 1.10.5, Orbbec SDK 1.10.28, Python 3.13 |
+| Capture network | Intel Wi-Fi 6E AX211, 287 Mb/s reported link, routed through a VPN |
+| Reconstruction OS | Ubuntu 24.04-family x86-64, kernel `7.0.0-28-generic` |
+| Reconstruction GPU | NVIDIA GeForce RTX 4090 with CUDA-enabled Open3D; tested on `CUDA:1` |
+| Reconstruction network | 10 Gb/s Ethernet interface; end-to-end rate was limited by the Windows Wi-Fi/VPN route |
+
+The reconstruction host's CPU model, system-memory capacity, GPU-memory
+capacity, and exact CUDA driver version were not saved in the preserved test
+report, so they are not inferred here.
+
+### Validated operating point
+
+| Measurement | Result |
+|---|---:|
+| RGB per camera | 1280 x 720 MJPEG |
+| Depth per camera | 640 x 576 NFOV-unbinned, zstd level 3 |
+| Live capture rate | 5 synchronized pairs/s |
+| Transport reliability | 120/120 pairs received; zero queue drops, pair gaps, CRC errors, protocol errors, or socket timeouts |
+| Absolute camera sync error | 160 us median; 1,160 us p95 and maximum |
+| Nominal active-stream rate | approximately 27.7 Mb/s |
+| Unadjusted one-way wall-clock latency | 84.01 ms median; includes clock offset between hosts |
+| Browser-receiver rate in a bounded run | 4.15 processed pairs/s |
+| Live display point cloud | approximately 76,000 colored points per update |
+| Validated WebRTC mesh | 457,609 vertices / 833,237 triangles |
+| Warm CUDA independent-mesh reconstruction | approximately 0.315 s; 607,960 vertices / 1,104,008 triangles |
+| Stereo calibration reprojection RMS | 0.2835 px across 15 accepted checkerboard poses |
+| Refined depth registration | 0.585 overlap fitness; 10.63 mm inlier RMSE |
+
+The 5 FPS result is the validated profile for this Wi-Fi/VPN path. A 15 FPS
+stop-and-wait transport attempt sustained only about four transmitted pairs per
+second and dropped older queued pairs. Higher capture rates therefore require
+a faster path or further receiver and transport optimization.
+
+During separate single-camera 15 FPS stability tests on the Windows capture
+computer, the recorder used the following resources. These figures include
+startup and are not measurements of the complete dual-camera pipeline.
+
+| Camera run | System CPU average / maximum | GPU-engine average / maximum | Recorder working set average / maximum |
+|---|---:|---:|---:|
+| Camera 1 | 12.97% / 19.35% | 3.29% / 5.27% | 153.36 / 213.55 MiB |
+| Camera 2 | 11.07% / 12.18% | 2.76% / 4.43% | 148.62 / 208.49 MiB |
+
 ### Use your own cameras
 
 1. Choose camera 1 as the reference coordinate system.
