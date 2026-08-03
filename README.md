@@ -53,10 +53,11 @@ point-cloud sequences, and Draco-compressed point-cloud sequences. The matching
 tools convert folders of geometry files into `.o4d` containers, and the players
 provide local desktop playback.
 
-The abstractions described in `open4d/core/README.md`—including
-`MeshSequence`, `PointCloudSequence`, transforms, timestamps, and frame
-metadata—are planned work. Research modules do not yet share a single stable
-Python API.
+`open4d/core` now contains the first shared temporal mesh model: a validated
+NumPy-backed `TriangleMesh`, temporal `Frame`, lazy `Sequence`, and provider
+contract. The existing codecs have not yet migrated to it, and point clouds,
+volumes, transforms, and a stable codec API remain planned work. See
+`docs/sequence-design.md` for the architecture and staged migration plan.
 
 ### Research modules
 

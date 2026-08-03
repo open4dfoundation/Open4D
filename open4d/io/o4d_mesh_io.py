@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple, Iterator
 
 import numpy as np
 
+from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+
 # ----------------------------
 # Constants / enums
 # ----------------------------
@@ -341,3 +343,44 @@ class O4DMeshReader:
         """Yields (frame_index, timestamp) for available frames."""
         for e in self.index:
             yield e.frame_index, e.timestamp
+
+
+class O4DMeshFrameProvider:
+    """Lazy core Frame provider backed by the existing v1 mesh reader."""
+
+    topology = TopologyMode.UNKNOWN
+    has_constant_vertex_count = None
+    has_vertex_correspondence = None
+
+    def __init__(self, path: str):
+        self._reader = O4DMeshReader(path)
+        self._reader.open()
+        self._entries = tuple(self._reader.index)
+        self.metadata = dict(self._reader.meta)
+
+    @property
+    def frame_count(self) -> int:
+        return len(self._entries)
+
+    @property
+    def timestamps(self) -> Tuple[float, ...]:
+        return tuple(entry.timestamp for entry in self._entries)
+
+    def get_frame(self, index: int) -> Frame:
+        if index < 0 or index >= self.frame_count:
+            raise IndexError("frame index out of range")
+        entry = self._entries[index]
+        vertices, faces, timestamp = self._reader.get_frame(entry.frame_index)
+        return Frame(
+            frame_index=entry.frame_index,
+            timestamp=timestamp,
+            geometry=TriangleMesh(positions=vertices, triangles=faces),
+        )
+
+    def close(self) -> None:
+        self._reader.close()
+
+
+def open_o4d_mesh_sequence(path: str) -> Sequence:
+    """Open a v1 raw-mesh `.o4d` file as a lazy core Sequence."""
+    return Sequence(O4DMeshFrameProvider(path))
