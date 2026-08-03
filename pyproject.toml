@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open4d"
 version = "0.1.0"
+license = { file = "LICENSE" }
 dependencies = ["numpy"]
 
 [project.optional-dependencies]
