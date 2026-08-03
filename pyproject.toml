@@ -11,12 +11,20 @@ dependencies = ["numpy"]
 tools  = ["trimesh"]
 draco  = ["DracoPy"]
 player = ["PyQt6", "pyqtgraph", "PyOpenGL"]
-all    = ["trimesh", "DracoPy", "PyQt6", "pyqtgraph", "PyOpenGL"]
+open3d = ["open3d>=0.17"]
+all    = ["trimesh", "DracoPy", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17"]
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["open4d*"]
-exclude = ["data*", "apps*", "cmake*", "docker*", "pc_frames*"]
+include = ["open4d*", "integrations*"]
+exclude = [
+    "data*",
+    "apps*",
+    "cmake*",
+    "docker*",
+    "pc_frames*",
+    "integrations.open3d.tests*",
+]
