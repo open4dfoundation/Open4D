@@ -11,8 +11,9 @@ dependencies = ["numpy"]
 tools  = ["trimesh"]
 draco  = ["DracoPy"]
 player = ["PyQt6", "pyqtgraph", "PyOpenGL"]
-open3d = ["open3d>=0.17"]
-all    = ["trimesh", "DracoPy", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17"]
+open3d = ["open3d>=0.17", "pillow>=9"]
+usd    = ["usd-core>=24.3"]
+all    = ["trimesh", "DracoPy", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17", "pillow>=9", "usd-core>=24.3"]
 
 [tool.setuptools]
 include-package-data = false

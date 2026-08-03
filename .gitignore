@@ -33,6 +33,10 @@ htmlcov/
 *.lock
 *.pid
 
+# Renders and containers written by the example scripts
+examples/out/
+examples/**/out/
+
 # Benchmark dashboard runtime data
 benchmark_app/data/
 benchmark_app/outputs/
