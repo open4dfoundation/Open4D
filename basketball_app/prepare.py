@@ -33,6 +33,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 APP = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("OPEN4D_ROOT", APP.parent))
 ASSETS = APP / "assets"
+CODECS = ROOT / "open4d/codecs"
 
 FRAMES = list(range(11, 21))          # basketball_player_fr0011 .. fr0020
 HEAT_MAX_PCT = 1.5                    # shared heatmap scale (% of bbox diagonal)
@@ -54,7 +55,7 @@ COLORS = {
     "VDMC": "#D6409F",
 }
 
-REF_DIR = ROOT / "open4d/modules/tvmc/arap-volume-tracking/data/basketball_player"
+REF_DIR = CODECS / "tvmc/arap-volume-tracking/data/basketball_player"
 
 
 def ref_path(n: int) -> Path:
@@ -62,13 +63,13 @@ def ref_path(n: int) -> Path:
 
 
 def method_path(method: str, n: int) -> Path | None:
-    m = ROOT / "open4d/modules"
+    m = CODECS
     if method == "N4MC":
-        hits = sorted((m / "N4MC/outputs/basketball_sequence_n4mc/original_scale").glob(
+        hits = sorted((m / "n4mc/outputs/basketball_sequence_n4mc/original_scale").glob(
             f"*fr{n:04d}*reconstructed.ply"))
         return hits[0] if hits else None
     if method == "QNDF":
-        return m / ("Quantized-Neural-Displacement-Fields/outputs/basketball_sequence_qndf/"
+        return m / ("qndf/outputs/basketball_sequence_qndf/"
                     f"basketball_player_fr{n:04d}/reconstruction_original_scale.obj")
     if method == "TVMC":
         return m / f"tvmc/TVMC/basketball_player_outputs/decoded_basketball_player_fr{n:04d}.obj"
@@ -76,13 +77,13 @@ def method_path(method: str, n: int) -> Path | None:
         return m / ("tsmc/outputs/basketball_sequence_tsmc/decoded/"
                     f"decoded_basketball_player_fr{n:04d}.obj")
     if method == "Draco":
-        return m / (f"Draco/outputs/basketball_sequence_draco/decode/qp_{DRACO_QP}/"
+        return m / (f"draco/outputs/basketball_sequence_draco/decode/qp_{DRACO_QP}/"
                     f"basketball_player_fr{n:04d}_qp_{DRACO_QP}_decoded.obj")
     if method == "KLT":
-        return m / ("KLT/outputs/basketball_sequence_klt/decoded/"
+        return m / ("klt/outputs/basketball_sequence_klt/decoded/"
                     f"decoded_basketball_player_fr{n:04d}.obj")
     if method == "VDMC":
-        return m / ("mpeg-vdmc-tm/outputs/basketball_sequence_vdmc/decoded/"
+        return m / ("vdmc/outputs/basketball_sequence_vdmc/decoded/"
                     f"decoded_basketball_player_fr{n:04d}.obj")
     return None
 
@@ -90,7 +91,7 @@ def method_path(method: str, n: int) -> Path | None:
 # Codecs whose compressed bitstream is a single sequence-level file rather than
 # one file per frame. Reported per-frame as (total size / frame count).
 SEQ_BITSTREAM = {
-    "VDMC": "mpeg-vdmc-tm/outputs/basketball_sequence_vdmc/compressed/basketball_sequence.vmesh",
+    "VDMC": "vdmc/outputs/basketball_sequence_vdmc/compressed/basketball_sequence.vmesh",
 }
 
 
@@ -106,12 +107,12 @@ def compressed_paths(method: str, n: int) -> list[Path]:
     shared KLT basis, which is amortized across the sequence and not written to
     disk by klt.py.
     """
-    m = ROOT / "open4d/modules"
+    m = CODECS
     if method == "Draco":
-        return [m / (f"Draco/outputs/basketball_sequence_draco/encode/qp_{DRACO_QP}/"
+        return [m / (f"draco/outputs/basketball_sequence_draco/encode/qp_{DRACO_QP}/"
                      f"basketball_player_fr{n:04d}_qp_{DRACO_QP}.drc")]
     if method == "KLT":
-        base = m / "KLT/outputs/basketball_sequence_klt/compressed"
+        base = m / "klt/outputs/basketball_sequence_klt/compressed"
         k = n - 11  # recon frame index for reference frame n
         return [base / f"{k:04d}_quantized_indices.zst",
                 base / f"{k:04d}_quantized_metadata.npz"]
@@ -257,7 +258,7 @@ def build() -> None:
             metrics[method]["compressed_kb"] = round(float(np.mean(comp_kb)), 3)
         # Sequence-level bitstream (e.g. V-DMC .vmesh): report total / frame count
         elif method in SEQ_BITSTREAM:
-            seq = ROOT / "open4d/modules" / SEQ_BITSTREAM[method]
+            seq = CODECS / SEQ_BITSTREAM[method]
             if seq.exists():
                 metrics[method]["compressed_kb"] = round(
                     seq.stat().st_size / 1024 / len(FRAMES), 3)

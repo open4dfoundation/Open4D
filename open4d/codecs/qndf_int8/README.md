@@ -9,7 +9,7 @@ It saves:
 - loadable FP32 and INT8 TorchScript decoders for an equal-container size comparison
 - `metrics.json` containing quality, artifact sizes, and reload verification
 
-The original `Quantized-Neural-Displacement-Fields` folder is not modified. The INT8 TorchScript file is a real executable model artifact, but it is not the incomplete Huffman format commented out in the upstream script.
+The sibling `qndf` codec is not modified. The INT8 TorchScript file is a real executable model artifact, but it is not the incomplete Huffman format commented out in the upstream script.
 
 For the canonical historical bunny settings:
 

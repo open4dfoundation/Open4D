@@ -3,9 +3,9 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-draco="$repo_root/open4d/modules/Draco/draco"
+draco="$repo_root/open4d/codecs/draco/draco"
 
-git -C "$repo_root" submodule update --init open4d/modules/Draco/draco
+git -C "$repo_root" submodule update --init open4d/codecs/draco/draco
 
 cmake -S "$draco" -B "$draco/build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$draco/build" -j

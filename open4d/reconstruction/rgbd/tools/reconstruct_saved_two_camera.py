@@ -200,7 +200,7 @@ def main() -> None:
     triangles = np.asarray(mesh.triangles)
     report = {
         "status": "completed",
-        "module": "4d-reconstruction",
+        "module": "reconstruction/rgbd",
         "former_module_name": "MeshReduce",
         "source_pairs": [args.start, args.end],
         "input_frames_per_camera": len(prepared),
