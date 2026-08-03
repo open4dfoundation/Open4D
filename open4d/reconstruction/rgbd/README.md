@@ -147,7 +147,7 @@ Start these components in order.
 ### 1. Ubuntu receiver
 
 ```bash
-cd /path/to/Open4D/open4d/modules/4d-reconstruction
+cd /path/to/Open4D/open4d/reconstruction/rgbd
 
 export FOURD_CALIBRATION_DIR=/absolute/path/to/calibration
 export PYTHON=/path/to/python-with-open3d
@@ -345,7 +345,7 @@ counts.
 Start the Ubuntu browser receiver as above. In a second Ubuntu terminal:
 
 ```bash
-cd /path/to/Open4D/open4d/modules/4d-reconstruction
+cd /path/to/Open4D/open4d/reconstruction/rgbd
 
 "$PYTHON" \
   tools/replay_obp1_sender.py \

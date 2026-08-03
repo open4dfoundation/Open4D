@@ -39,16 +39,16 @@ benchmark_app/outputs/
 benchmark_app/runs/
 benchmark_app/archives/
 
-# Research datasets, training runs, and generated reconstructions
+# Codec datasets, training runs, and generated reconstructions
 # Existing tracked paper fixtures remain tracked; these rules prevent new local
 # runs from silently expanding the source repository.
-open4d/modules/*/datasets/
-open4d/modules/*/outputs/
-open4d/modules/*/experiments/
-open4d/modules/*/checkpoints/
-open4d/modules/*/logs/
-open4d/modules/*/data/bench_*/
-open4d/modules/tvmc/arap-volume-tracking/data/*/
+open4d/codecs/*/datasets/
+open4d/codecs/*/outputs/
+open4d/codecs/*/experiments/
+open4d/codecs/*/checkpoints/
+open4d/codecs/*/logs/
+open4d/codecs/*/data/bench_*/
+open4d/codecs/tvmc/arap-volume-tracking/data/*/
 
 # Common generated model artifacts
 *.ckpt
@@ -61,6 +61,6 @@ open4d/modules/tvmc/arap-volume-tracking/data/*/
 basketball_comparison_app/assets/
 basketball_comparison_app/outputs/
 
-# QNDF-INT8 local setup symlinks (point into the sibling QNDF module on this host)
-open4d/modules/Quantized-Neural-Displacement-Fields-INT8/experiments
-open4d/modules/Quantized-Neural-Displacement-Fields-INT8/objs_original
+# QNDF-INT8 local setup symlinks (point into the sibling QNDF codec on this host)
+open4d/codecs/qndf_int8/experiments
+open4d/codecs/qndf_int8/objs_original

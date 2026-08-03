@@ -1,15 +1,15 @@
-[submodule "open4d/modules/tvmc/draco"]
-	path = open4d/modules/tvmc/draco
+[submodule "open4d/codecs/tvmc/draco"]
+	path = open4d/codecs/tvmc/draco
 	url = https://github.com/google/draco.git
-[submodule "open4d/modules/tsmc/draco"]
-	path = open4d/modules/tsmc/draco
+[submodule "open4d/codecs/tsmc/draco"]
+	path = open4d/codecs/tsmc/draco
 	url = https://github.com/google/draco.git
-[submodule "open4d/modules/tsmc/third_party/sam3"]
-	path = open4d/modules/tsmc/third_party/sam3
+[submodule "open4d/codecs/tsmc/third_party/sam3"]
+	path = open4d/codecs/tsmc/third_party/sam3
 	url = https://github.com/facebookresearch/sam3.git
-[submodule "open4d/modules/Draco/draco"]
-	path = open4d/modules/Draco/draco
+[submodule "open4d/codecs/draco/draco"]
+	path = open4d/codecs/draco/draco
 	url = https://github.com/google/draco.git
-[submodule "open4d/modules/mpeg-vdmc-tm"]
-	path = open4d/modules/mpeg-vdmc-tm
+[submodule "open4d/codecs/vdmc"]
+	path = open4d/codecs/vdmc
 	url = https://github.com/MPEGGroup/mpeg-vdmc-tm.git
