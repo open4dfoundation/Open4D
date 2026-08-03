@@ -25,8 +25,6 @@ representations:
 | TSMC | Mostly duplicated Open3D mesh and Trimesh conversion code, plus separate static and dynamic meshes and NumPy displacement arrays. Normals are frequently recomputed; OBJ writes often omit colors, normals, and UVs. | Integer filename ranges and command-line frame counts; no shared metadata or timestamps. | Scene extraction can change topology. The displacement representation is fixed to a subdivided reference mesh with vertex correspondence. |
 | N4MC | A local Torch `Mesh(vertices, faces)` wrapper with face normals, point-cloud-utils vertex/face arrays, TSDF tensors, Trimesh evaluation meshes, and Open3D visualization meshes. Marching cubes returns independent vertex, face, and normal arrays. | Dataset samples are dictionaries with string `frame_id`, tensor `index`, paths, and TSDF statistics. Sequence utilities return parallel lists. No common timestamps. | TSDF marching cubes is changing topology. Legacy displacement/KLT experiments assume a fixed vertex count and correspondence. |
 | Former MeshReduce / 4D reconstruction | Native code uses Open3D tensor `TriangleMesh` plus a separate OpenCV texture in `MeshFrame`. Python fusion returns legacy Open3D meshes inside `MeshResult`, with colors and normals held by Open3D. | Transport structures carry device timestamps, pair numbers, and synchronization metadata separately from mesh values. `MeshResult` carries `source_pair` and build metrics. | TSDF extraction and independent mesh merging produce changing topology and vertex counts. |
-| Players | Mesh player consumes `(vertices, faces, timestamp)` tuples and keeps a separate sorted frame-ID list. Point-cloud players use `(points, colors, timestamp)` tuples. | Playback FPS is supplied by the caller rather than derived from timestamps. | Not declared. |
-| `.o4d` I/O | Mesh reader returns `(float32 vertices, uint32 faces, timestamp)`; point readers return `(float32 points, optional uint8 RGB, timestamp)`. Index entries carry stored frame IDs and timestamps; HEAD JSON carries metadata. | Indexed on-demand decoding, but each reader has its own tuple shape. | The v1 container does not declare topology. |
 
 The largest incompatibilities are `faces` versus `triangles`, Torch versus
 NumPy versus Open3D storage, RGB float versus byte colors, per-vertex versus
@@ -49,9 +47,9 @@ near-duplicate mesh conversion and displacement code.
 - **Operation** transforms frames or sequences and may return a lazy provider
   that performs work on access.
 
-This separation lets a directory loader, `.o4d` decoder, neural decoder, and
-live capture expose the same API without copying their complete output into
-memory.
+This separation lets a directory loader, a USD container reader, a neural
+decoder, and live capture expose the same API without copying their complete
+output into memory.
 
 ## Geometry and mutability
 
@@ -98,12 +96,10 @@ insufficient. Expensive verification should be a future explicit operation.
 
 ## First integration
 
-`open_o4d_mesh_sequence(path)` wraps the existing `O4DMeshReader`. Opening the
-sequence reads the HEAD and frame index but does not decode geometry. Ordinal
-sequence access maps to the stored frame ID and converts only that reader tuple
-to a core `Frame` and `TriangleMesh`. Existing reader and writer APIs remain
-unchanged. The sequence should be used as a context manager so its file closes
-deterministically.
+`examples/visualization` is the first consumer: a folder of numbered mesh files
+or a time-sampled USD container is opened as a `Sequence`, and geometry is
+decoded only on frame access. The sequence should be used as a context manager
+so its files close deterministically.
 
 Open3D remains an external frame operation. An adapter converts
 `frame.geometry` to an Open3D mesh for visualization or processing; Open3D does

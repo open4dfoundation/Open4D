@@ -9,7 +9,6 @@ from .core import (
     TopologyMode,
     TriangleMesh,
 )
-from .io.o4d_mesh_io import open_o4d_mesh_sequence
 
 __all__ = [
     "Frame",
@@ -19,5 +18,4 @@ __all__ = [
     "SequenceView",
     "TopologyMode",
     "TriangleMesh",
-    "open_o4d_mesh_sequence",
 ]
