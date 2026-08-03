@@ -164,3 +164,8 @@ new binary fixture or external artifact alongside the code that consumes it.
 
 Please contact the Open4D maintainers before adding a large dataset, checkpoint,
 or third-party source tree.
+
+## License
+
+Open4D is distributed under the [MIT License](LICENSE). Bundled third-party
+components and submodules remain subject to their respective license terms.
