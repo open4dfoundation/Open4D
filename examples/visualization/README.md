@@ -1,10 +1,10 @@
 # Open4D examples
 
 `visualize_sequence.py` loads a 4D sequence, says what's in it, and plays it in
-an Open3D window.
+our own PyQt6 viewer.
 
 ```bash
-python -m pip install -e '.[open3d]'
+python -m pip install -e '.[player]'
 
 python examples/visualization/visualize_sequence.py my_capture/ --info    # check it loads
 python examples/visualization/visualize_sequence.py my_capture/           # play it
@@ -13,14 +13,14 @@ python examples/visualization/visualize_sequence.py my_capture/ --save out.gif
 
 Run it with no arguments to see every format it accepts.
 
-In the window: drag to orbit, scroll to zoom, and drag the time slider to scrub.
-The settings panel on the right holds the slider plus Open3D's own lighting and
-material controls; `--no-settings` hides it.
+In the window: drag to orbit, scroll to zoom, drag the frame slider to scrub,
+space to pause, left/right to step, `q` to quit.
 
-The window uses Open3D's Filament renderer — PBR shading, a directional sun,
-soft shadows. `--save` cannot: Filament has no headless backend on macOS, and
-capturing from its window drops frames, so saved GIFs come from Open3D's older
-viewer and look flatter than the window.
+The viewer is built on PyQt6 and pyqtgraph — the same stack as `open4d.player`,
+and no Open3D, which matters because Open3D publishes no wheels for Python 3.13.
+The window and `--save` share one renderer, so a saved GIF looks like what you
+saw. Lighting is a fixed directional light baked into vertex colours, so the
+shading stays put as you orbit.
 
 ## Sources
 
@@ -47,10 +47,9 @@ before `frame_10.obj`. A frame with no faces is drawn as a point cloud.
 | `--stride N` | Keep every Nth frame |
 | `--fps` | Override the rate. A USD file uses its own stage rate; a folder gets 30 |
 | `--save out.gif` | Render offscreen to an animated GIF |
-| `--shadows` `--color` `--roughness` `--background` | Window appearance |
-| `--yaw` `--pitch` `--zoom` | `--save` camera. `--yaw` is about 5 per degree |
-| `--width` `--height` `--no-ground` `--no-settings` | Window |
-| `--point-size` `--wireframe` | Both |
+| `--color` `--ambient` `--background` | Appearance |
+| `--distance` `--elevation` `--azimuth` | Camera |
+| `--width` `--height` `--point-size` `--wireframe` | View |
 | `--pack-usd out.usdc` | Also write an OpenUSD container |
 
 `--up` is the one to reach for first. The script warns when the subject looks
@@ -105,4 +104,6 @@ python examples/visualization/visualize_sequence.py \
 | `frame_sources.py` | Format registry and `open_sequence()` |
 | `formats_mesh.py` | `.obj` and `.ply`, trimesh fallback |
 | `formats_usd.py` | USD container read and write |
+| `render_frames.py` | Renderer-neutral frames, up-axis rotation, shading |
+| `viewer_qt.py` | The PyQt6 + pyqtgraph viewer |
 | `_common.py` | Path setup and dependency checks |
