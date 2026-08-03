@@ -39,7 +39,8 @@ Open4D/
 │   ├── open3d/
 │   └── unity/
 ├── benchmarks/        benchmark scaffolding and research baselines
-├── examples/          minimal .o4d playback examples
+├── examples/
+│   └── visualization/ runnable sequence loading and visualization example
 ├── scripts/           repository-level setup utilities
 ├── tests/             shared core and IO tests
 └── docs/              architecture and repository policies
@@ -142,6 +143,49 @@ If an existing clone is missing Draco, initialize and build both copies with:
 ```bash
 ./scripts/setup_draco.sh
 ```
+
+## Getting started
+
+`examples/visualization/visualize_sequence.py` loads a 4D sequence, reports what it contains,
+and animates it. Point it at your own data:
+
+```bash
+python -m pip install -e '.[open3d]'
+python examples/visualization/visualize_sequence.py my_capture/ --info
+python examples/visualization/visualize_sequence.py my_capture/
+```
+
+Playback is an Open3D window: drag to orbit, scroll to zoom, space to pause,
+left/right to step a frame. `--save out.gif` renders offscreen instead.
+
+A source is either a folder holding one mesh file per frame — `.obj` and `.ply`
+need no extra dependencies to read — or a single time-sampled USD file. `--info`
+reports frame count, duration, topology and bounds without decoding geometry,
+which is the quickest way to check a dataset loads.
+
+Loading is one call, and frames are decoded on access:
+
+```python
+from frame_sources import open_sequence
+
+with open_sequence("path/to/frames", fps=30.0) as sequence:
+    print(len(sequence), sequence.duration, sequence.fps)
+    mesh = sequence[0].geometry          # TriangleMesh: positions, triangles
+```
+
+OpenUSD is the container the example writes. `--pack-usd out.usdc` packs any
+source into one compressed `.usdc` file carrying the frame rate, the key-frame
+index, and per-frame streams alongside the geometry:
+
+```bash
+python -m pip install -e '.[usd]'
+python examples/visualization/visualize_sequence.py my_capture/ --pack-usd out.usdc --info
+```
+
+The TVMC codec vendors 10 frames of a basketball player, useful for checking the
+program runs before pointing it at your own data. See
+[`examples/README.md`](examples/README.md) for that command, the full format
+list, and the container layout.
 
 ## Reproducibility and artifacts
 
