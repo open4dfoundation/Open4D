@@ -34,7 +34,12 @@ import numpy as np
 
 # Import first: this puts the repository on sys.path for uninstalled clones.
 from _common import existing_source, require
-from frame_sources import describe_source, open_sequence, supported_formats
+from frame_sources import (
+    DEFAULT_FPS,
+    describe_source,
+    open_sequence,
+    supported_formats,
+)
 
 # Open3D's default camera is +Y up looking down -Z, so the source's up axis has
 # to land on Y — send it to Z and you get a view straight down onto the subject.
@@ -48,13 +53,14 @@ GEOMETRY_NAME = "sequence"
 PLOT_UP = 1
 
 
-def report(sequence, path: Path) -> None:
+def report(sequence, path: Path, fps: float) -> None:
     """Print what the sequence declares, before decoding any geometry."""
     print(f"\n{path}")
     print(f"  {describe_source(path)}")
     print(f"  frames     : {len(sequence)}")
     print(f"  duration   : {sequence.duration:.3f} s at "
           f"{sequence.fps or 0:.2f} fps")
+    print(f"  playing at : {fps:.2f} fps")
     print(f"  topology   : {sequence.topology.value}")
 
     # A USD container records its own frame rate, up axis and key frames; a
@@ -65,6 +71,20 @@ def report(sequence, path: Path) -> None:
             if key == "key_frame_indices" and len(value) > 12:
                 value = f"{list(value[:12])} ... ({len(value)} total)"
             print(f"  {key:<17}: {value}")
+
+
+def resolve_fps(sequence, requested: float | None) -> float:
+    """Pick the playback rate: the flag wins, then whatever the source declares.
+
+    `Sequence.fps` is derived from the timestamps, so it carries float noise
+    (30.000000000000004); the provider's declared rate is exact when present.
+    """
+    if requested:
+        return float(requested)
+    declared = sequence.metadata.get("fps")
+    if declared:
+        return float(declared)
+    return float(sequence.fps or DEFAULT_FPS)
 
 
 def resolve_up(sequence, requested: str | None) -> str:
@@ -111,13 +131,29 @@ def decode_all(sequence, stride: int, up: str, o3d: Any) -> list:
     return [to_open3d(frame, up, o3d) for frame in sequence[::stride]]
 
 
+def is_mesh(geometry: Any, o3d: Any) -> bool:
+    """True for a triangle mesh, False for a point cloud."""
+    return isinstance(geometry, o3d.geometry.TriangleMesh)
+
+
+def vertex_count(geometry: Any, o3d: Any) -> int:
+    """Point count for either geometry kind."""
+    return len(geometry.vertices if is_mesh(geometry, o3d) else geometry.points)
+
+
 def report_geometry(frames: list, stride: int, o3d: Any) -> None:
-    """Print what the decoded frames turned out to be."""
-    is_mesh = isinstance(frames[0], o3d.geometry.TriangleMesh)
-    counts = [
-        len(frame.vertices if is_mesh else frame.points) for frame in frames
+    """Print what the decoded frames turned out to be.
+
+    Each frame is tested individually: a folder of `.ply` where some frames have
+    faces and some do not yields a mix of meshes and point clouds, and assuming
+    the whole sequence matches frame 0 raises AttributeError on the first
+    mismatch.
+    """
+    kinds = {is_mesh(frame, o3d) for frame in frames}
+    counts = [vertex_count(frame, o3d) for frame in frames]
+    faces = [
+        len(frame.triangles) if is_mesh(frame, o3d) else 0 for frame in frames
     ]
-    faces = [len(frame.triangles) if is_mesh else 0 for frame in frames]
     lower = np.min([frame.get_min_bound() for frame in frames], axis=0)
     upper = np.max([frame.get_max_bound() for frame in frames], axis=0)
 
@@ -127,10 +163,17 @@ def report_geometry(frames: list, stride: int, o3d: Any) -> None:
             return str(unique[0])
         return f"{unique[0]}..{unique[-1]} ({len(unique)} distinct)"
 
+    if kinds == {True}:
+        description = "triangle mesh"
+    elif kinds == {False}:
+        description = "point cloud"
+    else:
+        description = "mixed: some frames have faces, some do not"
+
     print(f"\ndecoded {len(frames)} frames (stride {stride})")
-    print(f"  geometry   : {'triangle mesh' if is_mesh else 'point cloud'}")
+    print(f"  geometry   : {description}")
     print(f"  vertices   : {summarize(counts)}")
-    if is_mesh:
+    if True in kinds:
         print(f"  triangles  : {summarize(faces)}")
     print(f"  bounds     : {lower.round(2)} .. {upper.round(2)}")
 
@@ -261,7 +304,9 @@ def record(frames: list, args, o3d: Any, output: Path) -> None:
     options.mesh_show_wireframe = args.wireframe
     options.background_color = np.asarray(args.background)
 
-    geometry = frames[0]
+    # A copy: the loop below swaps buffers into this object, which would
+    # otherwise overwrite the caller's frames[0] with the last frame's data.
+    geometry = type(frames[0])(frames[0])
     visualizer.add_geometry(geometry, reset_bounding_box=True)
     control = visualizer.get_view_control()
     if args.yaw or args.pitch:
@@ -274,7 +319,14 @@ def record(frames: list, args, o3d: Any, output: Path) -> None:
         for index, frame in enumerate(frames):
             # Swapping the buffers inside the geometry the visualizer already
             # owns leaves the camera alone; add/remove would reframe it.
-            if isinstance(geometry, o3d.geometry.TriangleMesh):
+            if is_mesh(geometry, o3d) != is_mesh(frame, o3d):
+                raise SystemExit(
+                    f"\nframe {index} is a "
+                    f"{'mesh' if is_mesh(frame, o3d) else 'point cloud'} but "
+                    "the sequence started as the other; --save cannot switch "
+                    "geometry type mid-sequence"
+                )
+            if is_mesh(geometry, o3d):
                 geometry.vertices = frame.vertices
                 geometry.triangles = frame.triangles
                 geometry.vertex_colors = frame.vertex_colors
@@ -330,8 +382,9 @@ def main() -> None:
     parser.add_argument(
         "--fps",
         type=float,
-        default=30.0,
-        help="frame rate assigned to a folder, and the playback rate",
+        default=None,
+        help="override the frame rate; by default a USD file's own stage rate "
+        "is used, and a folder gets 30",
     )
     parser.add_argument(
         "--up",
@@ -418,7 +471,7 @@ def main() -> None:
         raise SystemExit(2)
     if args.stride < 1:
         parser.error("--stride must be at least 1")
-    if args.fps <= 0:
+    if args.fps is not None and args.fps <= 0:
         parser.error("--fps must be greater than zero")
 
     path = existing_source(args.path)
@@ -427,7 +480,11 @@ def main() -> None:
     # report it as an error naming the file rather than a traceback.
     try:
         with open_sequence(path, fps=args.fps) as sequence:
-            report(sequence, path)
+            # One rate, resolved once, used for reporting, playback, GIF timing
+            # and any container we write.
+            fps = resolve_fps(sequence, args.fps)
+            args.fps = fps
+            report(sequence, path, fps)
             if not len(sequence):
                 raise SystemExit(f"{path} contains no frames")
 
@@ -439,12 +496,6 @@ def main() -> None:
                 source_format = sequence.metadata.get("format", "")
                 if isinstance(source_format, (list, tuple)):
                     source_format = ", ".join(source_format)
-
-                # Prefer the rate the provider declares. Sequence.fps derives
-                # it from the timestamps, which lands on 30.000000000000004
-                # rather than 30 and writes that into the container.
-                declared = sequence.metadata.get("fps")
-                fps = float(declared) if declared else (sequence.fps or args.fps)
 
                 written = write_usd_container(
                     args.pack_usd,
