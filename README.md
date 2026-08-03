@@ -2,14 +2,13 @@
 
 Open4D is a research repository for representing, compressing, evaluating, and
 playing time-varying 3D geometry. It brings several mesh-compression systems,
-a shared 4D data model, a sequence viewer, and benchmark tooling into one
-workspace for XR, teleoperation, digital-twin, robotics, and graphics
+a shared 4D data model, a sequence viewer, and per-codec evaluation scripts
+into one workspace for XR, teleoperation, digital-twin, robotics, and graphics
 research.
 
 > **Project status:** Open4D is under active development. The individual
 > codecs and domain components contain working pipelines, while the shared 4D
-> data model, common metrics API, and repository-wide benchmark suite are still
-> evolving.
+> data model and a common metrics API are still evolving.
 
 <p align="center">
   <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
@@ -35,12 +34,10 @@ Open4D/
 ├── integrations/
 │   ├── open3d/
 │   └── unity/
-├── benchmarks/        benchmark scaffolding and research baselines
 ├── examples/
 │   └── visualization/ runnable sequence loading and visualization example
 ├── apps/              placeholder for end-to-end pipelines; a README only
 ├── scripts/           repository-level setup utilities
-├── tests/             shared core tests
 └── docs/              architecture and repository policies
 ```
 
@@ -241,17 +238,17 @@ runs, checkpoints, logs, or decoded outputs. The expected local directories,
 publication-manifest requirements, and policy for existing historical fixtures
 are documented in [`docs/artifacts.md`](docs/artifacts.md).
 
-The repository-wide benchmark suite remains scaffolding rather than a complete
-validation suite. Results should identify the exact component revision,
-configuration, dataset/frame range, encoded byte count, runtime environment,
-and metric implementation.
+Evaluation currently lives inside each codec rather than in a repository-wide
+suite. Results should identify the exact component revision, configuration,
+dataset/frame range, encoded byte count, runtime environment, and metric
+implementation.
 
 ## Contributing
 
 Contributions are welcome, especially around shared data abstractions, common
-metrics, reproducible benchmark fixtures, codec adapters, tests, documentation,
-and performance. Keep codec dependencies isolated and document any
-new binary fixture or external artifact alongside the code that consumes it.
+metrics, codec adapters, documentation, and performance. Keep codec
+dependencies isolated and document any new binary fixture or external artifact
+alongside the code that consumes it.
 
 Please contact the Open4D maintainers before adding a large dataset, checkpoint,
 or third-party source tree.
