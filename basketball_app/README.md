@@ -6,7 +6,7 @@ against the source, as looping animations. One toggle switches every panel to an
 error-heatmap view (decoded-to-source surface distance on a shared scale).
 
 The four codecs are **not** run by the app; it displays their already-decoded
-meshes found under `open4d/modules/*/outputs/`. `prepare.py` renders those meshes
+meshes found under `open4d/codecs/*/outputs/`. `prepare.py` renders those meshes
 into the GIFs and metrics the app shows.
 
 ## Run

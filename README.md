@@ -7,7 +7,8 @@ one workspace for XR, teleoperation, digital-twin, robotics, and graphics
 research.
 
 > **Project status:** Open4D is under active development. The individual
-> research modules contain working pipelines, while the shared 4D data model,
+> codecs and domain components contain working pipelines, while the shared 4D
+> data model,
 > common metrics API, and repository-wide benchmark suite are not yet stable.
 
 <p align="center">
@@ -23,16 +24,20 @@ Open4D/
 │   ├── io/            experimental .o4d mesh and point-cloud containers
 │   ├── player/        PyQt/OpenGL sequence viewers
 │   ├── tools/         conversion utilities for .o4d files
-│   └── modules/
-│       ├── 4d-reconstruction/
-│       ├── Draco/
-│       ├── KLT/
-│       ├── N4MC/
-│       ├── Quantized-Neural-Displacement-Fields/
-│       ├── mpeg-vdmc-tm/
-│       ├── tsmc/
-│       ├── tvmc/
-│       └── unity_decoder/
+│   ├── codecs/
+│   │   ├── draco/
+│   │   ├── klt/
+│   │   ├── n4mc/
+│   │   ├── qndf/
+│   │   ├── qndf_int8/
+│   │   ├── tsmc/
+│   │   ├── tvmc/
+│   │   └── vdmc/
+│   └── reconstruction/
+│       └── rgbd/
+├── integrations/
+│   ├── open3d/
+│   └── unity/
 ├── benchmarks/        benchmark scaffolding and research baselines
 ├── examples/          minimal .o4d playback examples
 ├── scripts/           repository-level setup utilities
@@ -41,7 +46,7 @@ Open4D/
 ```
 
 There are currently no top-level `cpp/`, `python/`, or `docker/` directories.
-Native C++, C#, and build files are owned by the research modules that require
+Native C++, C#, and build files are owned by the components that require
 them.
 
 ## Components
@@ -55,10 +60,10 @@ provide local desktop playback.
 
 The abstractions described in `open4d/core/README.md`—including
 `MeshSequence`, `PointCloudSequence`, transforms, timestamps, and frame
-metadata—are planned work. Research modules do not yet share a single stable
+metadata—are planned work. Codecs do not yet share a single stable
 Python API.
 
-### Research modules
+### Codecs, reconstruction, and integrations
 
 - **N4MC** — neural TSDF-based mesh compression, including a newer modular
   codec under its `data`, `models`, `losses`, `training`, and `evaluation`
@@ -70,8 +75,8 @@ Python API.
 - **TSMC** — scene-mesh compression with optional SAM-based static/dynamic
   separation, ARAP volume tracking, deformation, displacement compression, and
   evaluation.
-- **Unity decoder** — a C++ decoder backend and C# Unity front end for playback
-  on XR targets.
+- **Unity integration** — a C++ decoder backend and C# Unity front end for
+  playback on XR targets.
 - **Draco** — Google Draco mesh-compression baseline. Wraps the vendored
   `draco_encoder`/`draco_decoder` binaries into a per-frame encode/decode/eval
   pipeline for benchmarking against the neural codecs.
@@ -83,12 +88,12 @@ Python API.
   It includes both the original native reconstruction code and the Python
   two-camera streaming pipeline.
 - **MPEG V-DMC test model** — the pinned MPEG reference implementation for
-  video-based dynamic mesh coding. The `mpeg-vdmc-tm` submodule provides the
-  standard's reference encoder, decoder, metric tools, and unit tests; it is
+  video-based dynamic mesh coding. The `open4d/codecs/vdmc` submodule provides
+  the standard's reference encoder, decoder, metric tools, and unit tests; it is
   separate from Open4D's TVMC research pipeline.
 
-Each module has its own README and environment requirements. TVMC currently
-targets Python 3.10; TSMC targets Python 3.12. Treat module environments as
+Each component has its own README and environment requirements. TVMC currently
+targets Python 3.10; TSMC targets Python 3.12. Treat codec environments as
 independent until a shared environment is documented.
 
 ### Basketball sequence comparison
@@ -106,7 +111,7 @@ heatmap.
 Clone with submodules to obtain the pinned Draco, SAM3, and MPEG V-DMC source:
 
 ```bash
-git clone --recurse-submodules https://github.com/SINRG-Lab/Open4D.git
+git clone --recurse-submodules https://github.com/open4dfoundation/Open4D.git
 cd Open4D
 ```
 
@@ -128,8 +133,8 @@ python -m pip install -e ".[player]" # desktop viewers
 python -m pip install -e ".[all]"
 ```
 
-These extras do not install the heavyweight research-module environments. Use
-the setup instructions inside the selected module before running a codec.
+These extras do not install the heavyweight codec environments. Use the setup
+instructions inside the selected codec before running it.
 
 If an existing clone is missing Draco, initialize and build both copies with:
 
@@ -146,14 +151,14 @@ are documented in [`docs/artifacts.md`](docs/artifacts.md).
 
 The repository-wide `benchmarks/` and `tests/` directories are currently
 scaffolding rather than a complete validation suite. Results should identify
-the exact module revision, configuration, dataset/frame range, encoded byte
+the exact component revision, configuration, dataset/frame range, encoded byte
 count, runtime environment, and metric implementation.
 
 ## Contributing
 
 Contributions are welcome, especially around shared data abstractions, common
-metrics, reproducible benchmark fixtures, module adapters, tests, documentation,
-and performance. Keep research-module dependencies isolated and document any
+metrics, reproducible benchmark fixtures, codec adapters, tests, documentation,
+and performance. Keep codec dependencies isolated and document any
 new binary fixture or external artifact alongside the code that consumes it.
 
 Please contact the Open4D maintainers before adding a large dataset, checkpoint,
