@@ -45,7 +45,7 @@ before `frame_10.obj`. A frame with no faces is drawn as a point cloud.
 | `--info` | Report and stop, without decoding geometry |
 | `--up {x,y,z}` | Which of your axes points up. Wrong guess renders the subject on its side |
 | `--stride N` | Keep every Nth frame |
-| `--fps` | Frame rate for a folder, and the playback rate |
+| `--fps` | Override the rate. A USD file uses its own stage rate; a folder gets 30 |
 | `--save out.gif` | Render offscreen to an animated GIF |
 | `--shadows` `--color` `--roughness` `--background` | Window appearance |
 | `--yaw` `--pitch` `--zoom` | `--save` camera. `--yaw` is about 5 per degree |
@@ -62,7 +62,7 @@ like it is lying across the view rather than standing up.
 import sys; sys.path.insert(0, "examples/visualization")
 from frame_sources import open_sequence
 
-with open_sequence("my_capture/", fps=30.0) as sequence:
+with open_sequence("my_capture/") as sequence:   # fps= overrides
     print(len(sequence), sequence.duration, sequence.fps)
 
     mesh = sequence[0].geometry   # open4d.TriangleMesh

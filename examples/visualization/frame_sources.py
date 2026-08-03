@@ -37,9 +37,6 @@ import _common  # noqa: F401
 
 import formats_mesh
 import formats_usd
-from formats_mesh import NO_TRIANGLES  # noqa: F401  (re-exported for examples)
-from formats_mesh import read_obj, read_ply, write_obj, write_ply  # noqa: F401
-
 from open4d import Frame, Sequence, TopologyMode, TriangleMesh
 
 FrameReader = Callable[[Path], "tuple[np.ndarray, np.ndarray, np.ndarray | None]"]
@@ -77,7 +74,6 @@ FORMAT_EXTRAS = {
 
 FRAME_SUFFIXES = tuple(sorted(FRAME_READERS))
 SEQUENCE_SUFFIXES = tuple(sorted(SEQUENCE_OPENERS))
-ALL_SUFFIXES = tuple(sorted(set(FRAME_SUFFIXES) | set(SEQUENCE_SUFFIXES)))
 
 
 def supported_formats() -> str:
@@ -135,7 +131,12 @@ def read_geometry(path: Path) -> TriangleMesh:
     except SystemExit:
         raise  # a missing-dependency exit, already actionable
     except Exception as error:
-        raise type(error)(f"{path}: {error}") from error
+        # Deliberately not `type(error)(...)`: plenty of exceptions take more
+        # than one constructor argument — UnicodeDecodeError takes five — and
+        # rebuilding them swallows the real error behind a TypeError.
+        raise ValueError(
+            f"{path}: {type(error).__name__}: {error}"
+        ) from error
 
 
 def list_frame_files(directory: Path) -> list[Path]:
@@ -271,18 +272,23 @@ def source_kind(path: Path | str) -> str:
     )
 
 
-def open_sequence(path: Path | str, fps: float = 30.0) -> Sequence:
+DEFAULT_FPS = 30.0
+
+
+def open_sequence(path: Path | str, fps: float | None = None) -> Sequence:
     """Open a frame folder, a whole-sequence file, or a single mesh file.
 
-    `fps` sets the frame timestamps for sources that carry no timing of their
-    own — folders and single files. USD treats it as an override for the stage's
-    own rate.
+    `fps` is an override. Leave it None and each source uses whatever timing it
+    declares: a USD file its own stage rate, a frame folder `DEFAULT_FPS` since
+    a folder declares nothing. Passing a number forces that rate everywhere —
+    which is why it must default to None rather than to a real value, or the
+    default would silently override every stage rate it met.
     """
     path = Path(path)
     kind = source_kind(path)
 
     if kind == "folder":
-        return Sequence(FolderFrameProvider(path, fps=fps))
+        return Sequence(FolderFrameProvider(path, fps=fps or DEFAULT_FPS))
     if kind == "sequence-file":
         return SEQUENCE_OPENERS[path.suffix.lower()](path, fps)
     return Sequence(SingleFrameProvider(path))
@@ -312,11 +318,3 @@ def describe_source(path: Path | str) -> str:
         if record.get("frame_count"):
             detail = f"{suffix} ({record['frame_count']} frames)"
     return f"sequence file: {detail}, {megabytes:.2f} MB on disk"
-
-
-def source_size_bytes(path: Path | str) -> int:
-    """Total bytes on disk for a frame folder or a single file."""
-    path = Path(path)
-    if path.is_file():
-        return path.stat().st_size
-    return sum(entry.stat().st_size for entry in list_frame_files(path))
