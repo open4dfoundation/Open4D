@@ -1,7 +1,7 @@
 """A PyQt6 + pyqtgraph viewer for 4D sequences.
 
-Built on the same stack as `open4d.player`, and unlike Open3D it installs on
-current Python — Open3D publishes no wheels for 3.13.
+Built on PyQt6 and pyqtgraph, which unlike Open3D install on current Python —
+Open3D publishes no wheels for 3.13.
 
 Playback is a GL view with a transport bar underneath: play/pause, a frame
 slider, and a readout. Mouse drag orbits, scroll zooms. Space toggles playback,

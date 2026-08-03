@@ -16,8 +16,8 @@ Run it with no arguments to see every format it accepts.
 In the window: drag to orbit, scroll to zoom, drag the frame slider to scrub,
 space to pause, left/right to step, `q` to quit.
 
-The viewer is built on PyQt6 and pyqtgraph — the same stack as `open4d.player`,
-and no Open3D, which matters because Open3D publishes no wheels for Python 3.13.
+The viewer is built on PyQt6 and pyqtgraph, and no Open3D, which matters because
+Open3D publishes no wheels for Python 3.13.
 The window and `--save` share one renderer, so a saved GIF looks like what you
 saw. Lighting is a fixed directional light baked into vertex colours, so the
 shading stays put as you orbit.
@@ -93,7 +93,7 @@ program runs:
 ```bash
 python examples/visualization/visualize_sequence.py \
     open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player \
-    --up y --fps 10 --yaw -650 --save basketball.gif
+    --up y --fps 10 --save basketball.gif
 ```
 
 ## Files
