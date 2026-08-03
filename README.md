@@ -8,8 +8,8 @@ research.
 
 > **Project status:** Open4D is under active development. The individual
 > codecs and domain components contain working pipelines, while the shared 4D
-> data model,
-> common metrics API, and repository-wide benchmark suite are not yet stable.
+> data model, common metrics API, and repository-wide benchmark suite are still
+> evolving.
 
 <p align="center">
   <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
@@ -20,7 +20,7 @@ research.
 ```text
 Open4D/
 ├── open4d/
-│   ├── core/          planned shared sequence and metadata abstractions
+│   ├── core/          shared temporal geometry and sequence abstractions
 │   ├── io/            experimental .o4d mesh and point-cloud containers
 │   ├── player/        PyQt/OpenGL sequence viewers
 │   ├── tools/         conversion utilities for .o4d files
@@ -41,7 +41,7 @@ Open4D/
 ├── benchmarks/        benchmark scaffolding and research baselines
 ├── examples/          minimal .o4d playback examples
 ├── scripts/           repository-level setup utilities
-├── tests/             repository test-suite placeholder
+├── tests/             shared core and IO tests
 └── docs/              architecture and repository policies
 ```
 
@@ -58,10 +58,11 @@ point-cloud sequences, and Draco-compressed point-cloud sequences. The matching
 tools convert folders of geometry files into `.o4d` containers, and the players
 provide local desktop playback.
 
-The abstractions described in `open4d/core/README.md`—including
-`MeshSequence`, `PointCloudSequence`, transforms, timestamps, and frame
-metadata—are planned work. Codecs do not yet share a single stable
-Python API.
+`open4d/core` now contains the first shared temporal mesh model: a validated
+NumPy-backed `TriangleMesh`, temporal `Frame`, lazy `Sequence`, and provider
+contract. The existing codecs have not yet migrated to it, and point clouds,
+volumes, transforms, and a stable codec API remain planned work. See
+`docs/sequence-design.md` for the architecture and staged migration plan.
 
 ### Codecs, reconstruction, and integrations
 
@@ -149,10 +150,10 @@ runs, checkpoints, logs, or decoded outputs. The expected local directories,
 publication-manifest requirements, and policy for existing historical fixtures
 are documented in [`docs/artifacts.md`](docs/artifacts.md).
 
-The repository-wide `benchmarks/` and `tests/` directories are currently
-scaffolding rather than a complete validation suite. Results should identify
-the exact component revision, configuration, dataset/frame range, encoded byte
-count, runtime environment, and metric implementation.
+The repository-wide benchmark suite remains scaffolding rather than a complete
+validation suite. Results should identify the exact component revision,
+configuration, dataset/frame range, encoded byte count, runtime environment,
+and metric implementation.
 
 ## Contributing
 
