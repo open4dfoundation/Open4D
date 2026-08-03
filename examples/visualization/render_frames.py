@@ -127,8 +127,13 @@ def shade(
     # An ambient floor keeps faces turned away from the light off black.
     intensity = ambient + (1.0 - ambient) * diffuse
 
-    shaded = np.clip(intensity[:, None] * np.asarray(base), 0.0, 1.0)
-    return np.column_stack([shaded, np.ones(len(positions), dtype=np.float32)])
+    # float32 throughout: a Python tuple of floats would promote this to float64
+    # and double the largest per-vertex buffer for no visible gain.
+    shaded = np.clip(intensity[:, None] * np.asarray(base, dtype=np.float32),
+                     0.0, 1.0)
+    return np.column_stack(
+        [shaded, np.ones(len(positions), dtype=np.float32)]
+    ).astype(np.float32)
 
 
 def vertex_colors(

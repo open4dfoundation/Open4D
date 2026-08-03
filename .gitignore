@@ -68,3 +68,6 @@ basketball_comparison_app/outputs/
 # QNDF-INT8 local setup symlinks (point into the sibling QNDF codec on this host)
 open4d/codecs/qndf_int8/experiments
 open4d/codecs/qndf_int8/objs_original
+
+# Generated packaging metadata
+*.egg-info/

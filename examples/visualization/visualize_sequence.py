@@ -18,10 +18,9 @@ In the window: drag to orbit, scroll to zoom, drag the slider to scrub, space to
 pause, left/right to step, q to quit. Frame number, timestamp and vertex/triangle
 counts sit in the top-left corner; `--no-metrics` hides them.
 
-Playback is our own viewer, built on PyQt6 and pyqtgraph — the same stack as
-`open4d.player`. It needs no Open3D, which matters because Open3D publishes no
-wheels for Python 3.13. The window and `--save` share one renderer, so a saved
-GIF looks like what you saw.
+Playback is our own viewer, built on PyQt6 and pyqtgraph. It needs no Open3D,
+which matters because Open3D publishes no wheels for Python 3.13. The window and
+`--save` share one renderer, so a saved GIF looks like what you saw.
 """
 
 from __future__ import annotations

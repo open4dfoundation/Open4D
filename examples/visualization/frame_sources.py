@@ -90,7 +90,7 @@ def supported_formats() -> str:
 
 
 def frame_sort_key(name: str) -> tuple[float, str]:
-    """Order `frame_2` before `frame_10`, matching `open4d.tools`.
+    """Order `frame_2` before `frame_10`.
 
     Sorts on the last integer in the filename, falling back to the name.
     """
