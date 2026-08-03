@@ -167,5 +167,14 @@ or third-party source tree.
 
 ## License
 
-Open4D is distributed under the [MIT License](LICENSE). Bundled third-party
-components and submodules remain subject to their respective license terms.
+Open4D is distributed under the [MIT License](LICENSE) and is intended to be
+useful in academic, educational, and commercial projects. You may use, adapt,
+and redistribute the Open4D code subject to the attribution and license-notice
+requirements in the license. Bundled third-party components and submodules
+remain subject to their respective license terms.
+
+If Open4D contributes to published research, please acknowledge the project
+using the repository's [citation metadata](CITATION.cff), and cite the original
+papers for any individual codecs, datasets, or algorithms used in your work.
+We also welcome feedback through the project's issue tracker: sharing real-world
+use cases, limitations, and improvement ideas helps guide future development.
