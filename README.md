@@ -164,6 +164,10 @@ python examples/visualization/visualize_sequence.py my_capture/ --info
 python examples/visualization/visualize_sequence.py my_capture/
 ```
 
+<p align="center">
+  <img src="docs/assets/viewer_demo.gif" width="70%" alt="The Open4D sequence viewer playing a 10-frame mesh sequence">
+</p>
+
 Playback is our own PyQt6 window: drag to orbit, scroll to zoom, drag the slider
 to scrub, space to pause, left/right to step a frame. `--save out.gif` writes an
 animated GIF through the same renderer.
