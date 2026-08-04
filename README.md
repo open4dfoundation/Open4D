@@ -1,5 +1,5 @@
 # Open4D
-
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?logo=python&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)
 Open4D is a research repository for representing, compressing, evaluating, and
 playing time-varying 3D geometry. It brings several mesh-compression systems,
 a shared 4D data model, a sequence viewer, and per-codec evaluation scripts
@@ -13,8 +13,6 @@ research.
 <p align="center">
   <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
 </p>
-
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?logo=python&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)
 
 ## Repository layout
 
