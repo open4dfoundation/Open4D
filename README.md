@@ -14,6 +14,8 @@ research.
   <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
 </p>
 
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?logo=python&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)
+
 ## Repository layout
 
 ```text
