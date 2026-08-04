@@ -41,20 +41,6 @@ Open4D/
 └── docs/              architecture and repository policies
 ```
 
-There are currently no top-level `cpp/`, `python/`, or `docker/` directories.
-Native C++, C#, and build files are owned by the components that require
-them.
-
-## Components
-
-### Shared data model
-
-`open4d/core` contains the shared temporal mesh model: a validated
-NumPy-backed `TriangleMesh`, temporal `Frame`, lazy `Sequence`, and provider
-contract. The existing codecs have not yet migrated to it, and point clouds,
-volumes, transforms, and a stable codec API remain planned work. See
-`docs/sequence-design.md` for the architecture and staged migration plan.
-
 ### Codecs, reconstruction, and integrations
 
 - **N4MC** — neural TSDF-based mesh compression, including a newer modular
@@ -98,17 +84,14 @@ One baseline covers the repository itself — the shared data model and
 | Operating system | macOS, Linux, or Windows |
 | CPU | Any x86-64 or arm64; no particular core count |
 | GPU | Not required. The viewers open a real OpenGL window, so a graphical session is needed even for `--save` |
-| Memory | Roughly 1 MB of RAM per frame of playback. A 20,672-vertex / 39,421-triangle mesh measures 1.06 MB decoded, so 300 frames of that size need about 320 MB. Only the frame being drawn is uploaded to the GPU |
-| Disk | About 1.5 GB for a clone with submodules initialized, roughly a third of which is history |
+| Memory | Roughly 1 MB of RAM per frame of playback. |
+| Disk | About 1.5 GB for a clone with submodules initialized|
 
 `pip install -e .` needs only NumPy, and reads `.obj` and `.ply` with no further
 dependencies. Extras add optional readers and viewers — see
 [Installation](#installation).
 
-The codecs and the RGB-D pipeline do **not** run in that baseline. Each brings
-its own environment, and they conflict with one another on Python version alone,
-so keep them in separate virtualenvs or Conda environments and follow the setup
-in the module's own README:
+The some codecs and the RGB-D pipeline need separate environments:
 
 | Module | Adds |
 |---|---|
@@ -122,29 +105,11 @@ in the module's own README:
 | `reconstruction/rgbd` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
 | `integrations/unity` | Unity, plus a C++ toolchain to rebuild the backend for anything other than the prebuilt macOS and Android/Quest 3 plugins |
 
-Open3D is the common constraint: it publishes no wheels for Python 3.13, which
-caps `.[open3d]` and every codec environment at 3.12. The Qt viewer in
-`examples/visualization` was written to avoid that ceiling and runs on 3.13.
+Open3D ships no 3.13 wheels, capping .[open3d] and the codecs at 3.12.
 
 ### RGB-D capture on Windows
 
-`open4d/reconstruction/rgbd` spans two machines. Cameras attach to a Windows
-capture host that only encodes and forwards frames; reconstruction runs on an
-Ubuntu host with the NVIDIA GPU. Windows is the capture side only, and needs no
-NVIDIA GPU of its own — the tested host had integrated Intel Arc graphics.
-
-On the capture host:
-
-- The camera vendor's SDK. Tested with Orbbec K4A Wrapper 1.10.5 and Orbbec SDK
-  1.10.28 on Python 3.13, driving two Femto Bolt cameras.
-- Both cameras on separate USB 3 ports, and a sync hub wiring one as primary.
-- An OpenSSH client, since the frames reach Ubuntu through an SSH tunnel started
-  from PowerShell.
-
-Close Orbbec Viewer and anything else holding the cameras first, or the sender
-fails with `Hardware MFT failed to start`. The tested Wi-Fi and VPN path
-sustained 5 synchronized pairs per second; 15 FPS did not hold, so the sender
-defaults to 5.
+The RGB-D capture host is Windows and only encodes and forwards frames, so it needs no NVIDIA GPU: just the camera vendor SDK (tested: Orbbec K4A Wrapper 1.10.5, SDK 1.10.28, two Femto Bolts), both cameras on separate USB 3 ports with a sync hub, and an OpenSSH client. Close Orbbec Viewer first or the sender fails with Hardware MFT failed to start. 5 synchronized pairs/s held over Wi-Fi and VPN; 15 did not.
 
 Calibration layout and the step-by-step session walkthrough are in
 [`open4d/reconstruction/rgbd/README.md`](open4d/reconstruction/rgbd/README.md),
