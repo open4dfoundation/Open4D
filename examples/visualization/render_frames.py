@@ -27,6 +27,10 @@ UP_TO_Y = {"x": [2, 0, 1], "y": [0, 1, 2], "z": [1, 2, 0]}
 
 UP_AXES = tuple(sorted(UP_TO_Z))
 
+# The fixed directional light both viewers shade with, in plot space. Shared so a
+# reference mesh and its error map are lit identically.
+LIGHT = (0.35, 0.5, 0.8)
+
 
 class RenderFrame(NamedTuple):
     """One frame's geometry and identity, ready to draw."""
@@ -94,7 +98,7 @@ def shade(
     triangles: np.ndarray,
     base: tuple[float, float, float] = (0.95, 0.95, 0.97),
     ambient: float = 0.32,
-    light: tuple[float, float, float] = (0.35, 0.5, 0.8),
+    light: tuple[float, float, float] = LIGHT,
 ) -> np.ndarray:
     """Per-vertex diffuse shading, returned as RGBA in [0, 1].
 

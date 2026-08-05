@@ -11,10 +11,10 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 tools  = ["trimesh"]
-player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9"]
+player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
 open3d = ["open3d>=0.17", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
-all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17", "pillow>=9", "usd-core>=24.3"]
+all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17", "pillow>=9", "usd-core>=24.3", "scipy"]
 
 [tool.setuptools]
 include-package-data = false
