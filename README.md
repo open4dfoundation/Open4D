@@ -36,7 +36,8 @@ Open4D/
 │   ├── open3d/
 │   └── unity/
 ├── examples/
-│   └── visualization/ runnable sequence loading and visualization example
+│   └── visualization/ runnable sequence loading, visualization, and
+│                      reference-versus-decoded comparison
 ├── apps/              placeholder for end-to-end pipelines; a README only
 ├── scripts/           repository-level setup utilities
 └── docs/              architecture and repository policies
@@ -90,7 +91,9 @@ One baseline covers the repository itself — the shared data model and
 
 `pip install -e .` needs only NumPy, and reads `.obj` and `.ply` with no further
 dependencies. Extras add optional readers and viewers — see
-[Installation](#installation).
+[Installation](#installation). The comparison program additionally needs SciPy,
+which the `[player]` extra installs, for its nearest-neighbour search — the same
+`cKDTree` query TVMC's own evaluation uses.
 
 The some codecs and the RGB-D pipeline need separate environments:
 
@@ -201,6 +204,30 @@ program runs before pointing it at your own data. See
 [`examples/visualization/README.md`](examples/visualization/README.md) for that
 command, the full format list, and the container layout.
 
+## Comparing a codec against its reference
+
+`examples/visualization/compare_sequences.py` measures one sequence against
+another and shows both at once — the reference as geometry, the decoded mesh
+coloured by its distance from it, in synchronized panes under one camera:
+
+```bash
+python examples/visualization/compare_sequences.py reference/ decoded/ --info
+python examples/visualization/compare_sequences.py reference/ decoded/
+```
+
+Error is a nearest-neighbour distance, since a decoded mesh has its own vertex
+count and connectivity: point-to-point by default, `--metric plane` for the MPEG
+point-to-plane definition. Both are one-sided, so RMS, Hausdorff and PSNR are
+reported in each direction and the symmetric figure is the worse of the two.
+`--info` prints the per-frame table without opening a window, and `--csv` writes
+it for a paper or a regression run.
+
+This is codec-independent: both sides are read through the same loader, so
+anything the viewer opens can be compared. It does not replace a codec's own
+evaluation — the figures are per-vertex rather than area-weighted over faces, so
+they compare codecs against a shared reference rather than substituting for a
+metric tool that integrates over the surface.
+
 ## Reproducibility and artifacts
 
 Do not commit local datasets, virtual environments, benchmark jobs, training
@@ -208,8 +235,10 @@ runs, checkpoints, logs, or decoded outputs. The expected local directories,
 publication-manifest requirements, and policy for existing historical fixtures
 are documented in [`docs/artifacts.md`](docs/artifacts.md).
 
-Evaluation currently lives inside each codec rather than in a repository-wide
-suite. Results should identify the exact component revision, configuration,
+Per-codec evaluation still lives inside each codec rather than in a
+repository-wide suite; `examples/visualization/compare_sequences.py` is the one
+shared piece, covering geometric error between any two sequences the loader can
+read. Results should identify the exact component revision, configuration,
 dataset/frame range, encoded byte count, runtime environment, and metric
 implementation.
 

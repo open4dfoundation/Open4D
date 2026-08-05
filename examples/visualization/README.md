@@ -1,31 +1,109 @@
 # Open4D examples
 
-`visualize_sequence.py` loads a 4D sequence, says what's in it, and plays it in
-our own PyQt6 viewer.
+Two programs on one loader:
+
+| | |
+| --- | --- |
+| `visualize_sequence.py` | Play one 4D sequence |
+| `compare_sequences.py` | Put a decoded sequence beside its reference and colour it by error |
+
+Both read a folder of per-frame meshes or a single time-sampled USD file, and
+either one run with no arguments lists every format it accepts.
+
+## Quick start
 
 ```bash
-python -m pip install -e '.[player]'
+python -m pip install -e '.[player]'          # PyQt6, pyqtgraph, Pillow, SciPy
 
-python examples/visualization/visualize_sequence.py my_capture/ --info    # check it loads
-python examples/visualization/visualize_sequence.py my_capture/           # play it
-python examples/visualization/visualize_sequence.py my_capture/ --save out.gif
+# play a sequence
+python examples/visualization/visualize_sequence.py my_capture/ --info   # does it load?
+python examples/visualization/visualize_sequence.py my_capture/          # play it
+
+# compare a codec's output against the reference
+python examples/visualization/compare_sequences.py ref/ decoded/ --info  # numbers only
+python examples/visualization/compare_sequences.py ref/ decoded/         # side by side
 ```
 
-Run it with no arguments to see every format it accepts.
+`--info` needs no window, no GL and no display, so it works over ssh. Run it
+first: it catches a bad path, a frame-count mismatch, or misaligned frames in a
+second, before you wait for a window.
 
-In the window: drag to orbit, scroll to zoom, drag the frame slider to scrub,
-space to pause, left/right to step, `q` to quit.
+Try it on the 10 basketball frames the TVMC codec vendors:
 
-The viewer is built on PyQt6 and pyqtgraph, and no Open3D, which matters because
-Open3D publishes no wheels for Python 3.13.
-The window and `--save` share one renderer, so a saved GIF looks like what you
-saw. Lighting is a fixed directional light baked into vertex colours, so the
-shading stays put as you orbit.
+```bash
+python examples/visualization/visualize_sequence.py \
+    open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player \
+    --up y --fps 10 --azimuth 180
+```
+
+That capture faces away at the default azimuth, hence `--azimuth 180`. There is
+no universal front, so nothing infers one — find the angle for your subject once
+and reuse it. No decoded counterpart is vendored, so to try the comparison, run a
+codec over those frames and point the program at both folders.
+
+In either window: drag to orbit, scroll to zoom, drag the slider to scrub, space
+to pause, left/right to step, `q` to quit. In the comparison both panes orbit
+together. `--save out.gif` renders offscreen through the same renderer, so a
+saved GIF looks like what you saw.
+
+## Comparing
+
+Left pane the reference as geometry, right pane the decoded mesh coloured by its
+distance from it, under one shared camera — two independently posed views tell you
+nothing.
+
+A decoded mesh has its own vertex count and connectivity, so error is a
+nearest-neighbour distance, not a per-vertex difference:
+
+| Metric | |
+| --- | --- |
+| `--metric point` | to the nearest reference vertex (C2C). The default |
+| `--metric plane` | that offset projected onto the reference normal (C2P), so error sliding *along* the surface is not counted. The MPEG definition |
+
+Both are one-sided, so every figure is reported in both directions and the
+symmetric one is the worse of the two — a codec that deletes a limb scores well
+one way round. PSNR uses the reference bounding-box diagonal as its peak, fixed
+for the whole sequence so frames stay comparable.
+
+The colour scale is likewise fixed for the whole sequence, at the 99th percentile
+of every measured distance by default. Rescaling per frame would make each still
+prettier and the animation a lie. Values above the top take the top colour, and
+the colourbar labels that end `≥`.
+
+### Reading the numbers
+
+```
+  frame      rms d→r      rms r→d      sym rms    hausdorff   sym psnr
+      0    0.0181082    0.0183695    0.0183695    0.0315318      61.15
+```
+
+| Column | |
+| --- | --- |
+| `rms d→r` | decoded vertices to the reference surface — how wrong the output is |
+| `rms r→d` | the reverse. The one that catches *deleted* geometry, which has nothing near it |
+| `sym rms`, `hausdorff`, `sym psnr` | the worse of the two directions. Report these |
+
+Distances are in your source units; the tool does not know whether that is
+metres. `--csv out.csv` writes these plus vertex and triangle counts, one row per
+frame, for a paper or a regression run.
+
+### When it looks wrong
+
+| Symptom | Cause |
+| --- | --- |
+| Huge error, near-identical on every frame | Frames misaligned, or the two sequences are in different coordinate frames |
+| Error about the size of the subject | The codec re-centred or rescaled. **Nothing is registered or aligned** — no ICP, and `--up` rotates both together so it cannot fix a mismatch *between* them |
+| Subject lying on its side | Wrong `--up` |
+| `rms d→r` tiny but `rms r→d` large | The codec deleted geometry. Working as intended |
+| Error map all bright, or all dark | Colour scale too low or too high: `--percentile 100`, or set `--max-error` |
+| Two codecs' figures not comparable | Pass the *same* `--max-error` to both |
+| `inf` PSNR | The sequences are identical |
+| `nan` PSNR | Degenerate reference with no bounding box, so no scale to normalise against |
+
+Frames pair by ordinal position, and unequal lengths compare up to the shorter
+one and say so.
 
 ## Sources
-
-A folder holding one mesh file per frame, or a single file holding the whole
-sequence.
 
 | Source | Needs |
 | --- | --- |
@@ -35,75 +113,79 @@ sequence.
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
 | One mesh file | as above |
 
-Frames are ordered by the last number in the filename, so `frame_2.obj` comes
-before `frame_10.obj`. A frame with no faces is drawn as a point cloud.
+Frames are ordered by **the last number in the filename**, so `frame_2.obj` comes
+before `frame_10.obj` — but `frame_003_qp9.obj` sorts on 9, not 3. A codec that
+puts a parameter last will silently misalign every frame and look far worse than
+it is; rename before comparing. A frame with no faces is drawn as a point cloud.
 
 ## Flags
 
-| Flag | What it does |
+Shared: `--info` `--stride N` `--fps` `--up {x,y,z}` `--save out.gif`
+`--width` `--height` `--point-size` `--wireframe` `--color` `--ambient`
+`--background` `--distance` `--elevation` `--azimuth` `--no-metrics`.
+
+| `visualize_sequence.py` | |
 | --- | --- |
-| `--info` | Report and stop, without decoding geometry |
-| `--up {x,y,z}` | Which of your axes points up. Wrong guess renders the subject on its side |
-| `--stride N` | Keep every Nth frame |
-| `--fps` | Override the rate. A USD file uses its own stage rate; a folder gets 30 |
-| `--save out.gif` | Render offscreen to an animated GIF |
-| `--color` `--ambient` `--background` | Appearance |
-| `--distance` `--elevation` `--azimuth` | Camera |
-| `--width` `--height` `--point-size` `--wireframe` | View |
 | `--pack-usd out.usdc` | Also write an OpenUSD container |
 
-`--up` is the one to reach for first. The script warns when the subject looks
-like it is lying across the view rather than standing up.
+| `compare_sequences.py` | |
+| --- | --- |
+| `--metric {point,plane}` | Which distance to measure |
+| `--csv out.csv` | Write the per-frame table |
+| `--max-error` `--percentile` | Where the top of the colour scale sits |
+| `--error-shading` | How far the light may darken the error colours, 0–1 |
+
+`--up` is the one to reach for first; `visualize_sequence.py` warns when the
+subject looks like it is lying across the view. Error colours are shaded only
+slightly by default: the ramp is monotone in lightness, so brightness already
+carries the magnitude and at full shading a dark patch is ambiguous between deep
+shadow and large error. That is also why the comparison background is dark.
+
+Every frame you display is decoded and measured up front, so reach for
+`--stride N` above a few hundred frames.
 
 ## In your own code
 
 ```python
 import sys; sys.path.insert(0, "examples/visualization")
+import compare_frames
 from frame_sources import open_sequence
 
-with open_sequence("my_capture/") as sequence:   # fps= overrides
-    print(len(sequence), sequence.duration, sequence.fps)
+with open_sequence("ref/") as reference, open_sequence("decoded/") as decoded:
+    print(len(reference), reference.duration, reference.fps)
+    reference[0].geometry            # open4d.TriangleMesh: positions, triangles, colors
 
-    mesh = sequence[0].geometry   # open4d.TriangleMesh
-    mesh.positions                # (N, 3) float32
-    mesh.triangles                # (M, 3) uint32
-    mesh.colors                   # (N, 3) or None
+    comparison = compare_frames.compare_sequences(reference, decoded, metric="plane")
+    print(comparison.summary())      # sequence-level figures
+    comparison.frames[0].decoded_distances    # one distance per decoded vertex
 ```
 
-Frames are decoded on access, so a long sequence never has to fit in memory.
-
-To add a format, add one entry to `FRAME_READERS` or `SEQUENCE_OPENERS` in
+Loading is lazy — frames decode on access. Measuring needs no viewer. To add a
+format, add one entry to `FRAME_READERS` or `SEQUENCE_OPENERS` in
 `frame_sources.py`.
 
 ## The OpenUSD container
 
-`--pack-usd out.usdc` writes the sequence into one compressed USD file: the
-geometry as time samples, plus the frame rate, up axis, frame count, and
-key-frame index. Per-frame streams (`open4d:frameIndex`, `open4d:timestamp`,
-`open4d:keyFrame`, `open4d:vertexCount`, `open4d:triangleCount`) ride alongside.
-
-Connectivity is stored once when it never changes, and time-sampled where it
-does. The frames where it changes are the key frames.
-
-## Test data
-
-The TVMC codec ships 10 frames of a basketball player, useful for checking the
-program runs:
-
-```bash
-python examples/visualization/visualize_sequence.py \
-    open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player \
-    --up y --fps 10 --save basketball.gif
-```
+`--pack-usd out.usdc` writes the whole sequence into one compressed USD file:
+geometry as time samples, plus frame rate, up axis, frame count, and the key-frame
+index, with per-frame `open4d:*` streams alongside. Connectivity is stored once
+when it never changes and time-sampled where it does — those frames are the key
+frames.
 
 ## Files
 
 | File | |
 | --- | --- |
-| `visualize_sequence.py` | The program |
+| `visualize_sequence.py` | The single-sequence program |
+| `compare_sequences.py` | The comparison program |
 | `frame_sources.py` | Format registry and `open_sequence()` |
 | `formats_mesh.py` | `.obj` and `.ply`, trimesh fallback |
 | `formats_usd.py` | USD container read and write |
 | `render_frames.py` | Renderer-neutral frames, up-axis rotation, shading |
-| `viewer_qt.py` | The PyQt6 + pyqtgraph viewer |
+| `viewer_qt.py` | The single-sequence PyQt6 viewer |
+| `mesh_metrics.py` | Nearest-neighbour search, point-to-point/plane, RMS and PSNR |
+| `compare_frames.py` | Frame pairing, per-frame error, error colours |
+| `colormaps.py` | The sequential ramp and the colourbar gradient |
+| `viewer_compare_qt.py` | The two-pane synchronized viewer |
 | `_common.py` | Path setup and dependency checks |
+| `tests/` | `pytest examples/visualization/tests` |
