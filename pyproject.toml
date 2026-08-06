@@ -29,4 +29,5 @@ exclude = [
     "docker*",
     "pc_frames*",
     "integrations.open3d.tests*",
+    "open4d.core.tests*",
 ]

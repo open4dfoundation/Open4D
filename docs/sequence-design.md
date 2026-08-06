@@ -60,10 +60,54 @@ bytes in `[0, 255]` or floating point in `[0, 1]`; normals are floating-point
 `(M, 3, 2)`. Named numeric or boolean attributes must align with vertices,
 triangles, or triangle corners.
 
-The object is structurally immutable, but its NumPy buffers may be shared and
-remain writable. Construction uses `numpy.asarray` and does not copy merely to
-change dtype or ownership. A caller that needs a value snapshot must pass
-copies. The attributes and metadata mappings are shallow read-only snapshots.
+### Canonical dtypes
+
+Accepting that range of input does not mean storing it. Construction coerces
+every array to one dtype per field, listed in `open4d.core.dtypes`:
+
+| Field | Stored as |
+| --- | --- |
+| `positions`, `normals`, `texture_coordinates` | `float32` |
+| `triangles` | `uint32` |
+| `colors` | `float32` in `[0, 1]`, whichever convention arrived |
+| float attributes | `float32` |
+| integer attributes | `int32` |
+| boolean attributes | `bool` |
+
+A consumer can therefore read any field without branching on how it was
+produced. Without this, every consumer grows its own normalization step, those
+steps disagree — one clipping an out-of-range color where another raises — and
+the shared model stops being shared.
+
+Positions are stored `float32` and *computed* in `float64` by metric code. That
+halves the footprint of a decoded sequence, which matters because the viewers
+decode every frame they intend to show up front, and it is what a GL buffer wants
+regardless. The cost is roughly 0.5 m of resolution at UTM magnitudes, so
+positions are scene-local: a georeferenced capture carries its offset in a
+transform, not in the vertex buffer.
+
+`uint32` indices leave no room for a negative sentinel. A codec needing "no
+index" carries a separate mask.
+
+Values are range-checked before the cast, so a `uint64` index cannot wrap into a
+plausible-looking `uint32`, and again after it, so a `float64` coordinate too
+large for `float32` is reported rather than stored as infinity. Out-of-range
+colors are refused at construction rather than clipped; clipping belongs in
+shading code that generates values, not in the model that stores them.
+
+### Mutability
+
+The object is structurally immutable, and the attributes and metadata mappings
+are shallow read-only snapshots. Its NumPy buffers are not made read-only. An
+array that already matches the canon is stored as-is and stays shared with the
+caller, so mutating that buffer mutates the mesh; one that had to be converted is
+a fresh array and does not. A caller that needs a value snapshot should pass
+copies rather than depend on which case it is in.
+
+Coercion is close to free on the path that already conforms: `astype(copy=False)`
+returns its input untouched, and the readers in `examples/visualization` already
+emit `float32` positions and `uint32` indices. Only a producer that disagrees with
+the canon pays for a copy.
 
 ## Lazy access and views
 

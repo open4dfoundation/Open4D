@@ -9,6 +9,8 @@ from typing import Mapping
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from . import dtypes
+
 _RESERVED_ATTRIBUTES = {
     "positions",
     "triangles",
@@ -32,12 +34,20 @@ def _finite(array: NDArray, name: str) -> None:
 
 @dataclass(frozen=True, eq=False)
 class TriangleMesh:
-    """A validated triangle mesh that retains the supplied NumPy storage.
+    """A validated triangle mesh held in Open4D's canonical dtypes.
 
-    Instances are structurally immutable: fields and the attribute mapping
-    cannot be replaced. Array buffers are intentionally not made read-only and
-    may be shared with the caller. Mutating such a buffer mutates the mesh.
-    Callers that need value immutability should pass copies.
+    Arrays are coerced on construction — float32 positions, normals and texture
+    coordinates, uint32 triangle indices, and colors as float in [0, 1] whether
+    they arrived as bytes or floats. See `open4d.core.dtypes` for the full canon
+    and why it exists. A consumer can therefore read any field without asking
+    what produced it.
+
+    Instances are structurally immutable: fields and the attribute mapping cannot
+    be replaced. Array buffers are not made read-only. An array that already
+    matches the canon is stored as-is and stays shared with the caller, so
+    mutating that buffer mutates the mesh; one that had to be converted is a
+    fresh array and does not. Callers needing a value snapshot should pass
+    copies rather than depend on which case they are in.
     """
 
     positions: NDArray
@@ -53,25 +63,17 @@ class TriangleMesh:
             raise ValueError(
                 f"positions must have shape (N, 3); got {positions.shape}"
             )
-        if not np.issubdtype(positions.dtype, np.floating):
-            raise TypeError("positions must have a floating-point dtype")
+        # Finiteness is checked on the values as supplied; the cast that follows
+        # reports separately if they will not fit the canonical dtype.
         _finite(positions, "positions")
+        positions = dtypes.as_positions(positions)
 
         triangles = _array(self.triangles, "triangles")
         if triangles.ndim != 2 or triangles.shape[1:] != (3,):
             raise ValueError(
                 f"triangles must have shape (M, 3); got {triangles.shape}"
             )
-        if not np.issubdtype(triangles.dtype, np.integer) or (
-            triangles.dtype == np.bool_
-        ):
-            raise TypeError("triangles must have an integer dtype")
-        if triangles.size and (
-            np.any(triangles < 0) or np.any(triangles >= len(positions))
-        ):
-            raise ValueError(
-                f"triangle indices must be between 0 and {len(positions) - 1}"
-            )
+        triangles = dtypes.as_indices(triangles, len(positions))
 
         colors = self._validate_colors(self.colors, len(positions))
         normals = self._validate_normals(self.normals, len(positions))
@@ -99,16 +101,8 @@ class TriangleMesh:
                 f"colors must have shape ({count}, 3) or ({count}, 4); "
                 f"got {colors.shape}"
             )
-        if not (
-            np.issubdtype(colors.dtype, np.integer)
-            or np.issubdtype(colors.dtype, np.floating)
-        ) or colors.dtype == np.bool_:
-            raise TypeError("colors must have an integer or floating-point dtype")
         _finite(colors, "colors")
-        maximum = 255 if np.issubdtype(colors.dtype, np.integer) else 1.0
-        if np.any(colors < 0) or np.any(colors > maximum):
-            raise ValueError(f"colors must be in the range [0, {maximum}]")
-        return colors
+        return dtypes.as_colors(colors)
 
     @staticmethod
     def _validate_normals(value: ArrayLike | None, count: int) -> NDArray | None:
@@ -119,10 +113,8 @@ class TriangleMesh:
             raise ValueError(
                 f"normals must have shape ({count}, 3); got {normals.shape}"
             )
-        if not np.issubdtype(normals.dtype, np.floating):
-            raise TypeError("normals must have a floating-point dtype")
         _finite(normals, "normals")
-        return normals
+        return dtypes.as_normals(normals)
 
     @staticmethod
     def _validate_texture_coordinates(
@@ -138,12 +130,8 @@ class TriangleMesh:
                 f"({vertex_count}, 2) or per-corner with shape "
                 f"({triangle_count}, 3, 2); got {coordinates.shape}"
             )
-        if not np.issubdtype(coordinates.dtype, np.floating):
-            raise TypeError(
-                "texture_coordinates must have a floating-point dtype"
-            )
         _finite(coordinates, "texture_coordinates")
-        return coordinates
+        return dtypes.as_texture_coordinates(coordinates)
 
     @staticmethod
     def _validate_attributes(
@@ -165,5 +153,5 @@ class TriangleMesh:
                     "triangle-corner-aligned"
                 )
             _finite(attribute, f"attribute {name!r}")
-            result[name] = attribute
+            result[name] = dtypes.as_attribute(attribute, f"attribute {name!r}")
         return result

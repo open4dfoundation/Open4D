@@ -46,29 +46,32 @@ class RenderFrame(NamedTuple):
         return len(self.triangles) > 0
 
 
-def normalized_colors(colors) -> np.ndarray | None:
-    """Return colors as float in [0, 1], whatever the source used.
+def rgb_colors(colors) -> np.ndarray | None:
+    """Drop any alpha channel, leaving (N, 3) to shade with.
 
-    A `.ply` carries uint8 in [0, 255]; USD carries float in [0, 1].
+    Range and dtype need no work here: `TriangleMesh` stores colors as float in
+    [0, 1] whether the source carried `.ply` bytes or USD floats, so the only
+    thing left to settle is the channel count.
     """
     if colors is None:
         return None
-    colors = np.asarray(colors)
-    if np.issubdtype(colors.dtype, np.integer):
-        colors = colors / 255.0
-    return np.clip(colors[:, :3], 0.0, 1.0).astype(np.float32)
+    return colors[:, :3]
 
 
 def to_render_frame(frame, order: list[int]) -> RenderFrame:
-    """Convert one core `Frame`, reordering axes for the target viewer."""
+    """Convert one core `Frame`, reordering axes for the target viewer.
+
+    Positions and triangles arrive in the canonical float32/uint32 storage the
+    GL buffers want, so the axis rotation is the only conversion left.
+    """
     mesh = frame.geometry
-    positions = np.asarray(mesh.positions, dtype=np.float32)
+    positions = mesh.positions
     if order != [0, 1, 2]:
         positions = np.ascontiguousarray(positions[:, order])
     return RenderFrame(
         positions=positions,
-        triangles=np.asarray(mesh.triangles, dtype=np.uint32),
-        colors=normalized_colors(mesh.colors),
+        triangles=mesh.triangles,
+        colors=rgb_colors(mesh.colors),
         # Carried through so the viewer can report the source's own numbering
         # and timing rather than its position in the strided list.
         frame_index=int(frame.frame_index),
