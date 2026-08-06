@@ -150,7 +150,8 @@ python -m pip install -e ".[all]"
 These extras do not install the heavyweight codec environments. Use the setup
 instructions inside the selected codec before running it.
 
-If an existing clone is missing Draco, initialize and build both copies with:
+If an existing clone is missing Draco, initialize and build all three copies —
+the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 
 ```bash
 ./scripts/setup_draco.sh
