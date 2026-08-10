@@ -95,15 +95,55 @@ dependencies. Extras add optional readers and viewers — see
 which the `[player]` extra installs, for its nearest-neighbour search — the same
 `cKDTree` query TVMC's own evaluation uses.
 
-The some codecs and the RGB-D pipeline need separate environments:
+### One environment for the codecs
+
+Every codec runs in a single environment, described by
+[`environment.yml`](environment.yml) at the repository root:
+
+```bash
+conda env create -f environment.yml
+conda activate open4d
+pip install -e .
+```
+
+That is Python 3.12, NumPy 1.26.4, Open3D 0.19, PyTorch 2.7.0, and .NET 10 — one
+of each, where there used to be three Python versions, two Open3D versions, two
+PyTorch versions, and three .NET SDKs. The pins themselves live in
+[`requirements-codecs.txt`](requirements-codecs.txt), which `environment.yml`
+installs; it lists direct dependencies only, so inside an existing Python 3.12
+environment `pip install -r requirements-codecs.txt` is equivalent.
+
+One trap worth naming, because its error message points the wrong way. The .NET
+projects target `net10.0`, and a distribution's own `dotnet` under
+`/usr/lib/dotnet` will shadow a newer SDK in `~/.dotnet` on `PATH`. The build
+then fails with `NETSDK1045: The current .NET SDK does not support targeting
+.NET 10.0`, which reads as a missing SDK when the SDK is usually installed and
+merely second in line. Check with `dotnet --list-sdks` before installing
+anything. Downgrading the projects to `net9.0` is not the fix: .NET 9 left
+support in May 2026, and moving off end-of-life targets is why they are on
+`net10.0`.
+
+Some codecs additionally need compiled extensions that pip cannot resolve from a
+version number alone, because each is built against one exact PyTorch and CUDA
+build. Those are optional and separate, with install commands in
+[`requirements-gpu.txt`](requirements-gpu.txt):
+
+| Extra | Needed by |
+|---|---|
+| `cupy-cuda12x` | `n4mc`, `tsmc` |
+| `torch-scatter` | `n4mc` |
+| `nvdiffrast` | `n4mc` |
+| `kaolin` | `n4mc`, `klt` |
+
+What each module needs beyond that shared environment:
 
 | Module | Adds |
 |---|---|
-| `codecs/tvmc` | Python 3.8–3.11, .NET 10 SDK, CMake, Open3D 0.18; Homebrew macOS or Ubuntu |
-| `codecs/tsmc` | Python 3.12 via Conda, .NET 7.0 *and* 5.0, CUDA 12.6 PyTorch, SAM3; Ubuntu 24.04, tested against Meta Quest 3 |
-| `codecs/n4mc` | Python 3.10 via Conda, CUDA 12.4 PyTorch, PyTorch3D, an NVIDIA GPU — 24 GB holds only about two training frames at resolution 256 |
-| `codecs/qndf`, `codecs/qndf_int8` | PyTorch3D, `dahuffman`, `tqdm`, an NVIDIA GPU |
-| `codecs/klt` | PyTorch, scikit-image, zstd, an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
+| `codecs/tvmc` | .NET 10 SDK, CMake; Homebrew macOS or Ubuntu |
+| `codecs/tsmc` | .NET 10 SDK, SAM3, `cupy`; Ubuntu 24.04, tested against Meta Quest 3. `convert_to_std_obj.py` runs inside Blender, which supplies `bpy` |
+| `codecs/n4mc` | All four GPU extras and an NVIDIA GPU — 24 GB holds only about two training frames at resolution 256 |
+| `codecs/qndf`, `codecs/qndf_int8` | An NVIDIA GPU for training. Evaluation (`mesh_errors.py`) runs on CPU |
+| `codecs/klt` | `kaolin` and an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
 | `codecs/draco` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
 | `codecs/vdmc` | The MPEG reference test model's own build requirements |
 | `reconstruction/rgbd` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
