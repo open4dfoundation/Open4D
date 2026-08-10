@@ -5,17 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open4d"
 version = "0.1.0"
-# Both bounds are load-bearing. The floor is 3.12 because that is what the
-# codecs were reconciled onto; the ceiling is 3.13 because Open3D publishes no
-# cp313 wheel, and Open3D is a hard dependency of every codec's evaluation path.
-requires-python = ">=3.12,<3.13"
+# This is the core package -- NumPy only, plus the optional extras below -- and
+# it is deliberately wider than the codecs. open4d.core and the [player] extra
+# both work on 3.13; it is Open3D that publishes no cp313 wheel, which caps the
+# [open3d] extra and every codec at 3.12. That 3.12 ceiling is enforced where it
+# actually applies, in environment.yml, not here: pinning the core package to
+# 3.12 would stop `pip install open4d` on a 3.13 interpreter that can run it.
+requires-python = ">=3.10,<3.14"
 license = { file = "LICENSE" }
 dependencies = ["numpy"]
 
 [project.optional-dependencies]
 tools  = ["trimesh"]
 player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
-open3d = ["open3d>=0.17", "pillow>=9"]
+# 0.19 is the floor, not 0.17: 0.18 publishes no cp312 wheel, and resolving to it
+# is what held the codecs on older Pythons. It is also the last version with no
+# cp313 wheel at all, so this extra is 3.12-and-below in practice.
+open3d = ["open3d>=0.19", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
 all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17", "pillow>=9", "usd-core>=24.3", "scipy"]
 
