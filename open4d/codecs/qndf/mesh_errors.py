@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
-from pytorch3d._C import point_face_dist_forward
-from pytorch3d.structures import Meshes
 from math import pi
+
+from open4d.torch_ops import Meshes, point_face_distance
 
 def get_face_areas(v,f):
     f_norms = torch.cross(v[f[:,0]]-v[f[:,1]], v[f[:,0]]-v[f[:,2]], dim=1)
@@ -34,16 +34,13 @@ def sample_points_on_mesh(v,f,num_pts, vn=None):
 
 
 def point2mesh_error(dv, df, ov, of, scale = 1e4):
-    orig_device = ov.device.type
-    if 'cuda' not in orig_device:
-        ov = ov.to("cuda:0")
-        of = of.to("cuda:0")
+    # The tensors used to be forced onto cuda:0 here because PyTorch3D's
+    # point_face_dist_forward was a CUDA-only kernel. The replacement runs
+    # wherever the tensors already live, so evaluation works on CPU too.
     # dpcl = sample_points_on_mesh(dv,df, 1e6) * scale
     dpcl = dv * scale
     ov = ov*scale
-    min_area = torch.min(get_face_areas(ov,of)).item()
-    i1 = torch.LongTensor([0]).to(dpcl.device)
-    dists, idxs = point_face_dist_forward(dpcl, i1, ov[of], i1, dpcl.size(0), min_area)
+    dists, idxs = point_face_distance(dpcl, ov, of)
     errors = torch.sqrt(dists)
     upper_quantile = torch.quantile(errors, 0.85)
     large_error_points = dpcl[errors>upper_quantile]
@@ -58,19 +55,15 @@ def get_triangle_error(ov, of, t, ns=100):
     pts = (a[:,None]*t[0,:]+b[:,None]*t[1,:]+c[:,None]*t[2,:])*1e4
     t_n = torch.cross(t[1,:]-t[0,:], t[2,:]-t[0,:])
     t_a = torch.sqrt(torch.sum((t_n**2)))*0.5
-    i1 = torch.LongTensor([0]).to(ov.device)
     ov = ov*1e4
-    min_area = torch.min(get_face_areas(ov,of)).item()
-    dists, _ = point_face_dist_forward(pts, i1, ov[of], i1, pts.size(0), min_area)
+    dists, _ = point_face_distance(pts, ov, of)
     return t_a*(torch.sum(dists)/1e4)/ns, pts
 
 
 def find_closest_points(ov, of, pts):
-    i1 = torch.LongTensor([0]).to(ov.device)
     ov*=1e4
-    min_area = torch.min(get_face_areas(ov,of)).item()
     pts*=1e4
-    _, idxs = point_face_dist_forward(pts, i1, ov[of], i1, pts.size(0), min_area)
+    _, idxs = point_face_distance(pts, ov, of)
     closest_faces = of[idxs]
     closest_fnorms = torch.cross(ov[closest_faces[:,0]]-ov[closest_faces[:,1]], 
                                  ov[closest_faces[:,0]]-ov[closest_faces[:,2]], dim=1)
@@ -105,16 +98,10 @@ def normal_error(dv, df, ov, of, scale = 1e4):
     ofn = om.faces_normals_packed()
     del om
     dvn = Meshes([dv], [df]).verts_normals_packed()
-    orig_device = ov.device.type
-    if 'cuda' not in orig_device:
-        ov = ov.to("cuda:0")
-        of = of.to("cuda:0")
     dpcl, dn = sample_points_on_mesh(dv,df, 1e6, dvn)
     dpcl = dpcl * scale
     ov = ov*scale
-    min_area = torch.min(get_face_areas(ov,of)).item()
-    i1 = torch.LongTensor([0]).to(dpcl.device)
-    _, idxs = point_face_dist_forward(dpcl, i1, ov[of], i1, dpcl.size(0), min_area)
+    _, idxs = point_face_distance(dpcl, ov, of)
     pn = ofn[idxs]
 
     nd = ((dpcl - ov[of[idxs,0],:])*pn).sum(dim=-1)[:,None]
@@ -127,7 +114,7 @@ def normal_error(dv, df, ov, of, scale = 1e4):
     return theta.mean()/pi*180.
 
 if __name__=='__main__':
-    from pytorch3d.io import load_obj
+    from open4d.torch_ops import load_obj
     ov, of, _ = load_obj("objs_original/gnome.obj", load_textures=False, device="cuda:0")
     of = of.verts_idx
     mn,_ = ov.min(dim=0)

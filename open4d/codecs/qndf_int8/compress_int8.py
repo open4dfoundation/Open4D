@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from pytorch3d.io import load_obj, save_obj
+from open4d.torch_ops import load_obj, save_obj
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
