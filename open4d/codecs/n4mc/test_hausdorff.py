@@ -1,7 +1,5 @@
 import torch
 import trimesh
-from pytorch3d.io import load_objs_as_meshes
-from pytorch3d.loss import chamfer_distance
 from metrics import compute_D2_psnr, compute_D1_psnr, chamfer_distance
 import open3d as o3d
 

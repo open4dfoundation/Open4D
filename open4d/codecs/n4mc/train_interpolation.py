@@ -16,9 +16,7 @@ from util import Mesh, SSIM3D, compute_tsdf_normals, ramp_weight, set_seed
 import imageio
 import trimesh
 import time
-from pytorch3d.loss import chamfer_distance
-from pytorch3d.ops import sample_points_from_meshes
-from pytorch3d.structures import Meshes
+from open4d.torch_ops import Meshes, chamfer_distance, sample_points_from_mesh
 
 import os
 os.environ["TORCH_USE_CUDA_DSA"] = "1"

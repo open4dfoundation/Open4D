@@ -102,7 +102,7 @@ def parse_args():
 
 if __name__=="__main__":
     import argparse as ap
-    from pytorch3d.io import load_obj, save_obj
+    from open4d.torch_ops import load_obj, save_obj
     import torch.optim as optim
     from torch.utils.data import DataLoader
     from mesh_errors import point2mesh_error, normal_error
