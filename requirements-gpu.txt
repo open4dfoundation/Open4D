@@ -1,0 +1,45 @@
+# Packages that cannot go in the shared set, and why.
+#
+# Each of these is a compiled extension built against one exact torch and CUDA
+# build, so pip cannot resolve them from a version number alone -- installing
+# them is a per-machine step against the torch you already have. They are all
+# optional: the codecs that use them say so, and every other path runs without.
+#
+# Install after the shared set, in this order. Every line below was run on a
+# 2x RTX 4090 box (driver 595.84, system CUDA 12.6) against torch 2.7.0+cu126;
+# the version each one resolved to is noted so a later failure is legible.
+#
+#   pip install -r requirements-codecs.txt
+#
+#   pip install cupy-cuda12x==13.4.1                        # -> 13.4.1
+#
+#   pip install torch-scatter -f https://data.pyg.org/whl/torch-2.7.0+cu126.html
+#                                                           # -> 2.1.2+pt27cu126
+#
+#   pip install kaolin -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.7.0_cu126.html
+#                                                           # -> 0.18.0
+#     Do not `pip install kaolin` bare: PyPI carries an unrelated 0.1 stub, so
+#     the -f index is what makes this resolve.
+#
+#   export PATH=/usr/local/cuda/bin:$PATH   # nvdiffrast needs nvcc, and it is
+#                                           # not on PATH by default even when
+#                                           # /usr/local/cuda/bin/nvcc exists
+#   pip install --no-build-isolation git+https://github.com/NVlabs/nvdiffrast.git
+#                                                           # -> 0.4.0
+#     --no-build-isolation is required, not a preference. nvdiffrast's setup.py
+#     imports the package to read __version__, which build isolation forbids;
+#     without the flag pip fails with "No module named 'nvdiffrast'" while
+#     getting requirements to build the wheel, which looks like a broken URL.
+#
+# Who needs what:
+#
+#   cupy-cuda12x   n4mc/decoder.py, n4mc/laplacian_faster.py,
+#                  tsmc/compress_displacements.py, tsmc/evaluation.py,
+#                  tsmc/util.py
+#   torch-scatter  n4mc/loss.py
+#   nvdiffrast     n4mc/render.py, n4mc/optimize_tsdf_offset.py
+#   kaolin         n4mc/util.py, klt/util.py
+#
+# Not listed and not installable: tsmc/tsmc/convert_to_std_obj.py imports `bpy`,
+# but it is run by Blender itself (`blender -b -P convert_to_std_obj.py`), which
+# supplies the module. It is not a pip dependency of this project.

@@ -5,7 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open4d"
 version = "0.1.0"
-requires-python = ">=3.10"
+# Both bounds are load-bearing. The floor is 3.12 because that is what the
+# codecs were reconciled onto; the ceiling is 3.13 because Open3D publishes no
+# cp313 wheel, and Open3D is a hard dependency of every codec's evaluation path.
+requires-python = ">=3.12,<3.13"
 license = { file = "LICENSE" }
 dependencies = ["numpy"]
 

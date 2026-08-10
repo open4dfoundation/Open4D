@@ -1,0 +1,54 @@
+# One environment for every Open4D codec.
+#
+#   conda env create -f environment.yml
+#   conda activate open4d
+#   pip install -e .
+#
+# Python 3.12 is the ceiling, not a preference: Open3D publishes no 3.13 wheels.
+# It is also now the floor for the codecs, which previously wanted 3.10 (tvmc,
+# n4mc) and 3.12 (tsmc) at once. Three things had to change for one version to
+# work everywhere:
+#
+#   - PyTorch3D, a compiled extension pinned to one exact torch build, forced
+#     n4mc onto torch 2.6 while tsmc needed 2.7.0+cu126. Open4D used five small
+#     functions from it, which now live in open4d.torch_ops, so the pin is gone.
+#   - tvmc pinned open3d==0.18.0, which has no 3.12 wheels. 0.19 does, and every
+#     Open3D call tvmc makes exists unchanged in it.
+#   - tsmc's .NET projects targeted net5.0 and net7.0, both end-of-life, while
+#     tvmc's targeted net10.0. They all target net10.0 now, so one SDK builds
+#     everything.
+#
+# GPU extras that pip cannot resolve on their own are in requirements-gpu.txt.
+#
+# Non-pip toolchain this environment assumes. None of it is installed by conda,
+# and each item was verified on a 2x RTX 4090 Linux box (driver 595.84):
+#
+#   Python   3.12.x. Not a range: 3.13 has no Open3D wheel and 3.11 is below
+#            what tsmc was already on. `pip download open3d==0.19.0
+#            --python-version 3.13 --only-binary=:all:` finds nothing, which is
+#            the whole reason for the ceiling.
+#   CUDA     Driver must advertise >= 12.6; 595.84 advertises 13.2, so the
+#            driver is not the constraint. torch ships its own CUDA 12.6
+#            runtime as nvidia-*-cu12 wheels, so the *system* toolkit matters
+#            only for building extensions -- nvdiffrast compiles at import.
+#            Point /usr/local/cuda at 12.6 to match torch's build and put its
+#            bin on PATH: mismatched nvcc is the usual cause of nvdiffrast and
+#            kaolin failing at runtime rather than at install time.
+#   .NET     SDK 10.x, because six .csproj files target net10.0. Check with
+#            `dotnet --list-sdks` and mind the order: a distro dotnet in
+#            /usr/lib/dotnet shadows a newer ~/.dotnet on PATH, and the failure
+#            is NETSDK1045 ("does not support targeting .NET 10.0"), which
+#            reads like a missing SDK rather than a missing PATH entry.
+#            net9.0 is not a fallback -- .NET 9 left support in May 2026, and
+#            avoiding end-of-life targets is why these moved off net5.0/net7.0.
+#   Blender  Only for tsmc/tsmc/convert_to_std_obj.py, which Blender runs
+#            itself. Not needed to build or evaluate any codec.
+
+name: open4d
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements-codecs.txt

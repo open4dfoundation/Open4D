@@ -1,12 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net7.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="MathNet.Numerics" Version="4.15.0" />
-    <PackageReference Include="System.Drawing.Common" Version="5.0.2" />
   </ItemGroup>
+
+  <!-- System.Drawing.Common 5.0.2 was referenced for System.Drawing.Color only,
+       which lives in the shared framework (System.Drawing.Primitives) on .NET 5
+       and later. The package added nothing but a critical-severity advisory,
+       GHSA-rxg9-xrhp-64gj, and Windows-only runtime behaviour. -->
 
 </Project>
