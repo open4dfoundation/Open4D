@@ -1,16 +1,29 @@
-# Core KLT compression pipeline
-numpy
-torch
-trimesh
+# klt's direct imports. Versions deliberately come from the repository-wide set
+# in ../../../requirements-codecs.txt, which is the file to install -- this one
+# was the last fully unpinned dependency list in the repository, so `pip install
+# -r` here would resolve numpy and torch to whatever is newest and quietly break
+# the shared environment's numpy 1.26.4 / torch 2.7.0 pins.
+#
+#   conda env create -f ../../../environment.yml
+#   conda activate open4d
+#   pip install -r ../../../requirements-gpu.txt   # see that file; kaolin only
+
+# --- core KLT compression pipeline ---
+numpy==1.26.4
+torch==2.7.0
+trimesh>=4.1
 zstd
 tqdm
 scikit-image
+tables
 
-# Optional: --evaluate path (D1/D2 PSNR + SSIM)
-open3d
+# --- optional: --evaluate path (D1/D2 PSNR + SSIM) ---
+open3d==0.19.0
 pymeshlab
 opencv-python
 point-cloud-utils
 py7zr
 constriction
-# kaolin: install from https://github.com/NVIDIAGameWorks/kaolin matching your torch/CUDA
+
+# --- GPU extra, not pip-resolvable: kaolin (klt/util.py). See
+#     ../../../requirements-gpu.txt for the wheel index and exact command.

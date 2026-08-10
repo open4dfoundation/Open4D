@@ -1,5 +1,11 @@
-numpy>=1.24,<2
-open3d==0.18.0
-scikit-learn>=1.3,<1.5
-scipy>=1.10,<1.14
-trimesh==4.1.0
+# Pins match the repository-wide environment in environment.yml at the root.
+# Open3D 0.19 is what lifts this codec to Python 3.12: 0.18 publishes no 3.12
+# wheels, and that pin alone was holding TVMC at 3.10.
+numpy==1.26.4
+open3d==0.19.0
+scikit-learn>=1.3,<2
+scipy>=1.10,<2
+# Was trimesh==4.1.0. Every trimesh call in the repository -- Trimesh, load,
+# load_mesh, Scene, util.concatenate, sample.sample_surface -- exists unchanged
+# in 5.x, and the exact pin conflicted with the other codecs, which ran unpinned.
+trimesh>=4.1,<6

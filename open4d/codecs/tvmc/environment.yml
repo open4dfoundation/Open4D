@@ -1,8 +1,22 @@
-name: tvmc
+# tvmc uses the repository-wide environment; see ../../../environment.yml.
+#
+# This file used to declare its own env (`name: tvmc`) against the sibling
+# requirements.txt, which made tvmc the one codec still standing outside the
+# shared environment after the others were folded in. The pins it wanted are
+# already in the shared set -- open3d 0.19 is there precisely because tvmc's old
+# open3d==0.18.0 pin was what held this codec at Python 3.10.
+#
+#   conda env create -f ../../../environment.yml
+#   conda activate open4d
+#
+# tvmc needs no GPU extras: it is the only codec whose third-party imports are
+# all satisfied by the shared set alone. Its .NET projects target net10.0 and
+# need an SDK 10.x on PATH.
+name: open4d
 channels:
   - conda-forge
 dependencies:
-  - python=3.10
+  - python=3.12
   - pip
   - pip:
-      - -r requirements.txt
+      - -r ../../../requirements-codecs.txt
