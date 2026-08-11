@@ -142,7 +142,7 @@ What each module needs beyond that shared environment:
 | `codecs/tvmc` | .NET 10 SDK, CMake; Homebrew macOS or Ubuntu |
 | `codecs/tsmc` | .NET 10 SDK, SAM3, `cupy`; Ubuntu 24.04, tested against Meta Quest 3. `convert_to_std_obj.py` runs inside Blender, which supplies `bpy` |
 | `codecs/n4mc` | All four GPU extras and an NVIDIA GPU — 24 GB holds only about two training frames at resolution 256 |
-| `codecs/qndf`, `codecs/qndf_int8` | An NVIDIA GPU for training. Evaluation (`mesh_errors.py`) runs on CPU |
+| `codecs/qndf`, `codecs/qndf_int8` | An NVIDIA GPU for training. Evaluation (`mesh_errors.py`) runs on CPU. Building the `ssp_remesh` preprocessor needs CMake and Eigen (`libeigen3-dev`/`brew install eigen`), plus the pinned libigl submodule |
 | `codecs/klt` | `kaolin` and an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
 | `codecs/draco` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
 | `codecs/vdmc` | The MPEG reference test model's own build requirements |
@@ -161,7 +161,8 @@ which covers how to run the pipeline and leaves requirements to this page.
 
 ## Installation
 
-Clone with submodules to obtain the pinned Draco, SAM3, and MPEG V-DMC source:
+Clone with submodules to obtain the pinned Draco, libigl, SAM3, and MPEG V-DMC
+source:
 
 ```bash
 git clone --recurse-submodules https://github.com/open4dfoundation/Open4D.git

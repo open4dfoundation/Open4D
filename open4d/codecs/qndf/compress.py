@@ -92,6 +92,10 @@ def parse_args():
     pr.add_argument("--run_suffix", "-rs", type=str, default="", help="a suffix to add to the run name")
     pr.add_argument("--output-dir", type=str, default="", help="directory in which to retain run artifacts")
     pr.add_argument("--keep-artifacts", action="store_true", help="retain the reconstruction and model files")
+    pr.add_argument("--device", type=str, default="cuda:0",
+                    help="torch device to train on. The default matches the "
+                         "NVIDIA boxes this codec was developed on; pass cpu "
+                         "or mps to run without CUDA.")
     
     pr.add_argument("--learning_rate", "-lr", type=float, default=0.001, help="Learning rate")
     pr.add_argument("--num_epochs", "-ne", type=int, default=4000, help="Number of epochs")
@@ -113,19 +117,25 @@ if __name__=="__main__":
     import numpy as np
     import os
 
-    args = parse_args() 
+    args = parse_args()
+    device = args.device
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise SystemExit(
+            f"--device {device} requested but torch reports no CUDA device. "
+            "Pass --device cpu (or mps on Apple silicon)."
+        )
 
     # Load meshes
     lr_path = f'experiments/{args.mesh_name}/input_f{args.coarse_size}_s{args.num_subdiv}.obj'
     if not os.path.exists(lr_path):
         from build_dataset import run_binary
         run_binary(args.mesh_name, args.coarse_size, args.num_subdiv)
-    lr,lf,_ = load_obj(lr_path, load_textures=0, device="cuda:0")
+    lr,lf,_ = load_obj(lr_path, load_textures=0, device=device)
     lf = lf.verts_idx
     gt_path = f'experiments/{args.mesh_name}/output_f{args.coarse_size}_s{args.num_subdiv}.obj'
-    gt,_,_ = load_obj(gt_path, load_textures=0, device="cuda:0")
+    gt,_,_ = load_obj(gt_path, load_textures=0, device=device)
     og_path = f'objs_original/{args.mesh_name}.obj'
-    ov,of,_ = load_obj(og_path, load_textures=0, device="cuda:0")
+    ov,of,_ = load_obj(og_path, load_textures=0, device=device)
     of = of.verts_idx
     mn,_ = ov.min(dim=0)
     ov -= mn
@@ -144,7 +154,7 @@ if __name__=="__main__":
     # Initialize model and optimizer
     input_dim = 3
     output_dim = 3
-    model = MLP(input_dim*args.pe_dim, args.hidden_dim, output_dim, args.num_layers).to(device="cuda:0")
+    model = MLP(input_dim*args.pe_dim, args.hidden_dim, output_dim, args.num_layers).to(device=device)
     total_params = sum([p.data.nelement() for p in model.parameters()])
     params_to_prune = []
     for l in range(len(model.layers)):
@@ -219,7 +229,8 @@ if __name__=="__main__":
                             pass
                 mlflow.log_metric("eval_loss", f"{e}", step=epoch)
                 del tv
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         
         # Apply post training compression
         # model = model.to(device="cpu")

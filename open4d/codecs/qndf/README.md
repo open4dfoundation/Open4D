@@ -1,12 +1,27 @@
 # Mesh Compression using Quantized Neural Displacement Fields
 
-Step 1. Go to ssp_remesh folder and follow the instructions in it.
+Step 1. Fetch the pinned libigl submodule and build `ssp_remesh`, following
+[`ssp_remesh/README.md`](ssp_remesh/README.md):
 
-Step 2. Install Pytorch3D and its dependencies (https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md)
+```bash
+git submodule update --init --recursive open4d/codecs/qndf/ssp_remesh/libigl
+```
+
+Step 2. Install the repository-wide environment. QNDF reads and writes OBJ
+through `open4d.torch_ops`, which replaced this codec's earlier PyTorch3D
+dependency, so there is no compiled mesh extension to install:
+
+```bash
+conda env create -f ../../../environment.yml   # or: conda activate open4d
+pip install -e ../../..
+```
 
 Step 3. Install `dahuffman` and `tqdm` using `pip`
 
-Step 4. Place any `.obj` file to be compressed in `objs_original/` folder. (Some meshes are already available)
+Step 4. Create `objs_original/` and place the `.obj` files to be compressed in
+it. No meshes ship with the repository — this codec's `.gitignore` excludes
+`*.obj`, so source your own or point `--source-dir` at a vendored sequence as
+the basketball recipe below does.
 
 Step 5. Run:
 

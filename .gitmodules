@@ -13,3 +13,11 @@
 [submodule "open4d/codecs/vdmc"]
 	path = open4d/codecs/vdmc
 	url = https://github.com/MPEGGroup/mpeg-vdmc-tm.git
+# Pinned to v2.3.0, not to a newer release. `ssp_remesh/cmake/FindLIBIGL.cmake`
+# ends with `include(libigl)` and the target links `igl::opengl_glfw`; libigl
+# v2.4.0 rewrote its CMake so that including `cmake/libigl.cmake` directly is a
+# FATAL_ERROR and renamed that target to `igl::glfw`. v2.3.0 is the last release
+# the vendored build script speaks to.
+[submodule "open4d/codecs/qndf/ssp_remesh/libigl"]
+	path = open4d/codecs/qndf/ssp_remesh/libigl
+	url = https://github.com/libigl/libigl.git

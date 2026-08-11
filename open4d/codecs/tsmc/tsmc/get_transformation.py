@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 import argparse
 import shutil
+from editor_paths import EDITOR_BUILD
 
 def get_dual_quaternions(original_centers, transformed_centers):
     moved_indices = []
@@ -43,6 +44,9 @@ parser.add_argument('--centers_dir', type=str, required=True, help="Path for the
 parser.add_argument('--firstIndex', type=int, required=True, help="first index")
 parser.add_argument('--lastIndex', type=int, required=True, help="last index")
 parser.add_argument('--group_idx', type=int, default=1, help="Group index (e.g., group=1 frame[0:num_frames])")
+parser.add_argument('--mesh_path', type=str, default=None,
+                    help="Directory holding the input .obj frames. Defaults to "
+                         "../arap-volume-tracking/data/<dataset>.")
 
 args = parser.parse_args()
 
@@ -54,12 +58,21 @@ firstIndex = args.firstIndex
 lastIndex = args.lastIndex
 group_idx = args.group_idx
 
-mesh_path = f"../arap-volume-tracking/data/{dataset}"
+# The old value was hardcoded here with no way to override it, which pinned the
+# input frames to one directory layout: arap-volume-tracking has no data/
+# directory in this tree, and the vendored sequences live under ../data/<name>/
+# meshes. The default preserves the original path for callers that relied on it.
+mesh_path = args.mesh_path or f"../arap-volume-tracking/data/{dataset}"
+if not os.path.isdir(mesh_path):
+    raise SystemExit(
+        f"--mesh_path {mesh_path!r} is not a directory. Pass the folder holding "
+        f"the input .obj frames, e.g. ../data/{dataset}/meshes"
+    )
 
-data_base_path = f"../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}"
+data_base_path = f"{EDITOR_BUILD}/Data/{dataset}_{num_centers}"
 data_subdirectories = ["centers", "meshes", "reference_center", "reference_mesh"]
 
-output_base_path = f"../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{num_centers}"
+output_base_path = f"{EDITOR_BUILD}/output/{dataset}_{num_centers}"
 output_subdirectories = ["output", "reference"]
 
 if not os.path.exists(data_base_path):

@@ -11,6 +11,7 @@ import time
 from util import solve_sparse_least_squares_cg, build_mv_laplacian_gpu_fast, calculate_bitrate, select_viewpoints, evaluate_meshes
 import subprocess
 import re
+from editor_paths import EDITOR_BUILD
 
 decoding_time = 0
 
@@ -225,7 +226,7 @@ static_backgrounds_bitrate = calculate_bitrate(static_backgrounds_size, total_du
 total_size += static_backgrounds_size
 
 
-reference_mesh_file_path = fr'../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/{dataset}_{num_centers}/reference_mesh/decimated_reference_mesh.drc'
+reference_mesh_file_path = fr'{EDITOR_BUILD}/Data/{dataset}_{num_centers}/reference_mesh/decimated_reference_mesh.drc'
 result = subprocess.run([
     '../draco/build/draco_decoder',
     '-i', reference_mesh_file_path,
@@ -310,7 +311,7 @@ print(json.dumps({"bitrate_mbps": bitrate_mbps, "SSIM_depth_mean": np.mean(SSIM_
 # save compressed files
 
 # === PATHS TO COPY ===
-base_output = "../tvm-editing/TVMEditor.Test/bin/Release/net5.0"
+base_output = EDITOR_BUILD
 folders_to_copy = [
     os.path.join(base_output, f"output/{dataset}_{num_centers}/reference/decoded_reconstructed_displacements"),
     os.path.join(base_output, f"output/{dataset}_{num_centers}/reference/decoded_reconstructed_meshes"),
