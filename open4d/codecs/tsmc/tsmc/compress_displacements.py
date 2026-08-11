@@ -10,6 +10,7 @@ from tqdm import tqdm
 from scipy.sparse import coo_matrix, lil_matrix, save_npz
 from util import solve_sparse_least_squares_cg, build_mv_laplacian_gpu_fast, compute_mv_weights_gpu, compute_delta_trajectories
 import point_cloud_utils as pcu
+from editor_paths import EDITOR_BUILD
 
 parser = argparse.ArgumentParser(description="Compress displacements, KLT + laplacian, and directly using Draco.")
 parser.add_argument('--dataset', type=str, required=True, help="Dataset name (e.g., 'basketball_player')")
@@ -145,7 +146,7 @@ for k in range(firstIndex, lastIndex+1):
     reconstruct_mesh.vertices = o3d.utility.Vector3dVector(vertices)
     reconstruct_mesh.compute_vertex_normals()
     #o3d.visualization.draw_geometries([reconstruct_mesh])
-    test_path = f"../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/{dataset}_{2000}/reference/test"
+    test_path = f"{EDITOR_BUILD}/output/{dataset}_{2000}/reference/test"
     os.makedirs(test_path, exist_ok=True)
     o3d.io.write_triangle_mesh(os.path.join(test_path, f'{dataset}_{k:03d}.obj'), reconstruct_mesh + static_backgrounds_mesh)
 

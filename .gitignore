@@ -53,6 +53,13 @@ open4d/codecs/*/checkpoints/
 open4d/codecs/*/logs/
 open4d/codecs/*/data/bench_*/
 open4d/codecs/tvmc/arap-volume-tracking/data/*/
+open4d/codecs/tsmc/arap-volume-tracking/data/*/
+
+# Voxel-grid and point caches the ARAP volume tracker writes beside its input
+# meshes on every run, which would otherwise show up as untracked additions
+# inside a tracked dataset directory. Fixtures already committed are unaffected.
+open4d/codecs/*/data/*/meshes/*vg_*.bin
+open4d/codecs/*/data/*/meshes/*pc_*.bin
 
 # Common generated model artifacts
 *.ckpt

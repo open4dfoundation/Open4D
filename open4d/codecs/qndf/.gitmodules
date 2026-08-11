@@ -1,3 +1,8 @@
-[submodule "ssp_remesh/libigl"]
-	path = ssp_remesh/libigl
-	url = https://github.com/libigl/libigl.git
+# Intentionally empty. This file is a leftover from the standalone QNDF
+# repository, and git only reads .gitmodules at the root of a working tree, so
+# the declaration it used to hold registered nothing: `git clone
+# --recurse-submodules` never fetched ssp_remesh/libigl, and building ssp_remesh
+# failed on a missing igl::core.
+#
+# The submodule is now declared at the repository root, in ../../../.gitmodules,
+# pinned at libigl v2.3.0. Add new submodules there, not here.

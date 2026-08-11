@@ -56,30 +56,46 @@ Instructions for setting up and running each of them are found in the sections b
 - **Python**: 3.12
 
 ### Setup
-Our default environment is based on Conda package and environment management:
-```aiignore
-conda env create --file environment.yml
-conda activate tsmc
+TSMC runs in the repository-wide Conda environment, not a codec-specific one:
+```bash
+conda env create --file ../../../environment.yml
+conda activate open4d
+pip install -e ../../..
+pip install -r ../../../requirements-gpu.txt   # tsmc needs cupy
 ```
-Install .NET 7.0 and 5.0 for Ubuntu 24.04:
-```aiignore
+
+Install the .NET 10 SDK for Ubuntu 24.04:
+```bash
 wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
-./dotnet-install.sh --version 7.0.202 
-./dotnet-install.sh --channel 7.0
-./dotnet-install.sh --channel 7.0 --runtime aspnetcore
-./dotnet-install.sh --version 5.0.408
-./dotnet-install.sh --channel 5.0 --runtime aspnetcore
+./dotnet-install.sh --channel 10.0
+./dotnet-install.sh --channel 10.0 --runtime aspnetcore
 ```
 Set up dotnet path if needed (when you cannot run dotnet commands):
-```aiignore
+```bash
 export DOTNET_ROOT=$HOME/.dotnet
 export PATH=$HOME/.dotnet:$PATH
+```
+A distribution's own `dotnet` under `/usr/lib/dotnet` will shadow a newer SDK in
+`~/.dotnet` on `PATH`, and the build then fails with `NETSDK1045: The current
+.NET SDK does not support targeting .NET 10.0` — which reads as a missing SDK
+when the SDK is merely second in line. Check `dotnet --list-sdks` first.
+
+Then build the .NET components and the vendored Draco binaries:
+```bash
+./setup.sh
 ```
 
 ### Running
 Prepare your mesh sequences in `./data` or test with our provided sample meshes.
 
-Run `run.sh` to start the whole pipeline. Or you can run each component separately as follows:
+Run the whole pipeline with `./run.sh <dataset>`; `./run.sh --help` lists the
+frame count, center count, group, and path overrides. Or you can run each
+component separately as follows.
+
+The .NET editor's output directory appears below as
+`TVMEditor.Test/bin/Release/net10.0`, which is what `TVMEditor.Test.csproj`'s
+`net10.0` target produces. If you retarget the project, override
+`TSMC_EDITOR_BUILD` rather than editing the paths.
 
 #### 1. Static and Dynamic Scene Decomposition
 TSMC's static scene decomposition is based on SAM3, installation instructions and pretrained models can be found [here](https://github.com/facebookresearch/sam3).
@@ -159,7 +175,7 @@ python ./get_transformation.py --dataset answering --num_frames 10 --num_centers
 ```
 cd ../tvm-editing/
 
-TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test answering 1 0 9 "./TVMEditor.Test/bin/Release/net5.0/Data/answering_2000/" "./TVMEditor.Test/bin/Release/net5.0/output/answering_2000/"
+TVMEditor.Test/bin/Release/net10.0/TVMEditor.Test answering 1 0 9 "./TVMEditor.Test/bin/Release/net10.0/Data/answering_2000/" "./TVMEditor.Test/bin/Release/net10.0/output/answering_2000/"
 ```
 There are 3 numbers after `<dataset_name>`, the first one is to set the deformation mode, 1 represents deforming meshes into reference shape, and 2 represents deforming reference mesh into different shapes. The following 2 numbers are --firstIndex 0 --lastIndex 9.
 
@@ -168,14 +184,14 @@ There are 3 numbers after `<dataset_name>`, the first one is to set the deformat
 ```
 cd ../tsmc/
 
-python ./extract_reference_mesh.py --dataset answering --num_frames 10 --num_centers 2000 --inputDir ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/answering_2000/output/ --outputDir ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/answering_2000/reference_mesh/ --firstIndex 0 --lastIndex 9 --key 6
+python ./extract_reference_mesh.py --dataset answering --num_frames 10 --num_centers 2000 --inputDir ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/output/answering_2000/output/ --outputDir ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/Data/answering_2000/reference_mesh/ --firstIndex 0 --lastIndex 9 --key 6
 ```
 
 #### 7. Deform the reference mesh into different shapes to get approximation of each frame in the group
 ```
 cd ../tvm-editing/
 
-TVMEditor.Test/bin/Release/net5.0/TVMEditor.Test answering 2 0 9 "./TVMEditor.Test/bin/Release/net5.0/Data/answering_2000" "./TVMEditor.Test/bin/Release/net5.0/output/answering_2000"
+TVMEditor.Test/bin/Release/net10.0/TVMEditor.Test answering 2 0 9 "./TVMEditor.Test/bin/Release/net10.0/Data/answering_2000" "./TVMEditor.Test/bin/Release/net10.0/output/answering_2000"
 ```
 
 #### 8. Subdivided meshes to the originals and get displacements
@@ -186,12 +202,12 @@ python ./get_displacements.py --dataset answering --num_frames 10 --num_centers 
 #### 9. Compress displacements
 
 ```
-python compress_displacements.py --dataset answering --num_frames 10 --num_eigenvectors 3 --displacement_path ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/answering_2000/reference --output_path ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/answering_2000/reference --firstIndex 0 --lastIndex 9 --reference_mesh_path ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/answering_2000/reference_mesh/others/decoded_decimated_reference_mesh.obj
+python compress_displacements.py --dataset answering --num_frames 10 --num_eigenvectors 3 --displacement_path ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/output/answering_2000/reference --output_path ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/output/answering_2000/reference --firstIndex 0 --lastIndex 9 --reference_mesh_path ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/Data/answering_2000/reference_mesh/others/decoded_decimated_reference_mesh.obj
 ```
 `num_eigenvectors` decides the trade-off between quality and bitrate.
 
 #### 10. Evaluation
 
 ```
-python evaluation.py --dataset answering --num_frames 10 --num_centers 2000 --input_path ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/output/answering_2000/reference  --dynamic_static_path ../data/answering/meshes --firstIndex 0 --lastIndex 9 --reference_mesh_path ../tvm-editing/TVMEditor.Test/bin/Release/net5.0/Data/answering_2000/reference_mesh/others/decoded_decimated_reference_mesh.obj --group_idx 1
+python evaluation.py --dataset answering --num_frames 10 --num_centers 2000 --input_path ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/output/answering_2000/reference  --dynamic_static_path ../data/answering/meshes --firstIndex 0 --lastIndex 9 --reference_mesh_path ../tvm-editing/TVMEditor.Test/bin/Release/net10.0/Data/answering_2000/reference_mesh/others/decoded_decimated_reference_mesh.obj --group_idx 1
 ```

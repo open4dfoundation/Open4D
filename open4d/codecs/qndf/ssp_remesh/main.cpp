@@ -3,8 +3,6 @@
 #include <igl/writeOBJ.h>
 #include <igl/unique_rows.h>
 
-#include <igl/opengl/glfw/Viewer.h>
-
 #include <Eigen/Dense>
 #include <Eigen/Core>
 #include <Eigen/Sparse>
