@@ -27,7 +27,7 @@ setup(
             "cuda_rasterizer/backward.cu",
             "rasterize_points.cu",
             "ext.cpp"],
-            extra_compile_args={"nvcc": ["-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../gs_tools/glm/")]})
+            extra_compile_args={"nvcc": ["-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../glm/")]})
         ],
     cmdclass={
         'build_ext': BuildExtension

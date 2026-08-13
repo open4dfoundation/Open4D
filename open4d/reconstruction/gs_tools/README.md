@@ -24,9 +24,9 @@ Then build the five CUDA extensions from `open4d/reconstruction/`, all with
     pip install --no-build-isolation \
       git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
     pip install --no-build-isolation gs_tools/simple-knn
-    pip install --no-build-isolation queen/submodules/diff-gaussian-rasterization
-    pip install --no-build-isolation queen/submodules/gaussian-rasterization-grad
-    pip install --no-build-isolation 3dgstream/submodules/diff-gaussian-rasterization
+    pip install --no-build-isolation gs_tools/rasterizers/diff-gaussian-rasterization
+    pip install --no-build-isolation gs_tools/rasterizers/gaussian-rasterization-grad
+    pip install --no-build-isolation gs_tools/rasterizers/gstream-rasterization
 
 Build on ext4. On an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter`.
 

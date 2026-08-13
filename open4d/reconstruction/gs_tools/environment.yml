@@ -47,9 +47,9 @@
 #   pip install --no-build-isolation \
 #     git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 #   pip install gs_tools/simple-knn
-#   pip install queen/submodules/diff-gaussian-rasterization
-#   pip install queen/submodules/gaussian-rasterization-grad
-#   pip install 3dgstream/submodules/diff-gaussian-rasterization
+#   pip install gs_tools/rasterizers/diff-gaussian-rasterization
+#   pip install gs_tools/rasterizers/gaussian-rasterization-grad
+#   pip install gs_tools/rasterizers/gstream-rasterization
 #
 # --no-build-isolation is required for all five: an isolated build environment
 # has no torch, and torch.utils.cpp_extension is what compiles them.
@@ -67,15 +67,17 @@
 # whole change is the -I path in each rasterizer's setup.py, plus the matching
 # target_include_directories in each CMakeLists.txt.
 #
-# SIBR_viewers is gone from both trees. The 463 files they had in common were
-# byte-identical, but it is the interactive viewer and no training or evaluation
-# path touches it. Re-clone it from upstream if you ever want to view a result.
+# SIBR_viewers is one copy here too, 3DGStream's, which was a strict superset of
+# QUEEN's. It is the interactive viewer and no training or evaluation path
+# touches it. See README.md for the five fixes it needs to build on a current
+# distribution.
 #
-# The rasterizers stay under their own methods. Regrouping them here would not
-# make them shared, because they are three genuinely different forks: QUEEN's
-# grad fork and 3DGStream's differ by 871 lines, 566 of them in backward.cu, and
-# QUEEN's own two forks differ by 792. NVIDIA ships both of theirs in one repo
-# and did not merge them.
+# The rasterizers are under rasterizers/, one directory per fork, named for the
+# module each installs as. Grouping them does not make them shared: they are
+# three genuinely different forks. QUEEN's grad fork and 3DGStream's differ by
+# 871 lines, 566 of them in backward.cu, and QUEEN's own two differ by 792.
+# NVIDIA ships both of theirs in one repo and did not merge them. Nothing
+# imports them by path, so the move needed no source change in either method.
 #
 # The last line needs two source edits first, both verified:
 #
