@@ -81,6 +81,9 @@ open4d/codecs/*/data/*/meshes/*pc_*.bin
 *.pt
 *.pth
 *.safetensors
+# Shipped by 3DGStream, not generated: the pre-warmed neural transformation
+# cache its flame_steak config loads. Without it that scene cannot be trained.
+!open4d/reconstruction/3dgstream/ntc/*.pth
 
 # Basketball comparison app generated render assets (frames/videos/heatmaps)
 basketball_comparison_app/assets/
