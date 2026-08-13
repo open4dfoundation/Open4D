@@ -1,0 +1,22 @@
+# Core dependencies
+torch
+torchvision
+
+# Data processing and utilities
+plyfile
+tqdm
+numpy
+pillow
+opencv-python-headless
+scipy
+imutils
+matplotlib
+
+# Training and metrics
+wandb
+torchmetrics
+torchac
+
+# Vision models (specific versions required)
+timm==0.6.13
+einops==0.6.0
