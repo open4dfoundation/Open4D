@@ -34,6 +34,11 @@ include = ["open4d*", "integrations*"]
 exclude = [
     "data*",
     "apps*",
+    # gs_tools is its own distribution (open4d-gs-tools) with its own CUDA
+    # extensions and a non-commercial license. It is not discoverable today --
+    # open4d/reconstruction/ has no __init__.py -- but installing the lightweight
+    # core must never start shipping a rasterizer if that changes.
+    "open4d.reconstruction*",
     "cmake*",
     "docker*",
     "pc_frames*",

@@ -1,0 +1,32 @@
+# A distribution of its own, not part of the `open4d` package.
+#
+# `open4d` is the lightweight NumPy-only core; installing it must never pull a
+# CUDA rasterizer. That separation is why this is `pip install -e
+# open4d/reconstruction/gs_tools` and why the import name is `gs_tools`, with no
+# `open4d.` prefix. Runtime dependencies live in requirements.txt rather than
+# here for the same reason the root environment splits them out: torch comes from
+# PyTorch's cu126 index and the compiled extensions are per-machine builds, so a
+# bare `pip install .` cannot produce a working environment and should not
+# pretend otherwise.
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open4d-gs-tools"
+version = "0.1.0"
+description = "Gaussian-splatting free-viewpoint-video reconstruction for Open4D (QUEEN, 3DGStream)"
+requires-python = ">=3.11,<3.13"
+# Not MIT, unlike the rest of Open4D: derived from QUEEN under the NVIDIA
+# License, which limits use to non-commercial research or evaluation. See
+# THIRD_PARTY.md.
+license = { text = "LicenseRef-NVIDIA-Non-Commercial AND MIT" }
+dependencies = ["numpy"]
+
+[project.scripts]
+gs-tools = "gs_tools.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gs_tools*"]
