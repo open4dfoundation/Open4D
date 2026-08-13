@@ -1,0 +1,29 @@
+# A two-frame, few-epoch QUEEN run. Not a research config: this exists to prove
+# the environment, the extensions, and the adapter, and its numbers mean nothing.
+#
+# It is short on purpose in a second sense too. QUEEN's config file supplies
+# argparse *defaults*, so any key left out falls back to the value in
+# arguments/__init__.py -- not to upstream's dynerf.yaml. Listing only what has to
+# differ keeps this from becoming a stale copy of a hundred hyperparameters.
+#
+# depth_init is the important one. It is True in upstream's DyNeRF config, and it
+# is what pulls in MiDaS and therefore timm==0.6.13, which the training
+# environment deliberately does not have. Booleans here register as store_true,
+# so a config file is the only way to turn one off -- `--depth_init False` on the
+# command line is not accepted by argparse.
+
+model_params:
+    sh_degree: 2
+    depth_init: False
+    lambda_depth: 0.0
+    lambda_depthssim: 0.0
+    max_frames: 2
+    seed: 0
+    use_wandb: False
+
+opt_params_initial:
+    epochs: 30
+    densify_until_epoch: 0.8
+
+opt_params_rest:
+    epochs_rest: 2
