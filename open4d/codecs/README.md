@@ -15,5 +15,5 @@ their heavyweight dependencies remain optional.
 
 Gaussian-splatting compression is not here. QUEEN's quantization and 3DGStream's
 neural transformation cache are inseparable from the training loops that produce
-them, so both live in `../reconstruction/gs_tools/` alongside the reconstruction
-they are part of.
+them, so both live in `../reconstruction/` alongside the reconstruction they are
+part of.
