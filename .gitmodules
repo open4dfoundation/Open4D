@@ -21,16 +21,3 @@
 [submodule "open4d/codecs/qndf/ssp_remesh/libigl"]
 	path = open4d/codecs/qndf/ssp_remesh/libigl
 	url = https://github.com/libigl/libigl.git
-# The two Gaussian-splatting upstreams. Both are pinned, both are patched by
-# gs_tools/scripts/setup.sh rather than edited in place, and QUEEN's NVIDIA
-# License limits it and anything derived from it to non-commercial research or
-# evaluation -- see gs_tools/THIRD_PARTY.md before redistributing either.
-# Do not initialize these recursively: that pulls SIBR_viewers from
-# gitlab.inria.fr, which nothing here builds. setup.sh initializes the one nested
-# path that is needed.
-[submodule "open4d/reconstruction/gs_tools/upstream/queen"]
-	path = open4d/reconstruction/gs_tools/upstream/queen
-	url = https://github.com/NVlabs/queen.git
-[submodule "open4d/reconstruction/gs_tools/upstream/3dgstream"]
-	path = open4d/reconstruction/gs_tools/upstream/3dgstream
-	url = https://github.com/SJoJoK/3DGStream.git

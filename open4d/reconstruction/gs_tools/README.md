@@ -105,6 +105,12 @@ pip install --no-build-isolation git+https://github.com/NVlabs/tiny-cuda-nn/#sub
 QUEEN does not use it. Skip this and everything except `--method 3dgstream`
 works.
 
+`setup.sh` installs `setuptools<81` first, and has to: tiny-cuda-nn's `setup.py`
+imports `pkg_resources`, which setuptools 81 deprecated and 82 removed. Without
+the pin the build fails at metadata generation with `No module named
+'pkg_resources'`, which reads like a missing package rather than one that is too
+new.
+
 ## Running
 
 ```bash
@@ -113,11 +119,14 @@ gs-tools depth-prior -s data/dynerf/coffee_martini            # QUEEN only
 
 gs-tools train --method queen -s data/dynerf/coffee_martini -m output/coffee_queen
 
-# 3DGStream is two-stage: a static timestep-0 model, then per-frame training
+# 3DGStream is two-stage: a static timestep-0 model, then per-frame training.
+# --iterations is per timestep here, and upstream's 30000 is a static-scene
+# default that this method does not want -- pass one that suits the sequence.
 gs-tools train --method 3dgstream --stage init \
-               -s data/dynerf/coffee_martini -m output/coffee_gstream
-gs-tools train --method 3dgstream \
-               -s data/dynerf/coffee_martini -m output/coffee_gstream
+               -s data/flame_steak -m output/flame_gstream
+gs-tools train --method 3dgstream -s data/flame_steak -m output/flame_gstream \
+               --ntc-path <warmed.pth> --frame-start 1 --frame-end 50 \
+               -- --iterations 150
 
 gs-tools render   --method queen -s data/dynerf/coffee_martini -m output/coffee_queen
 gs-tools manifest -m output/coffee_queen
@@ -152,12 +161,13 @@ externally stored inputs with `scripts/fetch_artifact.sh` at the repo root.
 
 ## Status
 
-Phase 1 of the plan in [docs/plan.md](docs/plan.md). Working: the module, the
-environment definition, the patch series, the CLI and its argument translation
-(checkable with `--dry-run`), manifests, metrics, scene detection.
+Phase 1 of the plan in [docs/plan.md](docs/plan.md) is **done**: on the 2x4090
+box both methods train one scene in the `open4d-gs` environment through
+`gs-tools train`, against extensions built by `setup.sh`, each writing a run
+manifest.
 
-Not done yet: `setup.sh` has not been run on a GPU host, so no extension has been
-built and neither method has trained through this module. The unified rasterizer
-is phase 2, gated on the parity test in the plan — until it passes, `setup.sh`
-builds all four extensions so the comparison is runnable. `gs-tools depth-prior`
-and an export verb are stubs.
+Not done yet: the unified rasterizer is phase 2, gated on the parity test in the
+plan — until it passes, `setup.sh` builds all four extensions so the comparison
+is runnable. `gs-tools depth-prior` is a stub, so QUEEN's depth priors need
+`depth_init: False` or a hand-run MiDaS pass; there is no `metrics` or `export`
+verb yet, only the `gs_tools.metrics` module behind them.
