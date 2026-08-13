@@ -55,6 +55,20 @@ open4d/codecs/*/data/bench_*/
 open4d/codecs/tvmc/arap-volume-tracking/data/*/
 open4d/codecs/tsmc/arap-volume-tracking/data/*/
 
+# Reconstruction datasets, training runs, and generated representations. Same
+# reasoning as the codec rules above: the Gaussian-splatting methods write tens of
+# gigabytes per scene beside their own code, and none of it belongs in git.
+open4d/reconstruction/*/data/
+open4d/reconstruction/*/datasets/
+open4d/reconstruction/*/output/
+open4d/reconstruction/*/outputs/
+open4d/reconstruction/*/logs/
+open4d/reconstruction/*/checkpoints/
+# Nothing here can cover gs_tools/upstream/*: those are submodules, and a parent
+# .gitignore does not reach inside one. Fetched weights and build products land
+# there and are governed by each upstream's own ignore rules, which is also why
+# `git status` reports a patched checkout as modified content.
+
 # Voxel-grid and point caches the ARAP volume tracker writes beside its input
 # meshes on every run, which would otherwise show up as untracked additions
 # inside a tracked dataset directory. Fixtures already committed are unaffected.

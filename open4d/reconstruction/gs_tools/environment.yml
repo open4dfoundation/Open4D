@@ -1,0 +1,33 @@
+# The environment both Gaussian-splatting methods share.
+#
+#   conda env create -f environment.yml
+#   conda activate open4d-gs
+#   pip install torch==2.7.0 torchvision==0.22.0 \
+#     --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements.txt
+#   pip install -e .
+#   ./scripts/setup.sh
+#
+# Why this is not the shared `open4d` environment: QUEEN pins timm==0.6.13 and
+# einops==0.6.0 and wants opencv-python-headless, while the codec set tracks
+# current timm and installs opencv-python. Two distributions both providing cv2
+# cannot be installed cleanly, and unpinning a research dependency to suit an
+# unrelated codec is the wrong trade. Everything else -- Python 3.12, torch
+# 2.7.0+cu126, CUDA 12.6 on PATH -- deliberately matches the codec environment so
+# the toolchain notes in ../../../requirements-gpu.txt apply unchanged.
+#
+# Python 3.12, not the 3.11 QUEEN declares or the 3.8 3DGStream was tested on:
+# 3.12 is the repository standard and both run on it. That is a deviation from
+# both upstream tested configurations, so `gs-tools doctor` reports the versions
+# actually in use and any run manifest records them.
+#
+# torch is installed by hand rather than listed here because the cu126 wheel
+# comes from PyTorch's index, not PyPI, and conda's pip section cannot express
+# a per-package index without pinning the whole environment to it.
+
+name: open4d-gs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip

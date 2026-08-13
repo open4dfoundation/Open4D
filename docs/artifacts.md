@@ -18,6 +18,20 @@ Use the existing component-local conventions for runtime data:
 - `benchmark_app/data/`, `benchmark_app/outputs/`, and `benchmark_app/runs/`
   for dashboard inputs, reference outputs, and jobs
 
+Reconstruction components follow the same shape, with one addition: the
+Gaussian-splatting methods write tens of gigabytes per scene, so their runs are
+ignored under the component directory rather than anywhere near the pinned
+upstream checkouts they are trained by:
+
+- `open4d/reconstruction/<component>/data/` and `datasets/` for inputs
+- `open4d/reconstruction/<component>/output/` and `outputs/` for runs
+- `open4d/reconstruction/<component>/{logs,checkpoints}/` for the rest
+
+Model weights fetched into a pinned upstream checkout -- MiDaS's 1.5 GB
+`dpt_beit_large_512.pt`, for instance -- are covered by that submodule's own
+ignore rules, not by the root `.gitignore`, which cannot reach inside a
+submodule.
+
 These locations are ignored by the root `.gitignore`. Do not force-add their
 contents.
 
