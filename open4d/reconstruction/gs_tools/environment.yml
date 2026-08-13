@@ -1,0 +1,172 @@
+# The one environment QUEEN and 3DGStream share.
+#
+#   conda env create -f environment.yml
+#   conda activate open4d-gs
+#
+# Neither upstream repo can own this file. QUEEN ships a requirements.txt that
+# pins timm and einops and leaves torch unpinned; 3DGStream ships no environment
+# at all and points at gaussian-splatting's, which is a 2023 CUDA 11 recipe. The
+# union of the two, on one torch build, only exists here.
+#
+# Why not the `open4d` codec environment: QUEEN wants opencv-python-headless and
+# the codecs install opencv-python. Two distributions both providing cv2 cannot
+# coexist cleanly, and unpinning a research dependency to suit an unrelated codec
+# is the wrong trade. Everything else -- Python 3.12, torch 2.7.0+cu126, CUDA
+# 12.6 -- deliberately matches, so ../../../requirements-gpu.txt's toolchain
+# notes apply unchanged.
+#
+# Python 3.12, not the 3.11 QUEEN declares or the 3.8 3DGStream was tested on.
+# 3.12 is the repository standard and both methods run on it unmodified. That is
+# a deviation from both upstream tested configurations; record the interpreter
+# with any result you intend to compare against a published number.
+#
+# Verified end to end 2026-08-13 on a 2x RTX 4090 Linux box (Python 3.12.13,
+# GCC 13.3, nvcc 12.6): created from this file on a blank slate, then both
+# methods trained to completion in it, unmodified upstream configs.
+#
+#   QUEEN      configs/dynerf.yaml, coffee_martini, 300 frames x 17 cameras
+#              24m41s, test PSNR 26.24, val PSNR 30.40, 1.16 MB/frame
+#   3DGStream  test/flame_steak_suite/cfg_args.json, flame_steak
+#              19 timesteps at 5.6 s each, test PSNR 34.89
+#
+#
+# --- build on ext4, not NTFS ---------------------------------------------------
+#
+# The extensions must be built on a real Linux filesystem. Building on an
+# ntfs3 mount deadlocks: ninja wedges in ntfs_file_write_iter compiling
+# gaussian-rasterization-grad and cannot be killed. Nothing about the build is
+# unusual -- the same commands on ext4 finish in under four minutes.
+#
+#
+# --- what conda cannot express -------------------------------------------------
+#
+# Four CUDA extensions are compiled against this exact torch/CUDA pair, so they
+# are not listed below. Build them after activating, from open4d/reconstruction:
+#
+#   export TCNN_CUDA_ARCHITECTURES=89     # sm_89 = RTX 4090; set to your card
+#   pip install --no-build-isolation \
+#     git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+#   pip install gs_tools/simple-knn
+#   pip install queen/submodules/diff-gaussian-rasterization
+#   pip install queen/submodules/gaussian-rasterization-grad
+#   pip install 3dgstream/submodules/diff-gaussian-rasterization
+#
+# --no-build-isolation is required for all five: an isolated build environment
+# has no torch, and torch.utils.cpp_extension is what compiles them.
+#
+# simple-knn lives here, not under either method, because it is the one piece
+# both genuinely share. The two upstream copies differed by three lines: QUEEN's
+# adds `#include <float.h>` and `<cfloat>` to simple_knn.cu, which is what lets
+# it compile under GCC 13, so QUEEN's is the copy kept. Nothing had to change in
+# either tree -- both import it as `from simple_knn._C import distCUDA2`, by
+# module name, never by path.
+#
+# glm lives here for the same reason. All three rasterizers vendored it and all
+# 1468 files were byte-identical, so two of the three copies were pure
+# duplication (~38 MB). It is header-only -- nothing links against it -- so the
+# whole change is the -I path in each rasterizer's setup.py, plus the matching
+# target_include_directories in each CMakeLists.txt.
+#
+# SIBR_viewers is gone from both trees. The 463 files they had in common were
+# byte-identical, but it is the interactive viewer and no training or evaluation
+# path touches it. Re-clone it from upstream if you ever want to view a result.
+#
+# The rasterizers stay under their own methods. Regrouping them here would not
+# make them shared, because they are three genuinely different forks: QUEEN's
+# grad fork and 3DGStream's differ by 871 lines, 566 of them in backward.cu, and
+# QUEEN's own two forks differ by 792. NVIDIA ships both of theirs in one repo
+# and did not merge them.
+#
+# The last line needs two source edits first, both verified:
+#
+#   1. 3DGStream's rasterizer and QUEEN's plain rasterizer both install as
+#      `diff_gaussian_rasterization` with different CUDA and different Python
+#      signatures -- QUEEN's returns (color, radii), 3DGStream's returns
+#      (color, radii, depth) and takes a `bwd_depth` setting. Rename 3DGStream's
+#      to `gstream_rasterization` in its setup.py (name, packages, ext name), its
+#      package directory, and the import at gaussian_renderer/__init__.py:14.
+#      After that all four extensions coexist and import in one environment.
+#   2. 3DGStream's cuda_rasterizer/rasterizer_impl.h uses std::uintptr_t without
+#      including <cstdint>, which GCC 13 rejects. NVIDIA already added that
+#      include to their fork, which is why QUEEN's two build unpatched.
+#
+# The three rasterizers stay separate rather than collapsing into one. QUEEN's
+# grad fork covers 3DGStream's needs on capability -- depth accumulates
+# identically, `D += p_view.z * alpha * T`, forward and backward -- but the
+# frustum test diverges deliberately: 3DGStream commented out the lateral +-1.3
+# NDC bounds in cuda_rasterizer/auxiliary.h and kept only the near plane.
+# `in_frustum` gates preprocess, so sharing one kernel would silently change
+# which Gaussians render and receive gradients.
+#
+#
+# --- run QUEEN with no PYTHONPATH ----------------------------------------------
+#
+# MiDaS/run.py imports its sibling package as bare `midas`, so `import MiDaS.run`
+# fails on its own. QUEEN still imports, because train.py:48 imports scene.utils
+# first, which pulls in MiDaS.midas.model_loader and registers `midas` in
+# sys.modules as a namespace package; line 50 then resolves. The import order in
+# train.py is load-bearing.
+#
+# Do not "fix" this by putting queen/MiDaS on PYTHONPATH. It breaks QUEEN:
+# queen/utils/ has no __init__.py, so it is only a namespace portion, and
+# MiDaS/utils.py is a regular module -- a regular module on a later sys.path
+# entry outranks a namespace portion from an earlier one. QUEEN's own
+# utils.loss_utils then disappears behind MiDaS's utils.py.
+
+name: open4d-gs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # The cu126 wheels live on PyTorch's index, not PyPI. The `+cu126` local
+      # version exists only there, so this resolves unambiguously without
+      # repointing the whole environment away from PyPI.
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch==2.7.0+cu126
+      - torchvision==0.22.0+cu126
+
+      # tiny-cuda-nn's bindings/torch/setup.py imports pkg_resources, which
+      # setuptools 82 removed. Built with --no-build-isolation it uses this
+      # environment's setuptools, so the ceiling is load-bearing, not caution.
+      - setuptools<81
+
+      # Shared by both methods, inherited from 3DGS.
+      - plyfile
+      - numpy
+      - pillow
+      - scipy
+      - tqdm
+      - matplotlib
+      - pyyaml
+      - opencv-python-headless   # QUEEN's pin; do not swap for opencv-python
+
+      # QUEEN. einops is pinned upstream; the rest float.
+      - einops==0.6.0
+      - torchac                 # entropy coding of the quantized latents
+      - torchmetrics            # pearson_corrcoef in the depth loss
+      - imutils
+      - wandb                   # offline mode is fine
+      - pandas                  # scripts/framewise_metrics.py plots with these
+      - seaborn
+
+      # 3DGStream. None of these are in its README, which lists only
+      # tiny-cuda-nn on top of gaussian-splatting. All three are module-scope
+      # imports on the path every run takes -- scene/gaussian_model.py pulls in
+      # utils/debug_utils.py, which imports torchviz before anything checks
+      # whether debugging was requested.
+      - kornia
+      - torchviz
+      - commentjson             # reads the NTC config
+
+      # timm is not optional, and the pin is exact. queen/train.py:50 imports
+      # MiDaS.run at module scope, so QUEEN does not even import without it, and
+      # configs/dynerf.yaml sets depth_init: True, so the depth model actually
+      # runs. 0.6.13 is a 2023 release that needs a source patch against current
+      # torch; QUEEN ships the patched file and applies it with
+      #   python scripts/patch_timm.py        # rewrites timm/models/maxxvit.py
+      # The BEiT checkpoint is a separate 1.5 GB download, not in either repo:
+      #   wget -P queen/MiDaS/weights \
+      #     https://github.com/isl-org/MiDaS/releases/download/v3_1/dpt_beit_large_512.pt
+      - timm==0.6.13
