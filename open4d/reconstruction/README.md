@@ -6,8 +6,8 @@ Reconstruction components turn sensor captures into temporal geometry.
   reconstruction, and streaming tools.
 - `queen` and `3dgstream` are upstream copies of the two Gaussian-splatting
   free-viewpoint-video methods.
-- `gs_tools` holds what the two share,
-  and the single copies of `simple-knn` and `glm` they both compile against.
+- `gs_tools` holds what the two share: the environment, the single copies of
+  `simple-knn` and `glm` they both compile against, and the SIBR viewer.
 - Future Gaussian-splatting video methods should be included here.
 
 
