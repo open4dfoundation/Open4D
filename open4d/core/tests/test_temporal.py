@@ -13,6 +13,15 @@ pytestmark = pytest.mark.cpu
 
 
 def mesh(offset: float = 0.0) -> TriangleMesh:
+    """
+    Create a single-triangle mesh with an optional x-axis offset.
+    
+    Parameters:
+    	offset (float): Translation applied to the triangle's x coordinates.
+    
+    Returns:
+    	TriangleMesh: The constructed triangle mesh.
+    """
     return TriangleMesh(
         np.asarray([[offset, 0, 0], [offset, 1, 0], [offset, 0, 1]], dtype=np.float32),
         np.asarray([[0, 1, 2]], dtype=np.uint32),
@@ -20,6 +29,15 @@ def mesh(offset: float = 0.0) -> TriangleMesh:
 
 
 def frames(count: int = 4) -> list[Frame]:
+    """
+    Create a sequence of indexed frames with increasing timestamps and ordinal metadata.
+    
+    Parameters:
+    	count (int): The number of frames to create.
+    
+    Returns:
+    	list[Frame]: Frames with timestamps spaced 0.25 apart and meshes offset by index.
+    """
     return [Frame(10 + index, index * 0.25, mesh(index), {"ordinal": index}) for index in range(count)]
 
 
@@ -105,6 +123,13 @@ def test_memory_provider_bounds_and_index_types():
 
 class RecordingProvider:
     def __init__(self, values=None, *, timestamps=None):
+        """
+        Initialize a test frame provider with optional frame values and timestamps.
+        
+        Parameters:
+        	values: Frame values exposed by the provider; defaults to five generated frames.
+        	timestamps: Optional timestamps declared by the provider.
+        """
         self.values = frames(5) if values is None else values
         self.calls: list[int] = []
         self.metadata = {"capture": "recording"}
@@ -114,9 +139,11 @@ class RecordingProvider:
 
     @property
     def frame_count(self):
+        """Return the number of frames in the provider."""
         return len(self.values)
 
     def get_frame(self, index):
+        """Retrieve the frame associated with an index."""
         self.calls.append(index)
         return self.values[index]
 
@@ -334,6 +361,7 @@ def test_closing_a_view_does_not_close_its_parent():
     class Provider(RecordingProvider):
         closed = False
         def close(self):
+            """Mark the provider as closed."""
             self.closed = True
     provider = Provider()
     parent = Sequence(provider)

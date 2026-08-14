@@ -32,6 +32,15 @@ ALLOWED_EGG_INFO = {
 
 
 def check_sdist(path: Path) -> list[str]:
+    """
+    Validate a gzip-compressed source distribution against the expected file inventory.
+    
+    Parameters:
+    	path (Path): Path to the source-distribution archive.
+    
+    Returns:
+    	list[str]: Validation error messages, or an empty list when the archive is valid.
+    """
     if not path.is_file():
         return [f"source distribution does not exist: {path}"]
     errors: list[str] = []
@@ -65,6 +74,12 @@ def check_sdist(path: Path) -> list[str]:
 
 
 def main() -> int:
+    """
+    Validate a source distribution from the command line and report its status.
+    
+    Returns:
+    	int: `1` if validation errors are found, `0` otherwise.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("sdist", type=Path)
     args = parser.parse_args()

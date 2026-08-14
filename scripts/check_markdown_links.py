@@ -15,6 +15,13 @@ REMOTE_SCHEMES = {"http", "https", "mailto", "data"}
 
 
 def markdown_files() -> list[Path]:
+    """
+    Collect the existing first-party Markdown files to validate.
+    
+    Returns:
+        list[Path]: Unique Markdown file paths in the designated repository locations,
+        sorted lexicographically.
+    """
     roots = [
         ROOT / name
         for name in (
@@ -39,6 +46,15 @@ def markdown_files() -> list[Path]:
 
 
 def main() -> int:
+    """
+    Validate local links in selected Markdown files.
+    
+    Reports invalid links to standard error and returns a failure status when any
+    absolute, out-of-repository, or missing local targets are found.
+    
+    Returns:
+    	int: 1 if validation errors are found, otherwise 0.
+    """
     errors: list[str] = []
     for document in markdown_files():
         text = document.read_text(encoding="utf-8")
