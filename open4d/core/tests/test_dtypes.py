@@ -37,6 +37,8 @@ INTEGER_DTYPES = [
     np.int32, np.uint32, np.int64, np.uint64,
 ]
 
+pytestmark = pytest.mark.cpu
+
 
 # ----------------------------
 # Storage is canonical whatever the producer used
@@ -77,6 +79,16 @@ def test_attributes_are_narrowed_by_kind_and_masks_stay_boolean():
     assert mesh.attributes["curvature"].dtype == np.float32
     assert mesh.attributes["label"].dtype == np.int32
     assert mesh.attributes["selected"].dtype == np.bool_
+
+
+@pytest.mark.parametrize(
+    "value",
+    [np.iinfo(np.int32).min - 1, np.iinfo(np.int32).max + 1],
+)
+def test_integer_attributes_reject_values_that_would_overflow_int32(value):
+    labels = np.full(len(POSITIONS), value, dtype=np.int64)
+    with pytest.raises(ValueError, match="outside the range"):
+        TriangleMesh(POSITIONS, TRIANGLES, attributes={"label": labels})
 
 
 # ----------------------------

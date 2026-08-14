@@ -4,6 +4,8 @@ import numpy as np
 import open3d as o3d
 import pytest
 
+pytestmark = pytest.mark.open3d
+
 from integrations.open3d import frame_to_open3d
 
 

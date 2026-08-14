@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import operator
 from collections.abc import Iterator
+from numbers import Integral, Real
 from types import MappingProxyType
 from typing import Any, Mapping, overload
 
@@ -19,11 +20,12 @@ class Sequence:
         if not isinstance(provider, FrameProvider):
             raise TypeError("provider must implement FrameProvider")
         count = provider.frame_count
-        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        if not isinstance(count, Integral) or isinstance(count, bool) or count < 0:
             raise ValueError("provider.frame_count must be a nonnegative integer")
         self._provider = provider
-        self._frame_count = count
+        self._frame_count = int(count)
         self._timestamps_cache: tuple[float, ...] | None = None
+        self._closed = False
 
         metadata = getattr(provider, "metadata", {})
         if not isinstance(metadata, Mapping):
@@ -51,6 +53,8 @@ class Sequence:
     def __getitem__(self, index: int | slice) -> Frame | "SequenceView":
         if isinstance(index, slice):
             return SequenceView(self, range(len(self))[index])
+        if isinstance(index, bool):
+            raise TypeError("sequence indices must be integers or slices")
         try:
             ordinal = operator.index(index)
         except TypeError as exc:
@@ -84,12 +88,24 @@ class Sequence:
             values = provided if provided is not None else (
                 self[index].timestamp for index in range(len(self))
             )
-            timestamps = tuple(float(value) for value in values)
+            normalized: list[float] = []
+            for value in values:
+                if not isinstance(value, Real) or isinstance(value, bool):
+                    raise TypeError("provider timestamps must be real numbers")
+                normalized.append(float(value))
+            timestamps = tuple(normalized)
             if len(timestamps) != len(self):
                 raise ValueError("provider timestamps length does not match frame_count")
             if any(not math.isfinite(value) for value in timestamps):
                 raise ValueError("provider timestamps must be finite")
-            if any(a > b for a, b in zip(timestamps, timestamps[1:])):
+            allow_nonmonotonic = getattr(
+                self._provider, "allow_nonmonotonic_timestamps", False
+            )
+            if not isinstance(allow_nonmonotonic, bool):
+                raise TypeError("provider allow_nonmonotonic_timestamps must be bool")
+            if not allow_nonmonotonic and any(
+                a > b for a, b in zip(timestamps, timestamps[1:])
+            ):
                 raise ValueError("sequence timestamps must be nondecreasing")
             self._timestamps_cache = timestamps
         return self._timestamps_cache
@@ -97,7 +113,7 @@ class Sequence:
     @property
     def duration(self) -> float:
         timestamps = self.timestamps
-        return timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0.0
+        return abs(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
 
     @property
     def fps(self) -> float | None:
@@ -134,9 +150,14 @@ class Sequence:
 
     def close(self) -> None:
         """Close provider resources when the provider supports it."""
+        if self._closed:
+            return
         close = getattr(self._provider, "close", None)
         if close is not None:
+            if not callable(close):
+                raise TypeError("provider close must be callable")
             close()
+        self._closed = True
 
     def __enter__(self) -> "Sequence":
         return self
@@ -153,6 +174,7 @@ class _ViewProvider:
         self.topology = parent.topology
         self.has_constant_vertex_count = parent.has_constant_vertex_count
         self.has_vertex_correspondence = parent.has_vertex_correspondence
+        self.allow_nonmonotonic_timestamps = True
 
     @property
     def frame_count(self) -> int:
@@ -160,7 +182,7 @@ class _ViewProvider:
 
     @property
     def timestamps(self) -> tuple[float, ...]:
-        return tuple(self.parent[index].timestamp for index in self.indices)
+        return tuple(self.parent.timestamps[index] for index in self.indices)
 
     def get_frame(self, index: int) -> Frame:
         return self.parent[self.indices[index]]
