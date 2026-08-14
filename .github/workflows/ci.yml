@@ -15,7 +15,7 @@ concurrency:
 jobs:
   core:
     name: Core / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -34,7 +34,7 @@ jobs:
 
   open3d:
     name: Open3D / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -53,7 +53,7 @@ jobs:
 
   package:
     name: Exact distribution boundary
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +79,7 @@ jobs:
 
   quality:
     name: Source, documentation, and provenance
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
