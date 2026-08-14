@@ -21,6 +21,13 @@ class Frame:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """
+        Validate and normalize the frame fields after initialization.
+        
+        Raises:
+            TypeError: If a field has an invalid type.
+            ValueError: If the frame index is negative or the timestamp is not finite.
+        """
         if not isinstance(self.frame_index, Integral) or isinstance(
             self.frame_index, bool
         ):
