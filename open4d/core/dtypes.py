@@ -140,11 +140,19 @@ def as_colors(array: NDArray, name: str = "colors") -> NDArray:
 
 
 def as_attribute(array: NDArray, name: str) -> NDArray:
-    """Return a named attribute in canonical storage for its kind.
-
-    Booleans are left alone — a mask is not a narrow integer — while integers and
-    floats are widened or narrowed to one width each, so an attribute name means
-    the same thing whichever codec wrote it.
+    """
+    Convert a named attribute to its canonical storage dtype.
+    
+    Parameters:
+        array (NDArray): Attribute values with a boolean, integer, or floating-point dtype.
+        name (str): Attribute name used in validation errors.
+    
+    Returns:
+        NDArray: The attribute with booleans preserved, integers stored as int32, or floating-point values stored as float32.
+    
+    Raises:
+        ValueError: If an integer value is outside the int32 range.
+        TypeError: If the array does not have a boolean, integer, or floating-point dtype.
     """
     if array.dtype == np.bool_:
         return array

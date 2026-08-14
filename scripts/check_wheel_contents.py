@@ -26,11 +26,23 @@ PACKAGE_DIRS = {
 
 
 def configured_packages() -> set[str]:
+    """
+    Read the package names configured in the project's `pyproject.toml`.
+    
+    Returns:
+        set[str]: The configured setuptools package names.
+    """
     with (ROOT / "pyproject.toml").open("rb") as stream:
         return set(tomllib.load(stream)["tool"]["setuptools"]["packages"])
 
 
 def expected_python_files() -> set[str]:
+    """
+    Build the set of Python file paths expected in the wheel archive.
+    
+    Returns:
+    	set[str]: Archive paths for Python files found in the configured package directories.
+    """
     expected: set[str] = set()
     for package, directory in PACKAGE_DIRS.items():
         archive_directory = package.replace(".", "/")
@@ -41,6 +53,15 @@ def expected_python_files() -> set[str]:
 
 
 def check_wheel(path: Path) -> list[str]:
+    """
+    Validate a wheel's contents and metadata against the expected lightweight package layout.
+    
+    Parameters:
+        path (Path): Path to the wheel file to validate.
+    
+    Returns:
+        list[str]: Validation error messages, empty when the wheel passes all checks.
+    """
     errors: list[str] = []
     if configured_packages() != set(PACKAGE_DIRS):
         errors.append("pyproject package list differs from the wheel checker")
@@ -100,6 +121,11 @@ def check_wheel(path: Path) -> list[str]:
 
 
 def main() -> int:
+    """Validate the specified wheel and report whether its contents meet the expected boundary.
+    
+    Returns:
+    	int: `1` when validation errors are found, otherwise `0`.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("wheel", type=Path)
     args = parser.parse_args()
