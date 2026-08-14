@@ -11,6 +11,19 @@ research.
 > codecs and domain components contain working pipelines, while the shared 4D
 > data model and a common metrics API are still evolving.
 
+## Contributor handbook
+
+New contributors should start with the
+[Open4D Wiki](https://github.com/open4dfoundation/Open4D/wiki) or the versioned
+[`v0.2-dev` handbook source](docs/handbook/v0.2-dev/README.md). The handbook
+explains 3D/4D representations from first principles, maps every repository
+area, separates verified behavior from research claims, and provides the
+dependency-ordered roadmap.
+
+> **Release safety:** redistribution is currently blocked while the
+> third-party provenance and license audit is incomplete. See
+> [`THIRD_PARTY.md`](THIRD_PARTY.md).
+
 <p align="center">
   <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
 </p>

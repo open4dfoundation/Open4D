@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.torch
+
 torch = pytest.importorskip("torch")
 
 from open4d.torch_ops import load_obj, save_obj  # noqa: E402

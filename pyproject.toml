@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,8 @@ version = "0.1.0"
 # actually applies, in environment.yml, not here: pinning the core package to
 # 3.12 would stop `pip install open4d` on a 3.13 interpreter that can run it.
 requires-python = ">=3.10,<3.14"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["numpy"]
 
 [project.optional-dependencies]
@@ -23,25 +24,33 @@ player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
 # cp313 wheel at all, so this extra is 3.12-and-below in practice.
 open3d = ["open3d>=0.19", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
-all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.17", "pillow>=9", "usd-core>=24.3", "scipy"]
+torch  = ["torch"]
+dev    = ["build>=1.2", "pytest>=8", "scipy", "tomli>=2; python_version < '3.11'"]
+all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy"]
 
 [tool.setuptools]
 include-package-data = false
+packages = [
+    "open4d",
+    "open4d.core",
+    "open4d.torch_ops",
+    "integrations",
+    "integrations.open3d",
+]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["open4d*", "integrations*"]
-exclude = [
-    "data*",
-    "apps*",
-    # gs_tools is its own distribution (open4d-gs-tools) with its own CUDA
-    # extensions and a non-commercial license. It is not discoverable today --
-    # open4d/reconstruction/ has no __init__.py -- but installing the lightweight
-    # core must never start shipping a rasterizer if that changes.
-    "open4d.reconstruction*",
-    "cmake*",
-    "docker*",
-    "pc_frames*",
-    "integrations.open3d.tests*",
-    "open4d.core.tests*",
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = [
+    "open4d/core/tests",
+    "open4d/torch_ops/tests",
+    "examples/visualization/tests",
+    "integrations/open3d/tests",
+]
+markers = [
+    "cpu: deterministic tests that need no optional hardware",
+    "open3d: tests requiring the Open3D optional dependency",
+    "torch: tests requiring the Torch optional dependency",
+    "gpu: tests requiring a supported GPU stack",
+    "hardware: tests requiring cameras, XR devices, or other hardware",
+    "slow: tests excluded from quick feedback loops",
 ]
