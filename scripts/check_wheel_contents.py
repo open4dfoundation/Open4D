@@ -48,7 +48,15 @@ def check_wheel(path: Path) -> list[str]:
         return errors + [f"wheel does not exist: {path}"]
 
     with zipfile.ZipFile(path) as wheel:
-        members = {name for name in wheel.namelist() if not name.endswith("/")}
+        namelist = [name for name in wheel.namelist() if not name.endswith("/")]
+        if len(namelist) != len(set(namelist)):
+            seen = set()
+            for name in namelist:
+                if name in seen:
+                    errors.append(f"duplicate wheel member: {name}")
+                seen.add(name)
+
+        members = set(namelist)
         python_files = {name for name in members if name.endswith(".py")}
         expected_python = expected_python_files()
         if expected_python - python_files:

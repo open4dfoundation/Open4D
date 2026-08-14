@@ -9,8 +9,8 @@ reviews:
   poem: false
   review_status: true
   auto_review:
-    enabled: true
-    drafts: true
+    enabled: false
+    drafts: false
     base_branches:
       - main
   path_filters:
@@ -52,5 +52,5 @@ reviews:
         explicit release decision.
 
 chat:
-  auto_reply: true
+  auto_reply: false
   art: false

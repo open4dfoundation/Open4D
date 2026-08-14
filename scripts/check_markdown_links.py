@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 LINK = re.compile(r"!?\[[^\]]*\]\((?P<target><[^>]+>|[^\s)]+)(?:\s+[^)]*)?\)")
 REMOTE_SCHEMES = {"http", "https", "mailto", "data"}
+HEADING = re.compile(r"^#{1,6}\s+(.+?)(?:\s*\{#([^}]+)\})?$", re.MULTILINE)
 
 
 def markdown_files() -> list[Path]:
@@ -38,21 +39,55 @@ def markdown_files() -> list[Path]:
     return sorted(set(files))
 
 
+def extract_heading_anchors(text: str) -> set[str]:
+    """Extract valid heading anchors from markdown text.
+
+    GitHub-style anchors are lowercase, replace spaces with hyphens,
+    and remove special characters except hyphens.
+    """
+    anchors = set()
+    for match in HEADING.finditer(text):
+        heading_text = match.group(1)
+        explicit_id = match.group(2)
+        if explicit_id:
+            anchors.add(explicit_id)
+        else:
+            # GitHub-style anchor generation
+            anchor = heading_text.lower()
+            anchor = re.sub(r"[^\w\s-]", "", anchor)
+            anchor = re.sub(r"[-\s]+", "-", anchor)
+            anchor = anchor.strip("-")
+            if anchor:
+                anchors.add(anchor)
+    return anchors
+
+
 def main() -> int:
     errors: list[str] = []
     for document in markdown_files():
         text = document.read_text(encoding="utf-8")
         for match in LINK.finditer(text):
             raw = match.group("target").strip("<>")
-            if raw.startswith("#"):
-                continue
             parsed = urlsplit(raw)
+            line = text.count("\n", 0, match.start()) + 1
+
+            # Handle in-page anchor links
+            if raw.startswith("#"):
+                fragment = parsed.fragment or raw[1:]
+                if fragment:
+                    anchors = extract_heading_anchors(text)
+                    if fragment not in anchors:
+                        errors.append(
+                            f"{document.relative_to(ROOT)}:{line}: "
+                            f"fragment not found in document: {raw}"
+                        )
+                continue
+
             if parsed.scheme.lower() in REMOTE_SCHEMES or parsed.netloc:
                 continue
             if not parsed.path:
                 continue
             target = Path(unquote(parsed.path))
-            line = text.count("\n", 0, match.start()) + 1
             if target.is_absolute():
                 errors.append(
                     f"{document.relative_to(ROOT)}:{line}: absolute local link: {raw}"
@@ -70,6 +105,18 @@ def main() -> int:
                 errors.append(
                     f"{document.relative_to(ROOT)}:{line}: missing local target: {raw}"
                 )
+                continue
+
+            # Validate fragment if present
+            if parsed.fragment:
+                if resolved.suffix == ".md":
+                    target_text = resolved.read_text(encoding="utf-8")
+                    target_anchors = extract_heading_anchors(target_text)
+                    if parsed.fragment not in target_anchors:
+                        errors.append(
+                            f"{document.relative_to(ROOT)}:{line}: "
+                            f"fragment not found in {resolved.relative_to(ROOT)}: {raw}"
+                        )
 
     if errors:
         for error in errors:
