@@ -1,56 +1,10 @@
-# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Keep the installed CodeRabbit app inactive for this repository. CodeRabbit is
+# a review bot, not a GitHub Actions runner; CI is defined only in .github/workflows.
 language: en-US
-early_access: false
 
 reviews:
-  profile: assertive
-  request_changes_workflow: true
-  high_level_summary: true
-  poem: false
-  review_status: true
   auto_review:
-    enabled: true
-    drafts: false
-    base_branches:
-      - main
-  path_filters:
-    - "!**/*.lock"
-    - "!**/*.zip"
-    - "!**/*.pdf"
-    - "!**/*.pt"
-    - "!**/*.pth"
-    - "!**/*.so"
-    - "!**/*.dylib"
-    - "!build/**"
-    - "!dist/**"
-    - "!open4d/codecs/**/data/**"
-    - "!open4d/codecs/**/outputs/**"
-    - "!open4d/reconstruction/**/data/**"
-    - "!open4d/reconstruction/**/outputs/**"
-  path_instructions:
-    - path: "pyproject.toml"
-      instructions: |
-        Reject automatic package discovery or any change that can include
-        research codecs, reconstruction systems, datasets, or native binaries
-        in the lightweight distribution. The base dependency must stay NumPy-only.
-    - path: "scripts/check_*contents.py"
-      instructions: |
-        Treat missing checks, permissive globs, and unaccounted archive members
-        as release-safety defects. Exact distribution contents must fail closed.
-    - path: "open4d/core/**"
-      instructions: |
-        Preserve canonical dtypes, laziness, finite random access, timestamp
-        validation, topology declarations, cleanup, and error propagation.
-    - path: "docs/**/*.md"
-      instructions: |
-        Flag broken links and claims that do not name evidence, environment, or
-        the distinction between isolated research behavior and Open4D integration.
-    - path: "THIRD_PARTY.md"
-      instructions: |
-        Never infer license clearance. New copied code, data, models, media,
-        binaries, papers, or submodules require immutable provenance and an
-        explicit release decision.
+    enabled: false
 
 chat:
-  auto_reply: true
-  art: false
+  auto_reply: false

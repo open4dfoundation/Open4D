@@ -28,11 +28,10 @@ flowchart TB
 | --- | --- | --- |
 | Versioned handbook | Source and root README link prepared; Wiki export committed locally with validated links | Initialize the enabled GitHub Wiki, push the prepared export, review, and merge this branch |
 | Explicit lightweight package allowlist | Implemented for exactly five packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
-| Exact distribution assertion | Wheel and source archive inventories pass locally | Confirm the packaging job on Blacksmith for this pull request |
+| Exact distribution assertion | Wheel and source archive inventories pass locally | Confirm the packaging job on GitHub-hosted runners for this pull request |
 | Third-party/provenance ledger | Root ledger covers the high-risk research, data, model, binary, paper, and submodule areas | Resolve each entry with immutable provenance and reviewed distribution terms |
 | License/distribution gate | Supported release workflow fails while `BLOCK` entries remain | Resolve TVMC, QNDF, copied-upstream, binary, dataset, checkpoint, and paper scope |
-| Continuous integration | Blacksmith workflow, Python/Open3D matrices, packaging smoke test, links, syntax, provenance, and release checks prepared | Verify all GitHub checks on this pull request |
-| CodeRabbit | Version-controlled automatic-review configuration prepared | Confirm the installed app reads the branch configuration on this pull request |
+| Continuous integration | GitHub Actions workflow, Python/Open3D matrices, packaging smoke test, links, syntax, provenance, and release checks prepared | Verify all GitHub-hosted checks on this pull request |
 | Protected merge policy | No repository ruleset recorded at the audit point | Require the verified CI checks after their exact GitHub check names exist |
 
 ## Verified baseline that remains
@@ -51,7 +50,7 @@ flowchart TB
 - Python 3.11, 3.12, and 3.13: 154 default tests pass on macOS.
 - Python 3.10: 78 core tests pass; the full local visualization tier is blocked
   by a SciPy macOS binary that the current linker rejects. The Linux
-  Blacksmith matrix is the authoritative remaining 3.10 check.
+  GitHub Actions matrix is the authoritative remaining 3.10 check.
 - Open3D 0.19 on Python 3.12: 5 adapter tests pass.
 - Exact wheel and source-distribution inventories pass, followed by a clean
   wheel installation and dependency check.
@@ -65,14 +64,14 @@ The working tree does **not** currently contain the proposed `open4d.io` or
 application, TVMC shared adapter, RGB-D finite replay adapter, or live-stream
 contract implementation. These are roadmap items, not current capabilities.
 
-CodeRabbit and Blacksmith are automation surfaces, not evidence by themselves.
-Their pull-request results must still prove the tests, packaging boundary,
-provenance containment, and release block implemented in this branch.
+GitHub Actions is an automation surface, not evidence by itself. Its
+pull-request results must still prove the tests, packaging boundary, provenance
+containment, and release block implemented in this branch.
 
 ## Immediate order of work
 
 1. Initialize and publish the enabled Wiki, then review and merge the handbook.
-2. Verify CodeRabbit and the complete Blacksmith matrix on the pull request.
+2. Verify the complete GitHub-hosted Actions matrix on the pull request.
 3. Configure protected-merge checks using the stable check names from that run.
 4. Resolve the provenance ledger's `BLOCK` entries; do not publish meanwhile.
 5. Begin P1 only after P0 acceptance criteria are green.
