@@ -91,31 +91,33 @@ def test_integer_attributes_reject_values_that_would_overflow_int32(value):
         TriangleMesh(POSITIONS, TRIANGLES, attributes={"label": labels})
 
 
-def test_integer_attributes_accept_int32_bounds():
-    """int32 min and max are accepted and stored as int32."""
-    min_val = np.iinfo(np.int32).min
-    max_val = np.iinfo(np.int32).max
-    mesh = TriangleMesh(
-        POSITIONS, TRIANGLES,
-        attributes={
-            "min_attr": np.full(len(POSITIONS), min_val, dtype=np.int32),
-            "max_attr": np.full(len(POSITIONS), max_val, dtype=np.int32),
-        },
-    )
-    assert mesh.attributes["min_attr"].dtype == np.int32
-    assert mesh.attributes["max_attr"].dtype == np.int32
-    assert mesh.attributes["min_attr"][0] == min_val
-    assert mesh.attributes["max_attr"][0] == max_val
+@pytest.mark.parametrize(
+    "value",
+    [np.iinfo(np.int32).min, np.iinfo(np.int32).max],
+)
+def test_integer_attributes_accept_int32_boundary_values(value):
+    """int32 min and max must be accepted and stored canonically as int32."""
+    labels = np.full(len(POSITIONS), value, dtype=np.int64)
+    mesh = TriangleMesh(POSITIONS, TRIANGLES, attributes={"label": labels})
+    assert mesh.attributes["label"].dtype == np.int32
+    assert np.array_equal(mesh.attributes["label"], value)
 
 
 def test_empty_integer_attributes_are_accepted():
-    """Empty integer attributes should not fail validation."""
+    """Empty attribute arrays must be accepted without validation errors.
+
+    An attribute's length must align with vertex/triangle/corner counts, so
+    this is only well-defined on a mesh that itself has zero vertices and
+    zero triangles.
+    """
+    empty_positions = np.zeros((0, 3))
+    empty_triangles = np.zeros((0, 3), dtype=np.int64)
+    empty_labels = np.array([], dtype=np.int64)
     mesh = TriangleMesh(
-        POSITIONS, TRIANGLES,
-        attributes={"empty_int": np.array([], dtype=np.int64)},
+        empty_positions, empty_triangles, attributes={"label": empty_labels}
     )
-    assert mesh.attributes["empty_int"].dtype == np.int32
-    assert len(mesh.attributes["empty_int"]) == 0
+    assert mesh.attributes["label"].dtype == np.int32
+    assert len(mesh.attributes["label"]) == 0
 
 
 # ----------------------------

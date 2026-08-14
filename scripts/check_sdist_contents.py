@@ -32,45 +32,32 @@ ALLOWED_EGG_INFO = {
 
 
 def check_sdist(path: Path) -> list[str]:
-    """
-    Validate a gzip-compressed source distribution against the expected file inventory.
-    
-    Parameters:
-    	path (Path): Path to the source-distribution archive.
-    
-    Returns:
-    	list[str]: Validation error messages, or an empty list when the archive is valid.
-    """
     if not path.is_file():
         return [f"source distribution does not exist: {path}"]
     errors: list[str] = []
     expected_python = expected_python_files()
     with tarfile.open(path, "r:gz") as archive:
         files = [member for member in archive.getmembers() if member.isfile()]
-        raw_names = [member.name for member in files]
-        if len(raw_names) != len(set(raw_names)):
-            seen = set()
-            for name in raw_names:
+        all_names = [member.name for member in files]
+        if len(all_names) != len(set(all_names)):
+            seen: set[str] = set()
+            for name in all_names:
                 if name in seen:
                     errors.append(f"duplicate archive member: {name}")
                 seen.add(name)
-
         stripped_list: list[str] = []
         for member in files:
             parts = PurePosixPath(member.name).parts
             if len(parts) < 2:
                 errors.append(f"member has no distribution root: {member.name}")
                 continue
-            stripped_path = PurePosixPath(*parts[1:]).as_posix()
-            stripped_list.append(stripped_path)
-
+            stripped_list.append(PurePosixPath(*parts[1:]).as_posix())
         if len(stripped_list) != len(set(stripped_list)):
-            seen = set()
+            seen_stripped: set[str] = set()
             for name in stripped_list:
-                if name in seen:
+                if name in seen_stripped:
                     errors.append(f"duplicate root-normalized path: {name}")
-                seen.add(name)
-
+                seen_stripped.add(name)
         stripped: set[str] = set(stripped_list)
 
     python_files = {name for name in stripped if name.endswith(".py")}
@@ -92,12 +79,6 @@ def check_sdist(path: Path) -> list[str]:
 
 
 def main() -> int:
-    """
-    Validate a source distribution from the command line and report its status.
-    
-    Returns:
-    	int: `1` if validation errors are found, `0` otherwise.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument("sdist", type=Path)
     args = parser.parse_args()

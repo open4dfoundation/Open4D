@@ -10,7 +10,7 @@ reviews:
   review_status: true
   auto_review:
     enabled: false
-    drafts: false
+    drafts: true
     base_branches:
       - main
   path_filters:

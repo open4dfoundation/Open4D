@@ -37,56 +37,43 @@ ALLOWED_PACKAGES = {
 }
 
 
-def parse_component_ledger(ledger: str) -> dict[str, str]:
-    """Parse the component ledger table and extract path -> decision mappings."""
-    component_map = {}
-    in_ledger = False
-    for line in ledger.split("\n"):
-        if "## Component ledger" in line:
-            in_ledger = True
+def parse_ledger_decisions(ledger_text: str) -> dict[str, str]:
+    """Parse the component ledger table to extract decision status per path."""
+    decisions: dict[str, str] = {}
+    in_table = False
+    for line in ledger_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("| Path / component"):
+            in_table = True
             continue
-        if in_ledger and line.startswith("##"):
-            break
-        if in_ledger and line.startswith("|") and not line.startswith("| Path"):
-            parts = [p.strip() for p in line.split("|")]
+        if in_table and stripped.startswith("|") and not stripped.startswith("| ---"):
+            parts = [cell.strip() for cell in stripped.split("|")]
             if len(parts) >= 5:
-                path_component = parts[1]
-                decision = parts[4]
-                # Extract path from backticks if present
-                if "`" in path_component:
-                    import re
-                    match = re.search(r"`([^`]+)`", path_component)
-                    if match:
-                        path = match.group(1)
-                        # Extract decision keyword (BLOCK or EXCLUDED)
-                        if "BLOCK" in decision:
-                            component_map[path] = "BLOCK"
-                        elif "EXCLUDED" in decision:
-                            component_map[path] = "EXCLUDED"
-    return component_map
+                path_cell = parts[1]
+                decision_cell = parts[4]
+                if path_cell.startswith("`") and "`" in path_cell[1:]:
+                    path = path_cell.split("`")[1]
+                    if decision_cell.startswith("`BLOCK`") or decision_cell.startswith("`EXCLUDED`"):
+                        decision = decision_cell.split("`")[1]
+                        decisions[path] = decision
+    return decisions
 
 
 def main() -> int:
-    """
-    Validate release provenance coverage and package distribution boundaries.
-    
-    Returns:
-    	int: `1` if any required validation fails, otherwise `0`.
-    """
     errors: list[str] = []
     ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
     if "## Release decision: blocked" not in ledger:
         errors.append("THIRD_PARTY.md must retain the explicit release block")
 
-    component_ledger = parse_component_ledger(ledger)
-
+    ledger_decisions = parse_ledger_decisions(ledger)
     for path in REQUIRED_LEDGER_PATHS:
         if not (ROOT / path).is_dir():
             errors.append(f"expected audited area is missing: {path}")
-        if path not in component_ledger:
+        if path not in ledger_decisions:
+            errors.append(f"THIRD_PARTY.md has no ledger entry with valid decision for {path}")
+        elif ledger_decisions[path] not in ("BLOCK", "EXCLUDED"):
             errors.append(
-                f"THIRD_PARTY.md component ledger has no row with valid "
-                f"BLOCK or EXCLUDED decision for {path}"
+                f"THIRD_PARTY.md entry for {path} has invalid decision: {ledger_decisions[path]}"
             )
 
     with (ROOT / "pyproject.toml").open("rb") as stream:
