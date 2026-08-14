@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence as CollectionSequence
 from enum import Enum
+import operator
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, runtime_checkable
 
@@ -79,6 +80,12 @@ class MemoryFrameProvider:
         return tuple(frame.timestamp for frame in self._frames)
 
     def get_frame(self, index: int) -> Frame:
-        if index < 0 or index >= self.frame_count:
+        if isinstance(index, bool):
+            raise TypeError("frame index must be an integer")
+        try:
+            ordinal = operator.index(index)
+        except TypeError as exc:
+            raise TypeError("frame index must be an integer") from exc
+        if ordinal < 0 or ordinal >= self.frame_count:
             raise IndexError("frame index out of range")
-        return self._frames[index]
+        return self._frames[ordinal]

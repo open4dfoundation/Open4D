@@ -149,6 +149,14 @@ def as_attribute(array: NDArray, name: str) -> NDArray:
     if array.dtype == np.bool_:
         return array
     if np.issubdtype(array.dtype, np.integer):
+        bounds = np.iinfo(ATTRIBUTE_INT_DTYPE)
+        if array.size and (
+            int(array.min()) < bounds.min or int(array.max()) > bounds.max
+        ):
+            raise ValueError(
+                f"{name} holds values outside the range supported by "
+                f"{ATTRIBUTE_INT_DTYPE.name}"
+            )
         return array.astype(ATTRIBUTE_INT_DTYPE, copy=False)
     if np.issubdtype(array.dtype, np.floating):
         return _cast(array, ATTRIBUTE_FLOAT_DTYPE, name)

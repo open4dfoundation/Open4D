@@ -1,0 +1,24 @@
+# Keep source distributions within the same lightweight boundary as the wheel.
+include LICENSE
+include README.md
+include CONTRIBUTING.md
+include SECURITY.md
+include THIRD_PARTY.md
+include pyproject.toml
+
+prune open4d/codecs
+prune open4d/reconstruction
+prune integrations/unity
+prune examples
+prune apps
+prune docs
+prune scripts
+prune .github
+prune tests
+
+recursive-exclude open4d/core/tests *
+recursive-exclude open4d/torch_ops/tests *
+recursive-exclude integrations/open3d/tests *
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store
