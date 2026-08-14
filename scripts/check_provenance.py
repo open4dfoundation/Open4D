@@ -67,6 +67,12 @@ def parse_component_ledger(ledger: str) -> dict[str, str]:
 
 
 def main() -> int:
+    """
+    Validate release provenance coverage and package distribution boundaries.
+    
+    Returns:
+    	int: `1` if any required validation fails, otherwise `0`.
+    """
     errors: list[str] = []
     ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
     if "## Release decision: blocked" not in ledger:
