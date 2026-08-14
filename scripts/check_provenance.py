@@ -37,17 +37,51 @@ ALLOWED_PACKAGES = {
 }
 
 
+def parse_component_ledger(ledger: str) -> dict[str, str]:
+    """Parse the component ledger table and extract path -> decision mappings."""
+    component_map = {}
+    in_ledger = False
+    for line in ledger.split("\n"):
+        if "## Component ledger" in line:
+            in_ledger = True
+            continue
+        if in_ledger and line.startswith("##"):
+            break
+        if in_ledger and line.startswith("|") and not line.startswith("| Path"):
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 5:
+                path_component = parts[1]
+                decision = parts[4]
+                # Extract path from backticks if present
+                if "`" in path_component:
+                    import re
+                    match = re.search(r"`([^`]+)`", path_component)
+                    if match:
+                        path = match.group(1)
+                        # Extract decision keyword (BLOCK or EXCLUDED)
+                        if "BLOCK" in decision:
+                            component_map[path] = "BLOCK"
+                        elif "EXCLUDED" in decision:
+                            component_map[path] = "EXCLUDED"
+    return component_map
+
+
 def main() -> int:
     errors: list[str] = []
     ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
     if "## Release decision: blocked" not in ledger:
         errors.append("THIRD_PARTY.md must retain the explicit release block")
 
+    component_ledger = parse_component_ledger(ledger)
+
     for path in REQUIRED_LEDGER_PATHS:
         if not (ROOT / path).is_dir():
             errors.append(f"expected audited area is missing: {path}")
-        if f"`{path}`" not in ledger:
-            errors.append(f"THIRD_PARTY.md has no entry for {path}")
+        if path not in component_ledger:
+            errors.append(
+                f"THIRD_PARTY.md component ledger has no row with valid "
+                f"BLOCK or EXCLUDED decision for {path}"
+            )
 
     with (ROOT / "pyproject.toml").open("rb") as stream:
         project = tomllib.load(stream)

@@ -38,13 +38,31 @@ def check_sdist(path: Path) -> list[str]:
     expected_python = expected_python_files()
     with tarfile.open(path, "r:gz") as archive:
         files = [member for member in archive.getmembers() if member.isfile()]
-        stripped: set[str] = set()
+        raw_names = [member.name for member in files]
+        if len(raw_names) != len(set(raw_names)):
+            seen = set()
+            for name in raw_names:
+                if name in seen:
+                    errors.append(f"duplicate archive member: {name}")
+                seen.add(name)
+
+        stripped_list: list[str] = []
         for member in files:
             parts = PurePosixPath(member.name).parts
             if len(parts) < 2:
                 errors.append(f"member has no distribution root: {member.name}")
                 continue
-            stripped.add(PurePosixPath(*parts[1:]).as_posix())
+            stripped_path = PurePosixPath(*parts[1:]).as_posix()
+            stripped_list.append(stripped_path)
+
+        if len(stripped_list) != len(set(stripped_list)):
+            seen = set()
+            for name in stripped_list:
+                if name in seen:
+                    errors.append(f"duplicate root-normalized path: {name}")
+                seen.add(name)
+
+        stripped: set[str] = set(stripped_list)
 
     python_files = {name for name in stripped if name.endswith(".py")}
     if python_files != expected_python:

@@ -1,4 +1,4 @@
-## What changed
+# What changed
 
 Describe the behavior and repository area changed.
 
