@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from numbers import Real
+from numbers import Integral, Real
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -21,7 +21,14 @@ class Frame:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.frame_index, int) or isinstance(
+        """
+        Validate and normalize the frame fields after initialization.
+        
+        Raises:
+            TypeError: If a field has an invalid type.
+            ValueError: If the frame index is negative or the timestamp is not finite.
+        """
+        if not isinstance(self.frame_index, Integral) or isinstance(
             self.frame_index, bool
         ):
             raise TypeError("frame_index must be an integer")
@@ -37,5 +44,6 @@ class Frame:
         if not isinstance(self.metadata, Mapping):
             raise TypeError("metadata must be a mapping")
 
+        object.__setattr__(self, "frame_index", int(self.frame_index))
         object.__setattr__(self, "timestamp", timestamp)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))

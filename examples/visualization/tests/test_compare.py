@@ -26,6 +26,8 @@ import mesh_metrics
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from render_frames import UP_TO_Z
 
+pytestmark = pytest.mark.cpu
+
 
 # ----------------------------
 # Fixtures and helpers

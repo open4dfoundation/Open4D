@@ -13,6 +13,8 @@ import math
 
 import pytest
 
+pytestmark = pytest.mark.torch
+
 torch = pytest.importorskip("torch")
 
 from open4d.torch_ops import (  # noqa: E402
