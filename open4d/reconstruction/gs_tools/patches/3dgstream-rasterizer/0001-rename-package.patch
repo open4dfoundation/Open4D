@@ -1,0 +1,23 @@
+diff --git a/diff_gaussian_rasterization/__init__.py b/gstream_rasterization/__init__.py
+similarity index 100%
+rename from diff_gaussian_rasterization/__init__.py
+rename to gstream_rasterization/__init__.py
+diff --git a/setup.py b/setup.py
+index 5c6eca9..2f7e31d 100644
+--- a/setup.py
++++ b/setup.py
+@@ -16,11 +16,11 @@ os.path.dirname(os.path.abspath(__file__))
+ 
+ setup(
+     version="1.0.0+3dgstream",
+-    name="diff_gaussian_rasterization",
+-    packages=['diff_gaussian_rasterization'],
++    name="gstream_rasterization",
++    packages=['gstream_rasterization'],
+     ext_modules=[
+         CUDAExtension(
+-            name="diff_gaussian_rasterization._C",
++            name="gstream_rasterization._C",
+             sources=[
+             "cuda_rasterizer/rasterizer_impl.cu",
+             "cuda_rasterizer/forward.cu",
