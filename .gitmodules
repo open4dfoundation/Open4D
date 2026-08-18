@@ -21,3 +21,7 @@
 [submodule "open4d/codecs/qndf/ssp_remesh/libigl"]
 	path = open4d/codecs/qndf/ssp_remesh/libigl
 	url = https://github.com/libigl/libigl.git
+[submodule "open4d/codecs/faster_vdmc"]
+	path = open4d/codecs/faster_vdmc
+	url = https://github.com/cicm4/mpeg-vdmc-tm.git
+	branch = faster_vdmc
