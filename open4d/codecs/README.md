@@ -9,6 +9,7 @@ The directory names are stable, lowercase identifiers:
 - `draco`, `klt`, `n4mc`, `qndf`, and `qndf_int8`
 - `tsmc` and `tvmc`
 - `vdmc`, the pinned MPEG V-DMC test-model submodule
+- `faster_vdmc`, Open4D's performance-oriented V-DMC fork
 
 These implementations are not imported by the lightweight `open4d` package and
 their heavyweight dependencies remain optional.

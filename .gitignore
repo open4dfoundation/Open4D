@@ -46,6 +46,7 @@ benchmark_app/archives/
 # Codec datasets, training runs, and generated reconstructions
 # Existing tracked paper fixtures remain tracked; these rules prevent new local
 # runs from silently expanding the source repository.
+4d_files/
 open4d/codecs/*/datasets/
 open4d/codecs/*/outputs/
 open4d/codecs/*/experiments/
