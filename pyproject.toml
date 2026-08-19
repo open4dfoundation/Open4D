@@ -39,12 +39,11 @@ packages = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-config --strict-markers"
 testpaths = [
     "open4d/core/tests",
-    "open4d/torch_ops/tests",
     "examples/visualization/tests",
-    "integrations/open3d/tests",
+    "scripts/tests",
 ]
 markers = [
     "cpu: deterministic tests that need no optional hardware",

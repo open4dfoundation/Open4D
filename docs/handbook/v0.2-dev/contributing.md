@@ -31,8 +31,8 @@ or setup command.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
-python -m pytest -q open4d/core/tests examples/visualization/tests
+python -m pip install -e '.[dev]'
+python -m pytest
 ```
 
 Install extras only for the work you are testing:
@@ -41,7 +41,11 @@ Install extras only for the work you are testing:
 python -m pip install -e '.[player]'
 python -m pip install -e '.[usd]'
 python -m pip install -e '.[tools]'
-python -m pip install -e '.[open3d]'
+python -m pip install -e '.[dev,open3d,torch]'
+python -m pytest -m open3d integrations/open3d/tests open4d/torch_ops/tests
+
+python -m pip install -e '.[dev,torch]'
+python -m pytest -m 'torch and not open3d' open4d/torch_ops/tests
 ```
 
 ### Shared codec Python environment
@@ -73,10 +77,12 @@ The intended root markers are:
 - `hardware`: cameras, headset, or other physical device;
 - `slow`: unsuitable for normal per-change feedback.
 
-Until root collection is hardened, invoke known suites explicitly. Several
-research scripts are named `test.py`, `decoder_test.py`, or `model_test.py` but
-perform local-dataset/GPU experiments and must not be collected by default.
-Rename or configure them only after preserving their intended commands.
+Root collection contains only the lightweight core, headless visualization,
+and validation-script suites. Optional Open3D and Torch suites use the explicit
+commands above. Several research scripts are named `test.py`,
+`decoder_test.py`, or `model_test.py` but perform local-dataset/GPU experiments
+and must not be collected by default. Rename or configure them only after
+preserving their intended commands.
 
 For a new feature, cover at least:
 

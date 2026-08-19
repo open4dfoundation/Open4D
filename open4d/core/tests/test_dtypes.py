@@ -108,14 +108,27 @@ def test_integer_attributes_accept_int32_bounds():
     assert mesh.attributes["max_attr"][0] == max_val
 
 
-def test_empty_integer_attributes_are_accepted():
-    """Empty integer attributes should not fail validation."""
+def test_empty_integer_attributes_are_accepted_on_an_empty_mesh():
+    """An aligned empty stream is valid and still receives its canonical dtype."""
     mesh = TriangleMesh(
-        POSITIONS, TRIANGLES,
+        np.empty((0, 3), dtype=np.float32),
+        np.empty((0, 3), dtype=np.uint32),
         attributes={"empty_int": np.array([], dtype=np.int64)},
     )
     assert mesh.attributes["empty_int"].dtype == np.int32
     assert len(mesh.attributes["empty_int"]) == 0
+
+
+def test_empty_attribute_is_rejected_when_it_is_not_mesh_aligned():
+    """Empty is not a fourth alignment mode for a non-empty mesh."""
+    with pytest.raises(
+        ValueError, match="vertex-, triangle-, or triangle-corner-aligned"
+    ):
+        TriangleMesh(
+            POSITIONS,
+            TRIANGLES,
+            attributes={"empty_int": np.array([], dtype=np.int64)},
+        )
 
 
 # ----------------------------

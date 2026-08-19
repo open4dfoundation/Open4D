@@ -223,6 +223,7 @@ def test_returned_index_is_the_face_that_was_closest():
         assert float(alone[0]) == pytest.approx(float(squared[i]), abs=1e-12)
 
 
+@pytest.mark.open3d
 def test_accelerated_path_matches_bruteforce():
     """The Open3D BVH must agree with the exact scan it replaces."""
     pytest.importorskip("open3d")

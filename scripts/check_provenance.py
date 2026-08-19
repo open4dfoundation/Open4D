@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import configparser
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 try:
     import tomllib
@@ -13,19 +14,11 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED_LEDGER_PATHS = (
-    "open4d/codecs/draco",
-    "open4d/codecs/klt",
-    "open4d/codecs/n4mc",
-    "open4d/codecs/qndf",
-    "open4d/codecs/qndf_int8",
-    "open4d/codecs/tsmc",
-    "open4d/codecs/tvmc",
-    "open4d/codecs/vdmc",
-    "open4d/reconstruction/rgbd",
-    "open4d/reconstruction/3dgstream",
-    "open4d/reconstruction/queen",
-    "open4d/reconstruction/gs_tools",
+AUDITED_DIRECTORY_ROOTS = (
+    "open4d/codecs",
+    "open4d/reconstruction",
+)
+EXPLICIT_REQUIRED_LEDGER_PATHS = (
     "integrations/unity",
 )
 ALLOWED_PACKAGES = {
@@ -35,6 +28,62 @@ ALLOWED_PACKAGES = {
     "integrations",
     "integrations.open3d",
 }
+
+
+def parse_gitmodule_paths(gitmodules: str) -> set[str]:
+    """Return normalized submodule paths from ``.gitmodules`` content."""
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string(gitmodules)
+    paths: set[str] = set()
+    for section in parser.sections():
+        if not section.startswith("submodule ") or not parser.has_option(
+            section, "path"
+        ):
+            continue
+        raw_path = parser.get(section, "path").strip()
+        path = PurePosixPath(raw_path)
+        if not raw_path or path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"unsafe submodule path in .gitmodules: {raw_path!r}")
+        paths.add(path.as_posix())
+    return paths
+
+
+def _top_level_component(path: str) -> str:
+    """Map a nested audited path to the component row that owns it."""
+    for root in AUDITED_DIRECTORY_ROOTS:
+        prefix = f"{root}/"
+        if path.startswith(prefix):
+            child = path[len(prefix):].split("/", 1)[0]
+            return f"{root}/{child}"
+    return path
+
+
+def discover_required_ledger_paths(root: Path) -> set[str]:
+    """Discover auditable components from the tree and registered submodules."""
+    required = set(EXPLICIT_REQUIRED_LEDGER_PATHS)
+    for directory_root in AUDITED_DIRECTORY_ROOTS:
+        directory = root / directory_root
+        if directory.is_dir():
+            required.update(
+                f"{directory_root}/{child.name}"
+                for child in directory.iterdir()
+                if child.is_dir()
+            )
+
+    gitmodules_path = root / ".gitmodules"
+    if gitmodules_path.is_file():
+        submodule_paths = parse_gitmodule_paths(
+            gitmodules_path.read_text(encoding="utf-8")
+        )
+        required.update(_top_level_component(path) for path in submodule_paths)
+    return required
+
+
+def uncovered_component_paths(
+    required_paths: set[str], component_ledger: dict[str, str]
+) -> set[str]:
+    """Return discovered components without a BLOCK or EXCLUDED ledger row."""
+    return required_paths - component_ledger.keys()
 
 
 def parse_component_ledger(ledger: str) -> dict[str, str]:
@@ -80,14 +129,16 @@ def main() -> int:
 
     component_ledger = parse_component_ledger(ledger)
 
-    for path in REQUIRED_LEDGER_PATHS:
+    required_ledger_paths = discover_required_ledger_paths(ROOT)
+    for path in sorted(required_ledger_paths):
         if not (ROOT / path).is_dir():
             errors.append(f"expected audited area is missing: {path}")
-        if path not in component_ledger:
-            errors.append(
-                f"THIRD_PARTY.md component ledger has no row with valid "
-                f"BLOCK or EXCLUDED decision for {path}"
-            )
+    uncovered = uncovered_component_paths(required_ledger_paths, component_ledger)
+    for path in sorted(uncovered):
+        errors.append(
+            f"THIRD_PARTY.md component ledger has no row with valid "
+            f"BLOCK or EXCLUDED decision for {path}"
+        )
 
     with (ROOT / "pyproject.toml").open("rb") as stream:
         project = tomllib.load(stream)
