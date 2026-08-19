@@ -1,56 +1,91 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-language: en-US
+#
+# CodeRabbit is disabled for this repository. Keep this file as a tombstone so
+# organization-level defaults cannot silently turn repository features back on.
+# Removing the repository from the CodeRabbit GitHub App installation is still
+# required to revoke the app's access and prevent manually requested reviews.
+inheritance: false
 early_access: false
+enable_free_tier: false
 
 reviews:
-  profile: assertive
-  request_changes_workflow: true
-  high_level_summary: true
-  poem: false
-  review_status: true
+  request_changes_workflow: false
+  high_level_summary: false
+  review_status: false
+  review_progress: false
+  commit_status: false
+  auto_apply_labels: false
+  auto_assign_reviewers: false
+  slop_detection:
+    enabled: false
   auto_review:
     enabled: false
+    auto_incremental_review: false
+    description_keyword: ""
+    labels: []
     drafts: false
-    base_branches:
-      - main
-  path_filters:
-    - "!**/*.lock"
-    - "!**/*.zip"
-    - "!**/*.pdf"
-    - "!**/*.pt"
-    - "!**/*.pth"
-    - "!**/*.so"
-    - "!**/*.dylib"
-    - "!build/**"
-    - "!dist/**"
-    - "!open4d/codecs/**/data/**"
-    - "!open4d/codecs/**/outputs/**"
-    - "!open4d/reconstruction/**/data/**"
-    - "!open4d/reconstruction/**/outputs/**"
-  path_instructions:
-    - path: "pyproject.toml"
-      instructions: |
-        Reject automatic package discovery or any change that can include
-        research codecs, reconstruction systems, datasets, or native binaries
-        in the lightweight distribution. The base dependency must stay NumPy-only.
-    - path: "scripts/check_*contents.py"
-      instructions: |
-        Treat missing checks, permissive globs, and unaccounted archive members
-        as release-safety defects. Exact distribution contents must fail closed.
-    - path: "open4d/core/**"
-      instructions: |
-        Preserve canonical dtypes, laziness, finite random access, timestamp
-        validation, topology declarations, cleanup, and error propagation.
-    - path: "docs/**/*.md"
-      instructions: |
-        Flag broken links and claims that do not name evidence, environment, or
-        the distinction between isolated research behavior and Open4D integration.
-    - path: "THIRD_PARTY.md"
-      instructions: |
-        Never infer license clearance. New copied code, data, models, media,
-        binaries, papers, or submodules require immutable provenance and an
-        explicit release decision.
+    base_branches: []
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+    custom: []
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+    custom_checks: []
+  post_merge_actions: []
 
 chat:
   auto_reply: false
+  allow_non_org_members: false
   art: false
+  integrations:
+    jira:
+      usage: disabled
+    linear:
+      usage: disabled
+
+knowledge_base:
+  # This also requests deletion of retained repository learnings and context.
+  opt_out: true
+  web_search:
+    enabled: false
+  code_guidelines:
+    enabled: false
+  jira:
+    usage: disabled
+  linear:
+    usage: disabled
+  mcp:
+    usage: disabled
+    disabled_servers: []
+  automatic_repository_linking: false
+  linked_repositories: []
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+    auto_planning:
+      enabled: false
+      labels: []
+  labeling:
+    labeling_instructions: []
+    auto_apply_labels: false
