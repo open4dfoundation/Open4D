@@ -8,8 +8,8 @@ Open4D brings code for loading, viewing, compressing, and comparing mesh and
 point-cloud sequences into one open-source research project. In this project,
 **4D** means 3D geometry that changes over time.
 
-[Try the sequence viewer](#try-the-sequence-viewer) 
-[Browse the codecs](#codecs-reconstruction-and-integrations) 
+[Try the sequence viewer](#try-the-sequence-viewer) |
+[Browse the codecs](#codecs-reconstruction-and-integrations) |
 [Read the contributor handbook](#contributor-handbook)
 
 <p align="center">
