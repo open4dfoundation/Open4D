@@ -33,6 +33,7 @@ include-package-data = false
 packages = [
     "open4d",
     "open4d.core",
+    "open4d.io",
     "open4d.torch_ops",
     "integrations",
     "integrations.open3d",
@@ -42,6 +43,8 @@ packages = [
 addopts = "-ra --strict-config --strict-markers"
 testpaths = [
     "open4d/core/tests",
+    "open4d/io/tests",
+    "open4d/torch_ops/tests",
     "examples/visualization/tests",
     "scripts/tests",
 ]

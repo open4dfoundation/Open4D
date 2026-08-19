@@ -60,8 +60,8 @@ flowchart TB
 
 ## Not currently implemented
 
-The working tree does **not** currently contain the proposed `open4d.io` or
-`open4d.metrics` public packages, schema-v1 USD API, complete Draco reference
+The working tree contains the first mesh-loading slice of `open4d.io`. It does
+**not** contain `open4d.metrics`, the schema-v1 USD API, complete Draco reference
 application, TVMC shared adapter, RGB-D finite replay adapter, or live-stream
 contract implementation. These are roadmap items, not current capabilities.
 

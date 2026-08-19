@@ -126,9 +126,9 @@ python -m pip install -e '.[player]'
 python examples/visualization/visualize_sequence.py path/to/frames --info
 ```
 
-Sequence loaders currently live under `examples/visualization`; the proposed
-`open4d.io.open_sequence` public API is roadmap work and is not implemented in
-the audited baseline.
+`open4d.io.open_sequence` now loads local mesh files and frame folders. The
+OpenUSD sequence backend remains under `examples/visualization` pending public
+schema and loss-policy work.
 
 ## How to choose a first contribution
 
