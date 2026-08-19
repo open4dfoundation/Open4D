@@ -32,6 +32,23 @@ jobs:
       - name: Run default headless tests
         run: python -m pytest
 
+  torch:
+    name: Torch CPU / Python 3.12
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Torch CPU test tier
+        run: python -m pip install -e '.[dev,torch]'
+      - name: Require the optional dependency
+        run: python -c "import torch; print(torch.__version__)"
+      - name: Run Torch CPU tests
+        run: python -m pytest -m 'torch and not open3d' open4d/torch_ops/tests
+
   open3d:
     name: Open3D / Python ${{ matrix.python-version }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -46,10 +63,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install Open3D test tier
-        run: python -m pip install -e '.[dev,open3d]'
-      - name: Run Open3D adapter tests
-        run: python -m pytest integrations/open3d/tests
+      - name: Install Open3D and accelerated Torch test tier
+        run: python -m pip install -e '.[dev,open3d,torch]'
+      - name: Require both optional dependencies
+        run: python -c "import open3d, torch; print(open3d.__version__, torch.__version__)"
+      - name: Run every Open3D-backed test
+        run: >-
+          python -m pytest -m open3d
+          integrations/open3d/tests open4d/torch_ops/tests
 
   package:
     name: Exact distribution boundary
@@ -64,18 +85,18 @@ jobs:
       - name: Build source and wheel distributions
         run: |
           python -m pip install 'build>=1.2'
-          python -m build
+          python -m build --outdir "$RUNNER_TEMP/open4d-dist"
       - name: Assert exact wheel contents
-        run: python scripts/check_wheel_contents.py "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+        run: python scripts/check_wheel_contents.py "$(find "$RUNNER_TEMP/open4d-dist" -maxdepth 1 -name '*.whl' -print -quit)"
       - name: Assert source-distribution contents
-        run: python scripts/check_sdist_contents.py "$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+        run: python scripts/check_sdist_contents.py "$(find "$RUNNER_TEMP/open4d-dist" -maxdepth 1 -name '*.tar.gz' -print -quit)"
       - name: Install wheel in a clean environment
         run: |
-          python -m venv /tmp/open4d-wheel-smoke
-          /tmp/open4d-wheel-smoke/bin/python -m pip install "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
-          /tmp/open4d-wheel-smoke/bin/python -m pip check
-          cd /tmp
-          /tmp/open4d-wheel-smoke/bin/python -c "import open4d, integrations; print(open4d.__file__)"
+          python -m venv "$RUNNER_TEMP/open4d-wheel-smoke"
+          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" -m pip install "$(find "$RUNNER_TEMP/open4d-dist" -maxdepth 1 -name '*.whl' -print -quit)"
+          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" -m pip check
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" -c "import open4d, integrations; print(open4d.__file__)"
 
   quality:
     name: Source, documentation, and provenance
