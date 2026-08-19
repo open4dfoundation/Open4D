@@ -1,15 +1,60 @@
 # Open4D
+
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?logo=python&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)
 
-Open4D is a research repository for representing, compressing, evaluating, and
-playing time-varying 3D geometry. It brings several mesh-compression systems,
-a shared 4D data model, a sequence viewer, and per-codec evaluation scripts
-into one workspace for XR, teleoperation, digital-twin, robotics, and graphics
-research.
+## Tools for 3D data that changes over time
 
-> **Project status:** Open4D is under active development. The individual
-> codecs and domain components contain working pipelines, while the shared 4D
-> data model and a common metrics API are still evolving.
+Open4D brings code for loading, viewing, compressing, and comparing mesh and
+point-cloud sequences into one open-source research project. In this project,
+**4D** means 3D geometry that changes over time.
+
+[Try the sequence viewer](#try-the-sequence-viewer) ·
+[Browse the codecs](#codecs-reconstruction-and-integrations) ·
+[Read the contributor handbook](#contributor-handbook)
+
+<p align="center">
+  <img src="docs/assets/basketball_comparison_demo.gif" width="100%" alt="A reference mesh beside decoded results from N4MC, QNDF, TVMC, and TSMC, coloured by distance from the reference">
+</p>
+
+<p align="center"><em>A reference sequence beside results from four research codecs. Colour shows distance from the reference.</em></p>
+
+### What works today
+
+- A small Python model for triangle meshes, frames, and finite sequences.
+- Loaders for folders of `.obj` or `.ply` frames, with optional OpenUSD support.
+- A viewer for inspecting, playing, scrubbing, and exporting mesh sequences.
+- A comparison tool that measures a decoded sequence against its reference and
+  displays both under one camera.
+- Research codecs for mesh compression, plus RGB-D reconstruction and Open3D
+  and Unity integrations. These larger components still have their own setup
+  and dependencies.
+
+### Try the sequence viewer
+
+The lightweight viewer runs on macOS, Linux, and Windows and does not need a
+GPU. Point it at a folder containing one `.obj` or `.ply` mesh per frame:
+
+```bash
+git clone https://github.com/open4dfoundation/Open4D.git
+cd Open4D
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[player]'
+python examples/visualization/visualize_sequence.py /path/to/frames/ --info
+python examples/visualization/visualize_sequence.py /path/to/frames/
+```
+
+On Windows, activate the environment with `.venv\Scripts\activate` instead.
+See the [visualization guide](examples/visualization/README.md) for supported
+inputs, controls, OpenUSD packing, and sequence comparison.
+
+<p align="center">
+  <img src="docs/assets/viewer_demo.gif" width="55%" alt="The Open4D sequence viewer playing a ten-frame mesh sequence">
+</p>
+
+> **Project status:** Open4D is early research software. The core data model,
+> viewer, comparison tool, and individual research components work today, but
+> the shared API and complete cross-codec workflows are still being built.
 
 ## Contributor handbook
 
@@ -23,10 +68,6 @@ dependency-ordered roadmap.
 > **Release safety:** redistribution is currently blocked while the
 > third-party provenance and license audit is incomplete. See
 > [`THIRD_PARTY.md`](THIRD_PARTY.md).
-
-<p align="center">
-  <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="Open4D ecosystem">
-</p>
 
 ## Repository layout
 
@@ -55,6 +96,10 @@ Open4D/
 ├── scripts/           repository-level setup utilities
 └── docs/              architecture and repository policies
 ```
+
+<p align="center">
+  <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="How the Open4D repository's data, codec, evaluation, and playback components fit together">
+</p>
 
 ### Codecs, reconstruction, and integrations
 
@@ -211,20 +256,16 @@ the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 ./scripts/setup_draco.sh
 ```
 
-## Getting started
+## Sequence viewer details
 
-`examples/visualization/visualize_sequence.py` loads a 4D sequence, reports what it contains,
-and animates it. Point it at your own data:
+`examples/visualization/visualize_sequence.py` loads a sequence, reports what it
+contains, and animates it. After following the quick start above, point it at
+your own data:
 
 ```bash
-python -m pip install -e '.[player]'
 python examples/visualization/visualize_sequence.py my_capture/ --info
 python examples/visualization/visualize_sequence.py my_capture/
 ```
-
-<p align="center">
-  <img src="docs/assets/viewer_demo.gif" width="70%" alt="The Open4D sequence viewer playing a 10-frame mesh sequence">
-</p>
 
 Playback is our own PyQt6 window: drag to orbit, scroll to zoom, drag the slider
 to scrub, space to pause, left/right to step a frame. `--save out.gif` writes an
