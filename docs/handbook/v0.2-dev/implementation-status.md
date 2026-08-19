@@ -32,7 +32,7 @@ flowchart TB
 | Third-party/provenance ledger | Root ledger covers the high-risk research, data, model, binary, paper, and submodule areas | Resolve each entry with immutable provenance and reviewed distribution terms |
 | License/distribution gate | Supported release workflow fails while `BLOCK` entries remain | Resolve TVMC, QNDF, copied-upstream, binary, dataset, checkpoint, and paper scope |
 | Continuous integration | Blacksmith-backed GitHub Actions workflow, Python/Open3D matrices, packaging smoke test, links, syntax, provenance, and release checks prepared | Verify all GitHub checks on this pull request |
-| CodeRabbit | Version-controlled automatic-review configuration enabled for draft and ready pull requests | Confirm the installed app reviews this pull request |
+| CodeRabbit | Repository features disabled in version-controlled configuration | Remove this repository from the CodeRabbit GitHub App installation to revoke access |
 | Protected merge policy | No repository ruleset recorded at the audit point | Require the verified CI checks after their exact GitHub check names exist |
 
 ## Verified baseline that remains
@@ -65,14 +65,15 @@ The working tree does **not** currently contain the proposed `open4d.io` or
 application, TVMC shared adapter, RGB-D finite replay adapter, or live-stream
 contract implementation. These are roadmap items, not current capabilities.
 
-CodeRabbit and Blacksmith are automation surfaces, not evidence by themselves.
-Their pull-request results must still prove the tests, packaging boundary,
-provenance containment, and release block implemented in this branch.
+Blacksmith is an automation surface, not evidence by itself. Its pull-request
+results must still prove the tests, packaging boundary, provenance containment,
+and release block implemented in this branch.
 
 ## Immediate order of work
 
 1. Initialize and publish the enabled Wiki, then review and merge the handbook.
-2. Verify CodeRabbit and the complete Blacksmith matrix on the pull request.
-3. Configure protected-merge checks using the stable check names from that run.
-4. Resolve the provenance ledger's `BLOCK` entries; do not publish meanwhile.
-5. Begin P1 only after P0 acceptance criteria are green.
+2. Remove this repository from the CodeRabbit GitHub App installation.
+3. Verify the complete Blacksmith matrix on the pull request.
+4. Configure protected-merge checks using the stable check names from that run.
+5. Resolve the provenance ledger's `BLOCK` entries; do not publish meanwhile.
+6. Begin P1 only after P0 acceptance criteria are green.
