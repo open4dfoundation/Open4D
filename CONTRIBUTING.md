@@ -43,11 +43,11 @@ The base package supports Python 3.10–3.13. Open3D is tested on 3.10–3.12.
 Optional test tiers are explicit:
 
 ```bash
-python -m pip install -e '.[dev,open3d]'
-python -m pytest -m open3d integrations/open3d/tests
+python -m pip install -e '.[dev,open3d,torch]'
+python -m pytest -m open3d integrations/open3d/tests open4d/torch_ops/tests
 
 python -m pip install -e '.[dev,torch]'
-python -m pytest -m torch open4d/torch_ops/tests
+python -m pytest -m 'torch and not open3d' open4d/torch_ops/tests
 ```
 
 Registered markers are `cpu`, `open3d`, `torch`, `gpu`, `hardware`, and
