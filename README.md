@@ -276,15 +276,19 @@ need no extra dependencies to read — or a single time-sampled USD file. `--inf
 reports frame count, duration, topology and bounds without decoding geometry,
 which is the quickest way to check a dataset loads.
 
-Loading is one call, and frames are decoded on access:
+The public Python loader handles local mesh files and frame folders in one call;
+frames are decoded on access:
 
 ```python
-from frame_sources import open_sequence
+from open4d.io import open_sequence
 
 with open_sequence("path/to/frames", fps=30.0) as sequence:
     print(len(sequence), sequence.duration, sequence.fps)
     mesh = sequence[0].geometry          # TriangleMesh: positions, triangles
 ```
+
+The viewer additionally retains its example-local OpenUSD sequence reader while
+that backend is promoted to the public API.
 
 OpenUSD is the container the example writes. `--pack-usd out.usdc` packs any
 source into one compressed `.usdc` file carrying the frame rate, the key-frame

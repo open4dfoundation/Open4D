@@ -179,7 +179,7 @@ frames.
 | `visualize_sequence.py` | The single-sequence program |
 | `compare_sequences.py` | The comparison program |
 | `frame_sources.py` | Format registry and `open_sequence()` |
-| `formats_mesh.py` | `.obj` and `.ply`, trimesh fallback |
+| `open4d.io._mesh` | `.obj` and `.ply`, trimesh fallback |
 | `formats_usd.py` | USD container read and write |
 | `render_frames.py` | Renderer-neutral frames, up-axis rotation, shading |
 | `viewer_qt.py` | The single-sequence PyQt6 viewer |

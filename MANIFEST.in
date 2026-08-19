@@ -17,6 +17,7 @@ prune .github
 prune tests
 
 recursive-exclude open4d/core/tests *
+recursive-exclude open4d/io/tests *
 recursive-exclude open4d/torch_ops/tests *
 recursive-exclude integrations/open3d/tests *
 global-exclude __pycache__

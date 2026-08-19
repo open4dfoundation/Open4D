@@ -35,9 +35,9 @@ import numpy as np
 # Import first: this puts the repository on sys.path for uninstalled clones.
 import _common  # noqa: F401
 
-import formats_mesh
 import formats_usd
 from open4d import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d.io import _mesh as formats_mesh
 
 FrameReader = Callable[[Path], "tuple[np.ndarray, np.ndarray, np.ndarray | None]"]
 SequenceOpener = Callable[..., Sequence]
