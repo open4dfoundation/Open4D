@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import builtins
 
+import numpy as np
 import pytest
 
-from open4d import TopologyMode
+from open4d import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
 from open4d.io import (
     AmbiguousFormatError,
     DecodeError,
@@ -15,6 +16,7 @@ from open4d.io import (
     available_formats,
     inspect_sequence,
     open_sequence,
+    write_sequence,
 )
 
 pytestmark = pytest.mark.cpu
@@ -239,3 +241,38 @@ def test_available_formats_names_optional_dependencies():
     assert formats["obj"].dependency_extra is None
     assert formats["ply"].dependency_extra is None
     assert formats["off"].dependency_extra == "tools"
+    assert all(info.readable and info.writable for info in formats.values())
+
+
+def test_write_sequence_is_format_independent_and_reopenable(tmp_path):
+    frames = [
+        Frame(index + 7, index / 24, TriangleMesh(
+            np.array([[index, 0, 0], [index + 1, 0, 0], [index, 1, 0]], dtype=np.float32),
+            [[0, 1, 2]],
+        ))
+        for index in range(2)
+    ]
+    source = Sequence(MemoryFrameProvider(frames))
+
+    for format in ("obj", "ply"):
+        output = write_sequence(source, tmp_path / format, format=format)
+        decoded = open_sequence(output, format=format, fps=24)
+        assert len(decoded) == 2
+        for expected, actual in zip(source, decoded, strict=True):
+            np.testing.assert_allclose(actual.geometry.positions, expected.geometry.positions)
+            np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
+
+
+def test_writer_rejects_silent_field_loss_and_cleans_partial_output(tmp_path):
+    source = Sequence(MemoryFrameProvider([Frame(
+        0, 0, TriangleMesh(
+            [[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0]], [[0, 1, 2]],
+            attributes={"label": [1, 2, 3]},
+        ),
+    )]))
+    destination = tmp_path / "frames"
+
+    with pytest.raises(UnsupportedFeatureError, match="label"):
+        write_sequence(source, destination, format="obj")
+
+    assert not destination.exists()

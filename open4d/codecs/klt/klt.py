@@ -201,7 +201,9 @@ def quantize_coeffs(coeffs, eigenvalues, K_total=256, max_iterations=100, tol=1e
     return quantized_indices, bin_centers, fixed_dims
 
 
-def save_quantized_coeffs(quantized_indices, bin_centers, fixed_dims, output_path):
+def save_quantized_coeffs(
+    quantized_indices, bin_centers, fixed_dims, output_path, volume_shape
+):
     """
     Save quantized coefficients and metadata using zstd compression.
 
@@ -214,16 +216,14 @@ def save_quantized_coeffs(quantized_indices, bin_centers, fixed_dims, output_pat
     # Determine minimum integer type for indices
     max_K = max(len(centers) for centers in bin_centers)
     if max_K <= 256:
-        indices_dtype = torch.uint8
+        indices_dtype = np.uint8
     elif max_K <= 65536:
-        indices_dtype = torch.int16
+        indices_dtype = np.uint16
     else:
-        indices_dtype = torch.int32
-
-    quantized_indices = quantized_indices.to(indices_dtype)
+        indices_dtype = np.uint32
 
     # Save indices with zstd compression
-    indices_np = quantized_indices.cpu().numpy()
+    indices_np = quantized_indices.cpu().numpy().astype(indices_dtype)
     with open(f"{output_path}_indices.zst", "wb") as f:
         f.write(zstd.compress(indices_np.tobytes()))
 
@@ -231,8 +231,30 @@ def save_quantized_coeffs(quantized_indices, bin_centers, fixed_dims, output_pat
     metadata = {
         f"bin_centers_{h}": centers.cpu().numpy() for h, centers in enumerate(bin_centers)
     }
-    metadata["fixed_dims"] = np.array(fixed_dims, dtype=object)
+    metadata["fixed_indices"] = np.array(sorted(fixed_dims), dtype=np.int64)
+    metadata["fixed_values"] = np.array(
+        [fixed_dims[index] for index in sorted(fixed_dims)], dtype=np.float32
+    )
+    metadata["indices_shape"] = np.array(indices_np.shape, dtype=np.int64)
+    metadata["indices_dtype"] = np.array(indices_np.dtype.str)
+    metadata["volume_shape"] = np.array(volume_shape, dtype=np.int64)
     np.savez_compressed(f"{output_path}_metadata.npz", **metadata)
+
+
+def load_quantized_coeffs(output_path):
+    metadata = np.load(f"{output_path}_metadata.npz", allow_pickle=False)
+    shape = tuple(int(value) for value in metadata["indices_shape"])
+    dtype = np.dtype(str(metadata["indices_dtype"]))
+    with open(f"{output_path}_indices.zst", "rb") as stream:
+        values = np.frombuffer(zstd.decompress(stream.read()), dtype=dtype).reshape(shape)
+    centers = [
+        torch.from_numpy(metadata[f"bin_centers_{h}"].copy()).to(device)
+        for h in range(shape[1])
+    ]
+    fixed_dims = dict(zip(
+        metadata["fixed_indices"].tolist(), metadata["fixed_values"].tolist()
+    ))
+    return torch.from_numpy(values.astype(np.int64)).to(device), centers, fixed_dims, tuple(metadata["volume_shape"])
 
 
 def decompress_coeffs(quantized_indices, bin_centers, fixed_dims, H):
@@ -314,6 +336,15 @@ def run_compression(args):
     training_tsdfs = [load_tsdf_tensor(tsdf_paths[i]) for i in args.training_frames]
     training_blocks = extract_training_blocks_torch(training_tsdfs, block_size=args.block_size)
     klt_basis, mean_vec = compute_klt_basis_torch(training_blocks)
+    context_path = os.path.join(compressed_folder, "decoder_context.pt")
+    torch.save({
+        "schema": "open4d.klt/v1",
+        "basis": klt_basis[:args.num_components].cpu(),
+        "mean": mean_vec.cpu(),
+        "block_size": args.block_size,
+        "num_components": args.num_components,
+    }, context_path)
+    decoder = torch.load(context_path, map_location=device, weights_only=True)
     del training_tsdfs, training_blocks
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -336,20 +367,30 @@ def run_compression(args):
 
         frame_name = os.path.splitext(os.path.basename(tsdf_path))[0]
         output_coeffs_path = os.path.join(compressed_folder, f"{frame_name}_quantized")
-        save_quantized_coeffs(quantized_indices, bin_centers, fixed_dims, output_coeffs_path)
+        save_quantized_coeffs(
+            quantized_indices, bin_centers, fixed_dims, output_coeffs_path,
+            target_tsdf.shape,
+        )
 
         # Theoretical bits (before entropy coding)
         total_bits += quantized_indices.numel() * np.log2(args.k_total)
 
         # 3) Decode / reconstruct timing
         start_time = time.time()
-        reconstructed = decompress_coeffs(quantized_indices, bin_centers, fixed_dims, H=coeffs.shape[1])
-        recon_blocks = reconstruct_blocks_torch(reconstructed, klt_basis, mean_vec,
-                                                num_components=args.num_components)
+        decoded_indices, decoded_centers, decoded_fixed, volume_shape = (
+            load_quantized_coeffs(output_coeffs_path)
+        )
+        reconstructed = decompress_coeffs(
+            decoded_indices, decoded_centers, decoded_fixed, H=decoded_indices.shape[1]
+        )
+        recon_blocks = reconstruct_blocks_torch(
+            reconstructed, decoder["basis"], decoder["mean"],
+            num_components=decoder["num_components"],
+        )
         recon_vol = reconstruct_volume_from_blocks_torch(
             recon_blocks,
-            volume_shape=(target_tsdf.shape[0], target_tsdf.shape[1], target_tsdf.shape[2]),
-            block_size=args.block_size,
+            volume_shape=volume_shape,
+            block_size=decoder["block_size"],
         )
 
         # 4) Marching cubes and save mesh

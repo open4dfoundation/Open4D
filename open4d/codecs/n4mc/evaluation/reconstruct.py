@@ -46,7 +46,7 @@ def main() -> None:
     for sample in dataset:
         target = sample["tsdf"]
         reconstructed = reconstruct_volume(model, target, config, device)
-        prediction = reconstructed["reconstruction"]
+        encoder_prediction = reconstructed["reconstruction"]
         total_bits = float(reconstructed["rate_bits"])
         quantized_latent = reconstructed["quantized_latent"]
         latent = reconstructed["latent"]
@@ -55,16 +55,28 @@ def main() -> None:
         bottleneck_shape = reconstructed["bottleneck_shape"]
         frame_id = sample["frame_id"]
 
-        np.savez_compressed(output_dir / f"{frame_id}.npz", sdf=prediction.numpy())
         np.save(output_dir / f"{frame_id}_quantized_latent.npy", quantized_latent.numpy())
+        latent_pack = output_dir / f"{frame_id}_latent_pack.npz"
         np.savez_compressed(
-            output_dir / f"{frame_id}_latent_pack.npz",
+            latent_pack,
             latent=latent.numpy(),
             quantized_latent=quantized_latent.numpy(),
             original_shape=original_shape.numpy(),
             padded_shape=padded_shape.numpy(),
             bottleneck_shape=bottleneck_shape.numpy(),
         )
+        saved = np.load(latent_pack, allow_pickle=False)
+        with torch.inference_mode():
+            prediction = model.decode_quantized_latent(
+                torch.from_numpy(saved["quantized_latent"]).unsqueeze(0).to(device),
+                saved["bottleneck_shape"], saved["original_shape"],
+            )[0].float().cpu()
+        reload_error = float((prediction - encoder_prediction).abs().max())
+        if reload_error > 1e-6:
+            raise RuntimeError(
+                f"saved latent changed {frame_id} reconstruction by {reload_error}"
+            )
+        np.savez_compressed(output_dir / f"{frame_id}.npz", sdf=prediction.numpy())
 
         pred_mesh = reconstruct_mesh_from_tsdf(prediction)
         gt_mesh = reconstruct_mesh_from_tsdf(target)
@@ -76,6 +88,7 @@ def main() -> None:
             num_surface_samples=int(config.get("evaluation", {}).get("mesh_num_samples", 2048)),
         )
         metrics["bits_per_volume"] = float(total_bits)
+        metrics["decoder_reload_max_abs_difference"] = reload_error
         summary[frame_id] = metrics
 
     save_json(summary, output_dir / "summary.json")

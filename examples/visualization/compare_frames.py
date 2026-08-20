@@ -31,8 +31,8 @@ import _common  # noqa: F401
 
 import colormaps
 import mesh_metrics
-import render_frames
-from render_frames import RenderFrame
+from open4d.visualization import _frames as render_frames
+from open4d.visualization._frames import RenderFrame
 
 # Fraction of all measured distances kept below the top of the colour scale. The
 # largest distance in a sequence is usually one stray vertex, and scaling to it

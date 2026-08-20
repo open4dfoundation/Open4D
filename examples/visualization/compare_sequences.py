@@ -35,7 +35,7 @@ from pathlib import Path
 from _common import existing_source
 import compare_frames
 from frame_sources import DEFAULT_FPS, describe_source, open_sequence, supported_formats
-from render_frames import UP_AXES, UP_TO_Z
+from open4d.visualization._frames import UP_AXES, UP_TO_Z
 
 CSV_COLUMNS = (
     "frame",

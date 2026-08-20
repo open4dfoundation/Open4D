@@ -379,3 +379,34 @@ def read_with_trimesh(
         if not valid_shape:
             raise ValueError(f"{path} has invalid Trimesh vertex colors {colors.shape}")
     return positions, triangles, colors
+
+
+def write_with_trimesh(
+    path: Path,
+    positions: np.ndarray,
+    triangles: np.ndarray,
+    colors: np.ndarray | None = None,
+) -> Path:
+    """Write one frame through the optional trimesh exporter."""
+    try:
+        import trimesh
+    except ImportError:
+        raise ModuleNotFoundError(
+            f"Writing {path.suffix} frames needs trimesh. Install it with: "
+            "python -m pip install 'open4d[tools]'"
+        ) from None
+    kwargs = {}
+    if colors is not None:
+        kwargs["vertex_colors"] = np.rint(np.clip(colors, 0, 1) * 255).astype(np.uint8)
+    mesh = trimesh.Trimesh(
+        vertices=positions, faces=triangles, process=False, **kwargs
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() == ".gltf":
+        payload = trimesh.exchange.gltf.export_gltf(
+            mesh.scene(), embed_buffers=True
+        )["model.gltf"]
+        path.write_bytes(payload)
+    else:
+        mesh.export(path)
+    return path

@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 import open4d.io
-from open4d.io import inspect_sequence, open_sequence
+from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
+from open4d.io import inspect_sequence, open_sequence, write_sequence
 
 pytestmark = pytest.mark.cpu
 
@@ -172,3 +173,43 @@ def test_real_trimesh_glb_and_big_endian_ply_paths(tmp_path):
 
     assert len(big_endian.positions) == 3
     np.testing.assert_array_equal(big_endian.triangles, [[0, 1, 2]])
+
+
+@pytest.mark.slow
+def test_every_supported_mesh_input_converts_to_every_output(tmp_path):
+    pytest.importorskip("trimesh")
+    positions = np.array(
+        [[0.0, 0, 0], [1.25, 0, 0], [0, 2.5, 0], [0, 0, 3.75]],
+        dtype=np.float32,
+    )
+    triangles = np.array(
+        [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=np.uint32
+    )
+    canonical = Sequence(MemoryFrameProvider([
+        Frame(0, 0, TriangleMesh(positions, triangles))
+    ]))
+    formats = tuple(info.id for info in open4d.io.available_formats())
+
+    def signature(sequence):
+        mesh = sequence[0].geometry
+        vertices = mesh.positions.astype(np.float64)
+        a, b, c = vertices[mesh.triangles].transpose(1, 0, 2)
+        return (
+            vertices.min(0), vertices.max(0),
+            np.linalg.norm(np.cross(b - a, c - a), axis=1).sum() / 2,
+        )
+
+    expected = signature(canonical)
+    for input_format in formats:
+        input_path = write_sequence(
+            canonical, tmp_path / f"input.{input_format}"
+        )
+        loaded = open_sequence(input_path)
+        for output_format in formats:
+            output_path = write_sequence(
+                loaded, tmp_path / f"{input_format}-to-{output_format}.{output_format}"
+            )
+            actual = signature(open_sequence(output_path))
+            np.testing.assert_allclose(actual[0], expected[0], atol=1e-5)
+            np.testing.assert_allclose(actual[1], expected[1], atol=1e-5)
+            assert actual[2] == pytest.approx(expected[2], rel=1e-5)

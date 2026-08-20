@@ -87,7 +87,26 @@ jobs:
       - name: Exercise built-in and Trimesh-backed files
         run: python -m pytest open4d/io/tests
       - name: Validate benchmark paths
-        run: python scripts/benchmark_io.py --side 24 --frames 20 --repeats 2 --json
+        run: |
+          python scripts/benchmark_io.py --side 24 --frames 20 --repeats 2 --json
+          python scripts/benchmark_codec.py --side 24 --frames 5 --json
+
+  visualization:
+    name: Visualization / optional dependency boundary
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install player tier
+        run: python -m pip install -e '.[dev,player]'
+      - name: Test public visualizer and dependency imports
+        run: |
+          python -c "import PyQt6, pyqtgraph, OpenGL, PIL, open4d.visualization"
+          python -m pytest open4d/visualization/tests examples/visualization/tests
 
   package:
     name: Exact distribution boundary
@@ -128,7 +147,8 @@ jobs:
       - name: Compile supported Python sources
         run: >-
           python -m compileall -q
-          open4d/__init__.py open4d/core open4d/io open4d/torch_ops
+          open4d/__init__.py open4d/codec open4d/core open4d/io
+          open4d/torch_ops open4d/visualization
           integrations/__init__.py integrations/open3d
           examples/visualization scripts
       - name: Check shell syntax

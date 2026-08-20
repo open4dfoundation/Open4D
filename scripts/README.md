@@ -7,6 +7,10 @@ run from anywhere inside the checkout and resolve the repository root.
   API. Run it in an environment where Open4D is installed, or use
   `PYTHONPATH=. python scripts/benchmark_io.py --json` from the checkout root.
   With the `[tools]` extra it also measures OFF, STL, GLB, and glTF decoding.
+- `benchmark_codec.py` measures a complete in-process encode, lazy decoder open,
+  and validated full decode. Pass `--source 4d_files/Rafa_Approves_hd_4k` to
+  benchmark real OBJ frames instead of its generated moving grid. Compare the
+  five reference codecs with `--codecs raw,deflate,bzip2,lzma,rle`.
 - `smoke_installed_io.py` is the package CI smoke test. It deliberately imports
   an installed wheel and loads a real OBJ from outside the checkout.
 

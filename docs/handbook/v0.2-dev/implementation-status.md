@@ -12,7 +12,7 @@ flowchart TB
     Handbook["v0.2-dev handbook<br/>LOCAL DRAFT"]
     P0["Packaging / CI / governance<br/>VERIFIED-PARTIAL"]
     Core["Core model<br/>VERIFIED-PARTIAL"]
-    Examples["Example loaders / metrics / viewers<br/>VERIFIED-PARTIAL"]
+    Examples["Public I/O / reference codec / viewer<br/>VERIFIED-PARTIAL"]
     Apps["End-to-end applications<br/>SCAFFOLD"]
     Research["Independent research pipelines<br/>WORKING-ISOLATED"]
 
@@ -27,7 +27,7 @@ flowchart TB
 | Work item | Current state | Next evidence required |
 | --- | --- | --- |
 | Versioned handbook | Source and root README link prepared; Wiki export committed locally with validated links | Initialize the enabled GitHub Wiki, push the prepared export, review, and merge this branch |
-| Explicit lightweight package allowlist | Implemented for exactly five packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
+| Explicit lightweight package allowlist | Implemented for exactly seven packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
 | Exact distribution assertion | Wheel and source archive inventories pass locally | Confirm the packaging job on Blacksmith for this pull request |
 | Third-party/provenance ledger | Root ledger covers the high-risk research, data, model, binary, paper, and submodule areas | Resolve each entry with immutable provenance and reviewed distribution terms |
 | License/distribution gate | Supported release workflow fails while `BLOCK` entries remain | Resolve TVMC, QNDF, copied-upstream, binary, dataset, checkpoint, and paper scope |
@@ -39,8 +39,9 @@ flowchart TB
 
 - NumPy-backed `TriangleMesh`, `Frame`, finite lazy `Sequence`, and their
   existing tested behaviors.
-- Example sequence loaders, comparison tools, viewers, and Open3D conversion
-  within the scopes recorded in the component register.
+- Public mesh sequence loading, a lossless modular reference codec, the Qt
+  sequence viewer, example comparison tools, and Open3D conversion within the
+  scopes recorded in the component register.
 - Independent codec and reconstruction research trees, without a common
   Open4D adapter or complete end-to-end application.
 - Checksum-based artifact-fetching policy and the component-specific mechanics
@@ -48,7 +49,13 @@ flowchart TB
 
 ## Local verification snapshot
 
-- Python 3.11, 3.12, and 3.13: 154 default tests pass on macOS.
+- Python 3.13: 218 runnable tests pass on macOS; three optional tests skip and
+  the pre-existing empty-integer-attribute failure is deselected after baseline
+  reproduction.
+- Python 3.12 on the Ubuntu SSH host: 83 codec, visualization, and example tests
+  pass; the dataset/display-gated integrations skip explicitly.
+- The macOS player environment passes 81 tests, including a native OpenGL
+  load -> encode -> fresh decode -> two-frame GIF render of the Rafa sequence.
 - Python 3.10: 78 core tests pass; the full local visualization tier is blocked
   by a SciPy macOS binary that the current linker rejects. The Linux
   Blacksmith matrix is the authoritative remaining 3.10 check.
@@ -60,10 +67,12 @@ flowchart TB
 
 ## Not currently implemented
 
-The working tree contains the first mesh-loading slice of `open4d.io`. It does
-**not** contain `open4d.metrics`, the schema-v1 USD API, complete Draco reference
-application, TVMC shared adapter, RGB-D finite replay adapter, or live-stream
-contract implementation. These are roadmap items, not current capabilities.
+The working tree contains the first mesh-loading slice of `open4d.io`, a
+NumPy/ZIP reference codec, and the public Qt visualizer. It does **not** contain
+`open4d.metrics`, research-codec adapters, the schema-v1 USD API, complete Draco
+reference application, TVMC shared adapter, RGB-D finite replay adapter, or
+live-stream contract implementation. These are roadmap items, not current
+capabilities.
 
 Blacksmith is an automation surface, not evidence by itself. Its pull-request
 results must still prove the tests, packaging boundary, provenance containment,

@@ -6,10 +6,12 @@ from ._api import (
     available_formats,
     inspect_sequence,
     open_sequence,
+    write_sequence,
 )
 from ._errors import (
     AmbiguousFormatError,
     DecodeError,
+    EncodeError,
     MissingDependencyError,
     Open4DError,
     SequenceIOError,
@@ -21,6 +23,7 @@ from ._errors import (
 __all__ = [
     "AmbiguousFormatError",
     "DecodeError",
+    "EncodeError",
     "FormatInfo",
     "MissingDependencyError",
     "Open4DError",
@@ -32,4 +35,5 @@ __all__ = [
     "available_formats",
     "inspect_sequence",
     "open_sequence",
+    "write_sequence",
 ]

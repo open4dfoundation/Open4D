@@ -29,5 +29,9 @@ class DecodeError(SequenceIOError):
     """A source was recognized but one of its frames could not be decoded."""
 
 
+class EncodeError(SequenceIOError):
+    """A sequence frame could not be written."""
+
+
 class UnsupportedFeatureError(SequenceIOError):
     """The source is valid but requests an unsupported I/O feature."""
