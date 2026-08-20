@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 from importlib import import_module
 import json
+import os
 from pathlib import Path
 import shutil
 from types import MappingProxyType, SimpleNamespace
@@ -83,6 +85,7 @@ class KLTCodec:
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
         resolution: int = 63, num_components: int = 64, block_size: int = 8,
         k_total: int = 16384, training_frames=(0,), frame_rate: float = 30,
+        verbose: bool = False,
     ) -> Path:
         destination = Path(destination).absolute()
         if destination.exists() and not overwrite:
@@ -107,12 +110,17 @@ class KLTCodec:
             manifest["normalization"] = write_tsdf_sequence(
                 sequence, work / "tsdf", resolution=resolution
             )
-            backend.run_compression(SimpleNamespace(
+            arguments = SimpleNamespace(
                 input_path=str(work / "tsdf"), output_path=str(work / "encoded"),
                 num_components=num_components, block_size=block_size,
                 voxel_grid_res=resolution, k_total=k_total, fps=frame_rate,
                 num_frames=len(sequence), training_frames=list(training_frames),
-            ), verify_decode=False)
+            )
+            if verbose:
+                backend.run_compression(arguments, verify_decode=False)
+            else:
+                with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
+                    backend.run_compression(arguments, verify_decode=False)
             with tempfile.NamedTemporaryFile(
                 prefix=f".{destination.name}.", suffix=".tmp",
                 dir=destination.parent, delete=False,

@@ -243,6 +243,8 @@ python -m pip install -e ".[player]" # the example viewer (PyQt6 + pyqtgraph)
 python -m pip install -e ".[usd]"    # OpenUSD containers
 python -m pip install -e ".[tools]"  # trimesh, for extra mesh formats
 python -m pip install -e ".[open3d]" # Open3D adapter; Python 3.12 or older
+python -m pip install -e ".[qndf]"  # QNDF/QNDF-INT8 in-process adapters
+python -m pip install -e ".[temporal]" # TVMC/TSMC in-process adapters
 python -m pip install -e ".[all]"
 ```
 
@@ -275,9 +277,11 @@ visualize(decoded, up="y")
 Five lossless, in-process reference codecs are included: `raw`, `deflate`,
 `bzip2`, `lzma`, and byte-level `rle` (`npz` remains the default DEFLATE alias).
 They share a safe NumPy-array container so they compare storage strategies, not
-research geometry models. Callers can register another `open4d.codec.Codec`;
-the research codecs remain separate until they provide complete decoder
-artifacts. For an executable five-codec comparison using
+research geometry models. In-process research adapters are also registered for
+`klt`, `n4mc`, `qndf`, `qndf-int8`, `tvmc`, and `tsmc`; each writes a
+self-contained artifact that decodes without encoder-side state or shell
+scripts. Callers can also register another `open4d.codec.Codec`. For an
+executable reference-codec comparison using
 `4d_files/Rafa_Approves_hd_4k`, open
 [`examples/open4d_sequence_codec.ipynb`](examples/open4d_sequence_codec.ipynb).
 

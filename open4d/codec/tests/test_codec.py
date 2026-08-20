@@ -158,7 +158,38 @@ def test_all_reference_codec_ids_are_public():
     assert infos["npz"].lossless is True
     assert "attributes" in infos["npz"].preserves
     assert infos["draco"].backend == "python-binding"
-    assert infos["klt"].backend == infos["n4mc"].backend == "python-in-process"
+    research = {"klt", "n4mc", "qndf", "qndf-int8", "tvmc", "tsmc"}
+    assert all(infos[codec].backend == "python-in-process" for codec in research)
+
+
+@pytest.mark.parametrize("codec,suffix", (("tvmc", ".tv4d"), ("tsmc", ".ts4d")))
+def test_temporal_codecs_fresh_decode_without_processes(tmp_path, codec, suffix):
+    frames = [Frame(
+        20 + index, index / 30,
+        TriangleMesh(
+            [[index * .25, 0, 0], [1 + index * .1, 0, 0], [0, 1, index * .05]],
+            [[0, 1, 2]],
+        ), {"take": "moving"},
+    ) for index in range(2)]
+    source = Sequence(MemoryFrameProvider(
+        frames, metadata={"fps": 30}, topology=TopologyMode.FIXED,
+        has_constant_vertex_count=True, has_vertex_correspondence=True,
+    ))
+    artifact = encode_sequence(
+        source, tmp_path / f"take{suffix}", codec=codec,
+        quantization_bits=16, components=3,
+    )
+    first = decode_sequence(artifact, device="cpu")
+    second = decode_sequence(artifact, device="cpu")
+
+    assert first.metadata == source.metadata
+    assert first.topology is TopologyMode.FIXED
+    for expected, left, right in zip(source, first, second, strict=True):
+        assert left.frame_index == expected.frame_index
+        assert left.metadata == expected.metadata
+        np.testing.assert_array_equal(left.geometry.positions, right.geometry.positions)
+        np.testing.assert_array_equal(left.geometry.triangles, right.geometry.triangles)
+        np.testing.assert_allclose(left.geometry.positions, expected.geometry.positions, atol=2e-5)
 
 
 def test_encode_accepts_a_supported_path_without_codec_specific_io(tmp_path):

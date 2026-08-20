@@ -47,19 +47,27 @@ def measured(function):
         tracemalloc.stop()
 
 
-def run(source: Sequence, output: Path, codec: str = "npz") -> dict[str, str | float | int]:
+def run(
+    source: Sequence, output: Path, codec: str = "npz", *,
+    encode_options: dict | None = None, decode_options: dict | None = None,
+) -> dict[str, str | float | int]:
     # Keep reference parsing outside every measurement. Encode still consumes
     # the supplied Sequence normally; decode timing reads only the artifact.
     expected_frames = tuple(source)
     info = next(item for item in available_codecs() if item.id == codec)
     artifact, encode_s, encode_peak = measured(
-        lambda: encode_sequence(source, output, codec=codec, overwrite=True)
+        lambda: encode_sequence(
+            source, output, codec=codec, overwrite=True, **(encode_options or {})
+        )
     )
-    decoded, open_s, open_peak = measured(lambda: decode_sequence(artifact))
+    decoded, open_s, open_peak = measured(
+        lambda: decode_sequence(artifact, **(decode_options or {}))
+    )
     assert decoded.metadata == source.metadata
-    assert decoded.topology is source.topology
-    assert decoded.has_constant_vertex_count == source.has_constant_vertex_count
-    assert decoded.has_vertex_correspondence == source.has_vertex_correspondence
+    if info.lossless:
+        assert decoded.topology is source.topology
+        assert decoded.has_constant_vertex_count == source.has_constant_vertex_count
+        assert decoded.has_vertex_correspondence == source.has_vertex_correspondence
 
     def decode_and_validate(sequence):
         vertices = triangles = 0
@@ -122,6 +130,10 @@ def main() -> None:
         help="comma-separated codec ids (for example raw,deflate,bzip2,lzma,rle)",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--options", type=Path,
+        help="JSON mapping codec ids to encode/decode option objects",
+    )
     args = parser.parse_args()
     if args.frames < 1 or args.side < 2:
         parser.error("frames must be positive and side must be at least 2")
@@ -143,9 +155,14 @@ def main() -> None:
     if not codecs:
         parser.error("--codecs must name at least one codec")
     suffixes = {info.id: info.suffixes[0] for info in available_codecs()}
+    profiles = json.loads(args.options.read_text()) if args.options else {}
     with tempfile.TemporaryDirectory(prefix="open4d-codec-bench-") as directory:
         results = [
-            run(sequence, Path(directory) / f"sequence-{codec}{suffixes[codec]}", codec)
+            run(
+                sequence, Path(directory) / f"sequence-{codec}{suffixes[codec]}", codec,
+                encode_options=profiles.get(codec, {}).get("encode"),
+                decode_options=profiles.get(codec, {}).get("decode"),
+            )
             for codec in codecs
         ]
     report = {"source_load_s": load_s, "source_load_peak_bytes": load_peak,
