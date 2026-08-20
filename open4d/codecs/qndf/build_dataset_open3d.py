@@ -107,42 +107,33 @@ def combine(meshes: list[o3d.geometry.TriangleMesh]) -> o3d.geometry.TriangleMes
     return result
 
 
-def build(mesh_name: str, coarse_size: int, num_subdiv: int, root: Path) -> dict:
-    source_path = root / "objs_original" / f"{mesh_name}.obj"
-    # Open3D's OBJ reader welds coincident positions. Load without processing in
-    # trimesh and then convert so component boundaries encoded by distinct OBJ
-    # vertex indices survive.
-    loaded = trimesh.load(source_path, force="mesh", process=False)
+def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
+    """Create QNDF's coarse/subdivided input and projected training target."""
     source = o3d.geometry.TriangleMesh()
-    source.vertices = o3d.utility.Vector3dVector(np.asarray(loaded.vertices))
-    source.triangles = o3d.utility.Vector3iVector(np.asarray(loaded.faces))
+    source.vertices = o3d.utility.Vector3dVector(np.asarray(vertices))
+    source.triangles = o3d.utility.Vector3iVector(np.asarray(triangles))
     source = clean_mesh(source)
     if not len(source.triangles):
-        raise ValueError(f"{source_path} contains no usable triangles")
-
+        raise ValueError("mesh contains no usable triangles")
     vertices = np.asarray(source.vertices)
     bbox_min = vertices.min(axis=0)
     scale = float((vertices - bbox_min).max())
     if not np.isfinite(scale) or scale <= 0:
-        raise ValueError(f"{source_path} has invalid bounds")
+        raise ValueError("mesh has invalid bounds")
     source.vertices = o3d.utility.Vector3dVector((vertices - bbox_min) / scale)
 
     components = split_components(source)
     face_counts = np.asarray([len(component.triangles) for component in components])
     budgets = allocate_face_budget(face_counts, coarse_size)
-    inputs: list[o3d.geometry.TriangleMesh] = []
-    targets: list[o3d.geometry.TriangleMesh] = []
-    component_metadata: list[dict] = []
-
+    inputs, targets, details = [], [], []
     for index, (original, budget) in enumerate(zip(components, budgets)):
-        if budget < len(original.triangles):
-            coarse = original.simplify_quadric_decimation(int(budget))
-            coarse = clean_mesh(coarse)
-        else:
-            coarse = o3d.geometry.TriangleMesh(original)
+        coarse = (
+            original.simplify_quadric_decimation(int(budget))
+            if budget < len(original.triangles) else o3d.geometry.TriangleMesh(original)
+        )
+        coarse = clean_mesh(coarse)
         if not len(coarse.triangles):
             raise RuntimeError(f"component {index} vanished during simplification")
-
         subdivided = o3d.geometry.TriangleMesh(coarse)
         for _ in range(num_subdiv):
             subdivided = subdivided.subdivide_midpoint(number_of_iterations=1)
@@ -152,20 +143,41 @@ def build(mesh_name: str, coarse_size: int, num_subdiv: int, root: Path) -> dict
         )
         inputs.append(subdivided)
         targets.append(projected)
-        component_metadata.append(
-            {
-                "index": index,
-                "original_vertices": len(original.vertices),
-                "original_faces": len(original.triangles),
-                "allocated_coarse_faces": int(budget),
-                "actual_coarse_vertices": len(coarse.vertices),
-                "actual_coarse_faces": len(coarse.triangles),
-                "training_vertices": len(subdivided.vertices),
-                "training_faces": len(subdivided.triangles),
-            }
-        )
+        details.append({
+            "index": index, "original_vertices": len(original.vertices),
+            "original_faces": len(original.triangles),
+            "allocated_coarse_faces": int(budget),
+            "actual_coarse_vertices": len(coarse.vertices),
+            "actual_coarse_faces": len(coarse.triangles),
+            "training_vertices": len(subdivided.vertices),
+            "training_faces": len(subdivided.triangles),
+        })
+    low, target = combine(inputs), combine(targets)
+    metadata = {
+        "bbox_min": bbox_min.tolist(), "scale": scale,
+        "component_count": len(components), "coarse_face_budget": coarse_size,
+        "num_subdiv": num_subdiv, "components": details,
+    }
+    return (
+        np.asarray(low.vertices), np.asarray(low.triangles),
+        np.asarray(target.vertices), metadata,
+    )
 
-    input_mesh, target_mesh = combine(inputs), combine(targets)
+
+def build(mesh_name: str, coarse_size: int, num_subdiv: int, root: Path) -> dict:
+    source_path = root / "objs_original" / f"{mesh_name}.obj"
+    # Open3D's OBJ reader welds coincident positions. Load without processing in
+    # trimesh and then convert so component boundaries encoded by distinct OBJ
+    # vertex indices survive.
+    loaded = trimesh.load(source_path, force="mesh", process=False)
+    low, faces, target, metadata = build_pair(
+        np.asarray(loaded.vertices), np.asarray(loaded.faces), coarse_size, num_subdiv
+    )
+    input_mesh = o3d.geometry.TriangleMesh()
+    input_mesh.vertices = o3d.utility.Vector3dVector(low)
+    input_mesh.triangles = o3d.utility.Vector3iVector(faces)
+    target_mesh = o3d.geometry.TriangleMesh(input_mesh)
+    target_mesh.vertices = o3d.utility.Vector3dVector(target)
     experiment = root / "experiments" / mesh_name
     experiment.mkdir(parents=True, exist_ok=True)
     stem = f"f{coarse_size}_s{num_subdiv}"
@@ -177,17 +189,8 @@ def build(mesh_name: str, coarse_size: int, num_subdiv: int, root: Path) -> dict
     if not o3d.io.write_triangle_mesh(str(output_path), target_mesh, write_vertex_normals=False):
         raise OSError(f"failed to write {output_path}")
 
-    metadata = {
-        "source": str(source_path),
-        "bbox_min": bbox_min.tolist(),
-        "scale": scale,
-        "component_count": len(components),
-        "coarse_face_budget": coarse_size,
-        "num_subdiv": num_subdiv,
-        "training_vertices": len(input_mesh.vertices),
-        "training_faces": len(input_mesh.triangles),
-        "components": component_metadata,
-    }
+    metadata |= {"source": str(source_path), "training_vertices": len(low),
+                 "training_faces": len(faces)}
     transform_path.write_text(json.dumps(metadata, indent=2) + "\n")
     return metadata
 

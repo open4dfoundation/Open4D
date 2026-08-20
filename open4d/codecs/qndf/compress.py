@@ -48,11 +48,12 @@ class MLP(nn.Module):
         return out
 
 class MeshDataset(Dataset):
-    def __init__(self, pe_verts, verts, faces, gt_verts):
+    def __init__(self, pe_verts, verts, faces, gt_verts, progress=True):
         self.pv = pe_verts
         self.v = verts
         self.f = faces
         self.gv = gt_verts
+        self.progress = progress
         self.preproc()
     def preproc(self):
         ln = self.pv.size(0)
@@ -62,7 +63,7 @@ class MeshDataset(Dataset):
         for face in self.f.detach().cpu().tolist():
             for vertex in face:
                 adjacency[vertex].update(face)
-        for idx in tqdm(range(ln)):
+        for idx in tqdm(range(ln), disable=not self.progress):
             n_verts = torch.tensor(
                 sorted(adjacency[idx] - {idx}), device=self.f.device, dtype=torch.long
             )

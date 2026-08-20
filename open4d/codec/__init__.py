@@ -12,6 +12,8 @@ from ._klt import KLTCodec
 from ._n4mc import N4MCCodec
 from ._npz import NumPyZipCodec
 from ._protocol import Codec, CodecError
+from ._qndf import QNDFCodec
+from ._temporal import TemporalMeshCodec
 from ._vmesh import VMeshCodec
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "KLTCodec",
     "N4MCCodec",
     "NumPyZipCodec",
+    "QNDFCodec",
+    "TemporalMeshCodec",
     "VMeshCodec",
     "available_codecs",
     "decode_sequence",

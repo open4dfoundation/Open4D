@@ -22,7 +22,10 @@ from open4d.torch_ops import load_obj, save_obj
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from mesh_errors import normal_error, point2mesh_error
+try:
+    from .mesh_errors import normal_error, point2mesh_error
+except ImportError:  # Direct script execution.
+    from mesh_errors import normal_error, point2mesh_error
 
 
 class PE(nn.Module):

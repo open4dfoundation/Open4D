@@ -13,6 +13,8 @@ from ._klt import KLT_CODEC
 from ._n4mc import N4MC_CODEC
 from ._npz import REFERENCE_CODECS
 from ._protocol import Codec, CodecError
+from ._qndf import QNDF_CODEC, QNDF_INT8_CODEC
+from ._temporal import TSMC_CODEC, TVMC_CODEC
 from ._vmesh import FASTER_VDMC_CODEC, VDMC_CODEC
 
 
@@ -29,6 +31,7 @@ _CODECS: dict[str, Codec] = {
     codec.id: codec
     for codec in (
         *REFERENCE_CODECS, DRACO_CODEC, KLT_CODEC, N4MC_CODEC,
+        QNDF_CODEC, QNDF_INT8_CODEC, TVMC_CODEC, TSMC_CODEC,
         VDMC_CODEC, FASTER_VDMC_CODEC,
     )
 }
