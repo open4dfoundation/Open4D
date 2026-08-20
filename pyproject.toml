@@ -19,6 +19,7 @@ dependencies = ["numpy"]
 [project.optional-dependencies]
 tools  = ["trimesh"]
 player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
+draco  = ["DracoPy>=2,<3"]
 # 0.19 is the floor, not 0.17: 0.18 publishes no cp312 wheel, and resolving to it
 # is what held the codecs on older Pythons. It is also the last version with no
 # cp313 wheel at all, so this extra is 3.12-and-below in practice.
@@ -32,9 +33,11 @@ all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19", "pillow>=
 include-package-data = false
 packages = [
     "open4d",
+    "open4d.codec",
     "open4d.core",
     "open4d.io",
     "open4d.torch_ops",
+    "open4d.visualization",
     "integrations",
     "integrations.open3d",
 ]
@@ -43,8 +46,10 @@ packages = [
 addopts = "-ra --strict-config --strict-markers"
 testpaths = [
     "open4d/core/tests",
+    "open4d/codec/tests",
     "open4d/io/tests",
     "open4d/torch_ops/tests",
+    "open4d/visualization/tests",
     "examples/visualization/tests",
     "scripts/tests",
 ]
@@ -55,4 +60,5 @@ markers = [
     "gpu: tests requiring a supported GPU stack",
     "hardware: tests requiring cameras, XR devices, or other hardware",
     "slow: tests excluded from quick feedback loops",
+    "player: tests requiring the optional Qt/OpenGL player and a display",
 ]

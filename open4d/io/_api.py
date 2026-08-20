@@ -9,6 +9,8 @@ import operator
 import os
 from pathlib import Path
 import re
+import shutil
+import tempfile
 from types import MappingProxyType
 from typing import Callable, Mapping
 
@@ -20,7 +22,9 @@ from . import _mesh
 from ._errors import (
     AmbiguousFormatError,
     DecodeError,
+    EncodeError,
     MissingDependencyError,
+    SequenceIOError,
     SourceNotFoundError,
     UnsupportedFeatureError,
     UnsupportedFormatError,
@@ -39,6 +43,14 @@ _FORMAT_DEPENDENCIES = {
     suffix: (None if suffix in _mesh.BUILTIN_SUFFIXES else "tools")
     for suffix in _FRAME_READERS
 }
+_OUTPUT_FIELDS = {
+    ".obj": frozenset(("positions", "triangles")),
+    ".ply": frozenset(("positions", "triangles", "colors")),
+    ".off": frozenset(("positions", "triangles", "colors")),
+    ".stl": frozenset(("positions", "triangles")),
+    ".glb": frozenset(("positions", "triangles", "colors")),
+    ".gltf": frozenset(("positions", "triangles", "colors")),
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +60,8 @@ class FormatInfo:
     id: str
     suffixes: tuple[str, ...]
     dependency_extra: str | None = None
+    readable: bool = True
+    writable: bool = True
 
 
 @dataclass(frozen=True)
@@ -295,3 +309,85 @@ def open_sequence(
     if fps is not None:
         _fps(fps)  # Validate consistently even though one static frame has no rate.
     return Sequence(_SingleFrameProvider(path, suffix))
+
+
+def _write_frame(path: Path, frame: Frame, suffix: str) -> Path:
+    mesh = frame.geometry
+    present = {"positions", "triangles"}
+    present.update(
+        name for name in ("colors", "normals", "texture_coordinates")
+        if getattr(mesh, name) is not None
+    )
+    present.update(mesh.attributes)
+    unsupported = sorted(present - _OUTPUT_FIELDS[suffix])
+    if unsupported:
+        raise UnsupportedFeatureError(
+            f"{suffix} cannot preserve: {', '.join(unsupported)}"
+        )
+    try:
+        if suffix == ".obj":
+            return _mesh.write_obj(path, mesh.positions, mesh.triangles)
+        if suffix == ".ply":
+            colors = None
+            if mesh.colors is not None:
+                colors = np.rint(np.clip(mesh.colors[:, :3], 0, 1) * 255).astype(np.uint8)
+            return _mesh.write_ply(path, mesh.positions, mesh.triangles, colors)
+        return _mesh.write_with_trimesh(
+            path, mesh.positions, mesh.triangles, mesh.colors
+        )
+    except ImportError as error:
+        raise MissingDependencyError(str(error)) from error
+    except SequenceIOError:
+        raise
+    except Exception as error:
+        raise EncodeError(
+            f"Could not encode {path}: {type(error).__name__}: {error}"
+        ) from error
+
+
+def write_sequence(
+    sequence: Sequence,
+    destination: str | os.PathLike[str],
+    *,
+    format: str | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """Write a decoded sequence independently of the codec that produced it."""
+    if not isinstance(sequence, Sequence):
+        raise TypeError("sequence must be an open4d.Sequence")
+    destination = Path(destination).absolute()
+    suffix = _suffix_for(format)
+    file_output = destination.suffix.lower() in _FRAME_READERS
+    if suffix is None:
+        suffix = destination.suffix.lower() if file_output else ".ply"
+    if file_output and destination.suffix.lower() != suffix:
+        raise UnsupportedFormatError(
+            f"destination suffix {destination.suffix!r} does not match format {suffix!r}"
+        )
+    if file_output and len(sequence) != 1:
+        raise UnsupportedFeatureError(
+            "a multi-frame sequence needs a destination directory"
+        )
+    if destination.exists() and not overwrite:
+        raise FileExistsError(f"destination already exists: {destination}")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
+    try:
+        if file_output:
+            generated = temporary / destination.name
+            _write_frame(generated, sequence[0], suffix)
+            if destination.exists():
+                destination.unlink()
+            shutil.move(generated, destination)
+        else:
+            for ordinal, frame in enumerate(sequence):
+                _write_frame(temporary / f"frame_{ordinal:06d}{suffix}", frame, suffix)
+            if destination.exists():
+                shutil.rmtree(destination)
+            temporary.replace(destination)
+            temporary = None
+    finally:
+        if temporary is not None:
+            shutil.rmtree(temporary, ignore_errors=True)
+    return destination

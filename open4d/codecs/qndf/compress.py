@@ -58,10 +58,14 @@ class MeshDataset(Dataset):
         ln = self.pv.size(0)
         self.edge_wts = []
         self.neighbors = []
+        adjacency = [set() for _ in range(ln)]
+        for face in self.f.detach().cpu().tolist():
+            for vertex in face:
+                adjacency[vertex].update(face)
         for idx in tqdm(range(ln)):
-            fnum, _ = torch.nonzero(self.f==idx, as_tuple=True)
-            n_verts = torch.unique(self.f[fnum,:])
-            n_verts = n_verts[n_verts!=idx]
+            n_verts = torch.tensor(
+                sorted(adjacency[idx] - {idx}), device=self.f.device, dtype=torch.long
+            )
             npv = self.pv[n_verts]
             edges = self.v[n_verts] - self.v[idx]
             edge_weights = F.softmax((edges**2).sum(dim=1)**0.5, dim=0)
@@ -116,6 +120,7 @@ if __name__=="__main__":
     from dahuffman import HuffmanCodec
     import numpy as np
     import os
+    import json
 
     args = parse_args()
     device = args.device
@@ -140,6 +145,11 @@ if __name__=="__main__":
     mn,_ = ov.min(dim=0)
     ov -= mn
     ov /= ov.max()
+    transform_path = f'experiments/{args.mesh_name}/transform_f{args.coarse_size}_s{args.num_subdiv}.json'
+    normalization = None
+    if os.path.isfile(transform_path):
+        with open(transform_path, encoding="utf-8") as stream:
+            normalization = json.load(stream)
 
     # Create dataset and dataloader
     ip = lr*args.input_scale
@@ -239,7 +249,37 @@ if __name__=="__main__":
         # mq = quantize_dynamic(model, qconfig_spec={nn.Linear}, dtype=torch.qint8, inplace=False).cpu()
         # tv = lr.cpu() + mq(pe_inputs.cpu(), dset.neighbors.cpu(), dset.edge_wts.cpu())/args.output_scale
         # tv = tv.cuda()
-        tv = lr + model(pe_inputs, dset.neighbors, dset.edge_wts)/args.output_scale
+        torch.save({
+            "schema": "open4d.qndf/v1",
+            "model_state_dict": model.state_dict(),
+            "coarse_vertices": lr.detach().cpu(),
+            "coarse_faces": lf.detach().cpu(),
+            "input_mean": mean.detach().cpu(),
+            "input_std": std.detach().cpu(),
+            "pe_dim": args.pe_dim,
+            "hidden_dim": args.hidden_dim,
+            "num_layers": args.num_layers,
+            "input_scale": args.input_scale,
+            "output_scale": args.output_scale,
+            "normalization": normalization,
+        }, best_model_path)
+        reloaded = MLP(
+            3 * args.pe_dim, args.hidden_dim, 3, args.num_layers
+        ).to(device)
+        reloaded.load_state_dict(
+            torch.load(best_model_path, map_location=device)["model_state_dict"]
+        )
+        reloaded.eval()
+        with torch.no_grad():
+            reload_difference = (
+                model(pe_inputs, dset.neighbors, dset.edge_wts)
+                - reloaded(pe_inputs, dset.neighbors, dset.edge_wts)
+            ).abs().max().item()
+        if reload_difference > 1e-7:
+            raise RuntimeError(
+                f"Reloaded QNDF decoder changed output by {reload_difference}"
+            )
+        tv = lr + reloaded(pe_inputs, dset.neighbors, dset.edge_wts)/args.output_scale
         r2t,_,_ = point2mesh_error(tv,lf, ov, of)
         print(f'Rec to Tar Compression Error obtained: {r2t}')
         mlflow.log_metric("Rec2Tar Error", f"{r2t}")

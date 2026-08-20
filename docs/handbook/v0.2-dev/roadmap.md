@@ -70,7 +70,7 @@ flowchart LR
 - [ ] Add `open4d.io.write_usd_container(path, frames, ...) -> Path`.
 - [ ] Add `open4d.metrics.compare_meshes(...)`.
 - [ ] Add `open4d.metrics.compare_sequences(..., allow_truncate=False)`.
-- [ ] Keep the base NumPy-only and lazily load SciPy/OpenUSD/Open3D/viewers.
+- [x] Keep the base NumPy-only and lazily load SciPy/OpenUSD/Open3D/viewers.
 - [ ] Convert examples into thin clients of the public functions.
 
 ### Correctness and interchange

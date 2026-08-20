@@ -23,9 +23,11 @@ EXPLICIT_REQUIRED_LEDGER_PATHS = (
 )
 ALLOWED_PACKAGES = {
     "open4d",
+    "open4d.codec",
     "open4d.core",
     "open4d.io",
     "open4d.torch_ops",
+    "open4d.visualization",
     "integrations",
     "integrations.open3d",
 }

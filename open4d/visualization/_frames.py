@@ -1,4 +1,4 @@
-"""Renderer-neutral frames: plain NumPy, oriented for a chosen up axis.
+"""Renderer-neutral frames used by the public visualizer.
 
 `open4d.TriangleMesh` is the right thing to load into, but a viewer wants arrays
 it can hand straight to a GL buffer. `RenderFrame` is that: positions,

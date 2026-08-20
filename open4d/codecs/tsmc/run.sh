@@ -25,6 +25,7 @@ Options:
                         (default: ../arap-volume-tracking/data/combined-100-max-2000)
   --target-mesh-path P  Target meshes for displacements, relative to ./tsmc
                         (default: ../arap-volume-tracking/data/combined_scaled)
+  --no-static           Treat the input as an all-dynamic sequence
   -h, --help            Show this message
 
 Environment:
@@ -45,6 +46,7 @@ GROUP_INDICES=()
 CENTERS_DIR="../arap-volume-tracking/data/combined-100-max-2000"
 MESH_PATH="../data/DATASET_PLACEHOLDER/meshes"
 TARGET_MESH_PATH="../arap-volume-tracking/data/combined_scaled"
+NO_STATIC=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --centers-dir) CENTERS_DIR="$2"; shift 2 ;;
     --mesh-path) MESH_PATH="$2"; shift 2 ;;
     --target-mesh-path) TARGET_MESH_PATH="$2"; shift 2 ;;
+    --no-static) NO_STATIC=(--no-static); shift ;;
     --groups)
       shift
       while [[ $# -gt 0 && "$1" != --* ]]; do GROUP_INDICES+=("$1"); shift; done
@@ -191,5 +194,5 @@ for GROUP_IDX in "${GROUP_INDICES[@]}"; do
       --dynamic_static_path "../data/$DATASET/meshes" \
       --firstIndex "$FIRST_INDEX" --lastIndex "$LAST_INDEX" \
       --reference_mesh_path "$EDITOR_FROM_TSMC/Data/${SUFFIX}/reference_mesh/others/decoded_decimated_reference_mesh.obj" \
-      --group_idx "$GROUP_IDX" )
+      --group_idx "$GROUP_IDX" "${NO_STATIC[@]}" )
 done

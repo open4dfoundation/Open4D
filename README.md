@@ -258,16 +258,37 @@ the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 
 ## Sequence viewer details
 
-`examples/visualization/visualize_sequence.py` loads a sequence, reports what it
-contains, and animates it. After following the quick start above, point it at
-your own data:
+The public Python API loads, encodes, decodes, and visualizes a sequence without
+shelling out:
+
+```python
+from open4d.codec import decode_sequence, encode_sequence
+from open4d.io import open_sequence
+from open4d.visualization import visualize
+
+sequence = open_sequence("path/to/frames", fps=30)
+artifact = encode_sequence(sequence, "sequence.o4d", codec="lzma")
+decoded = decode_sequence(artifact)
+visualize(decoded, up="y")
+```
+
+Five lossless, in-process reference codecs are included: `raw`, `deflate`,
+`bzip2`, `lzma`, and byte-level `rle` (`npz` remains the default DEFLATE alias).
+They share a safe NumPy-array container so they compare storage strategies, not
+research geometry models. Callers can register another `open4d.codec.Codec`;
+the research codecs remain separate until they provide complete decoder
+artifacts. For an executable five-codec comparison using
+`4d_files/Rafa_Approves_hd_4k`, open
+[`examples/open4d_sequence_codec.ipynb`](examples/open4d_sequence_codec.ipynb).
+
+`examples/visualization/visualize_sequence.py` is the command-line client:
 
 ```bash
 python examples/visualization/visualize_sequence.py my_capture/ --info
 python examples/visualization/visualize_sequence.py my_capture/
 ```
 
-Playback is our own PyQt6 window: drag to orbit, scroll to zoom, drag the slider
+Playback uses `open4d.visualization`'s PyQt6 window: drag to orbit, scroll to zoom, drag the slider
 to scrub, space to pause, left/right to step a frame. `--save out.gif` writes an
 animated GIF through the same renderer.
 

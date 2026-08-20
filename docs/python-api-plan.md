@@ -358,6 +358,31 @@ too variable for a stable pass/fail gate. CI instead runs a smaller benchmark
 that keeps its correctness assertions and exercises every advertised format
 available in the `[tools]` environment.
 
+## Modular codec and visualization follow-up
+
+`open4d.codec.Codec` is the minimal replaceable encode/decode boundary. Five
+lossless in-process reference implementations (`raw`, `deflate`, `bzip2`,
+`lzma`, and byte `rle`) share a safe NumPy-array container; `npz` remains the
+default DEFLATE alias. Research codecs can implement the same protocol once
+their decoder state is self-contained. `open4d.visualization.visualize` and
+`render_gif` now own the former example Qt renderer and import all GUI
+dependencies lazily.
+
+The executable notebook at `examples/open4d_sequence_codec.ipynb` opens all 157
+frames in `4d_files/Rafa_Approves_hd_4k` lazily and defaults to a ten-frame
+demonstration. A headless test executed five encode/fresh-decode paths and exact
+geometry comparisons over two real frames. A native macOS player environment
+also rendered those decoded frames to a visually inspected 320×320 GIF.
+
+On the same macOS/Python 3.13 machine, ten materialized Rafa frames (199,960
+vertices and 400,000 triangles total) produced artifacts from 3.19 MB (LZMA) to
+11.94 MB (RLE). Encode time ranged from 0.002 s (raw) to 1.90 s (LZMA), while
+validated full decode ranged from 0.015 s (raw) to 0.25 s (LZMA). The benchmark
+checks every geometry channel, custom attribute, timestamp, and metadata value;
+wall-clock timing runs separately from memory tracing to avoid instrumentation
+bias. Codec and benchmark are in-process, and source parsing is reported
+separately.
+
 ## Questions to settle with the first implementation
 
 1. Should the manifest filename be fixed (for example,
