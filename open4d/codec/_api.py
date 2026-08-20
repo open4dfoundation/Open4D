@@ -9,6 +9,8 @@ from pathlib import Path
 from open4d.core import Sequence
 
 from ._draco import DRACO_CODEC
+from ._klt import KLT_CODEC
+from ._n4mc import N4MC_CODEC
 from ._npz import REFERENCE_CODECS
 from ._protocol import Codec, CodecError
 from ._vmesh import FASTER_VDMC_CODEC, VDMC_CODEC
@@ -25,7 +27,10 @@ class CodecInfo:
 
 _CODECS: dict[str, Codec] = {
     codec.id: codec
-    for codec in (*REFERENCE_CODECS, DRACO_CODEC, VDMC_CODEC, FASTER_VDMC_CODEC)
+    for codec in (
+        *REFERENCE_CODECS, DRACO_CODEC, KLT_CODEC, N4MC_CODEC,
+        VDMC_CODEC, FASTER_VDMC_CODEC,
+    )
 }
 
 

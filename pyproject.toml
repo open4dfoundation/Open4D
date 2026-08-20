@@ -26,6 +26,8 @@ draco  = ["DracoPy>=2,<3"]
 open3d = ["open3d>=0.19", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
 torch  = ["torch"]
+klt    = ["torch", "trimesh", "zstd", "tqdm", "point-cloud-utils"]
+n4mc   = ["torch", "trimesh", "scikit-image", "point-cloud-utils"]
 dev    = ["build>=1.2", "pytest>=8", "scipy", "tomli>=2; python_version < '3.11'"]
 all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy"]
 
@@ -34,6 +36,12 @@ include-package-data = false
 packages = [
     "open4d",
     "open4d.codec",
+    "open4d.codecs",
+    "open4d.codecs.klt",
+    "open4d.codecs.n4mc",
+    "open4d.codecs.n4mc.evaluation",
+    "open4d.codecs.n4mc.losses",
+    "open4d.codecs.n4mc.models",
     "open4d.core",
     "open4d.io",
     "open4d.torch_ops",
