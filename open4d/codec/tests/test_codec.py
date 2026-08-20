@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from zipfile import ZipFile
 
 import numpy as np
 import pytest
@@ -156,6 +158,7 @@ def test_all_reference_codec_ids_are_public():
     assert infos["npz"].lossless is True
     assert "attributes" in infos["npz"].preserves
     assert infos["draco"].backend == "python-binding"
+    assert infos["klt"].backend == infos["n4mc"].backend == "python-in-process"
 
 
 def test_encode_accepts_a_supported_path_without_codec_specific_io(tmp_path):
@@ -266,4 +269,48 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
     ]
     assert all(isinstance(command, list) for command, _ in calls)
     assert any(item.startswith("--decTex=") for item in calls[1][0])
+    decoded.close()
+
+
+def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch):
+    import open4d.codec._klt as implementation
+
+    source = Sequence(MemoryFrameProvider([
+        Frame(9, 0.5, TriangleMesh(
+            [[10.0, 20, 30], [10.5, 20, 30], [10, 20.5, 30]], [[0, 1, 2]]
+        ), {"take": "rafa"})
+    ], metadata={"fps": 30}))
+    calls = []
+
+    def prepare(sequence, destination, *, resolution):
+        calls.append(("prepare", len(sequence), resolution))
+        destination.mkdir(parents=True)
+        return {"center": [10, 20, 30], "scale": 2.0, "resolution": resolution}
+
+    def compress(args, *, verify_decode):
+        calls.append(("encode", args.num_frames, verify_decode))
+        Path(args.output_path).mkdir()
+        with ZipFile(Path(args.output_path) / "compressed_archive.zip", "w") as archive:
+            archive.writestr("decoder_context.pt", b"saved-klt-context")
+
+    def decompress(source, destination, device):
+        calls.append(("decode", (source / "decoder_context.pt").read_bytes(), device))
+        destination.mkdir()
+        (destination / "mesh_000000.obj").write_text(
+            "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="ascii"
+        )
+
+    monkeypatch.setattr(implementation, "write_tsdf_sequence", prepare)
+    monkeypatch.setattr(implementation, "_backend", lambda: SimpleNamespace(
+        run_compression=compress, decode_compressed=decompress,
+    ))
+    artifact = encode_sequence(source, tmp_path / "take.k4d", codec="klt")
+    decoded = decode_sequence(artifact, device="cpu")
+
+    assert calls == [
+        ("prepare", 1, 63), ("encode", 1, False),
+        ("decode", b"saved-klt-context", "cpu"),
+    ]
+    assert decoded[0].frame_index == 9 and decoded[0].metadata["take"] == "rafa"
+    np.testing.assert_allclose(decoded[0].geometry.positions[1], [10.5, 20, 30])
     decoded.close()

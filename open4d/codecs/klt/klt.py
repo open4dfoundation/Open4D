@@ -30,7 +30,10 @@ import trimesh
 import zstd
 from tqdm import tqdm
 
-from fmc import dynamic_marching_cubes, construct_voxel_grid
+try:
+    from .fmc import dynamic_marching_cubes, construct_voxel_grid
+except ImportError:  # Direct ``python klt.py`` execution.
+    from fmc import dynamic_marching_cubes, construct_voxel_grid
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -241,20 +244,21 @@ def save_quantized_coeffs(
     np.savez_compressed(f"{output_path}_metadata.npz", **metadata)
 
 
-def load_quantized_coeffs(output_path):
+def load_quantized_coeffs(output_path, target_device=device):
     metadata = np.load(f"{output_path}_metadata.npz", allow_pickle=False)
     shape = tuple(int(value) for value in metadata["indices_shape"])
     dtype = np.dtype(str(metadata["indices_dtype"]))
     with open(f"{output_path}_indices.zst", "rb") as stream:
         values = np.frombuffer(zstd.decompress(stream.read()), dtype=dtype).reshape(shape)
     centers = [
-        torch.from_numpy(metadata[f"bin_centers_{h}"].copy()).to(device)
+        torch.from_numpy(metadata[f"bin_centers_{h}"].copy()).to(target_device)
         for h in range(shape[1])
     ]
     fixed_dims = dict(zip(
         metadata["fixed_indices"].tolist(), metadata["fixed_values"].tolist()
     ))
-    return torch.from_numpy(values.astype(np.int64)).to(device), centers, fixed_dims, tuple(metadata["volume_shape"])
+    volume_shape = tuple(int(value) for value in metadata["volume_shape"])
+    return torch.from_numpy(values.astype(np.int64)).to(target_device), centers, fixed_dims, volume_shape
 
 
 def decompress_coeffs(quantized_indices, bin_centers, fixed_dims, H):
@@ -319,12 +323,57 @@ def compute_bitrate(total_bits, num_frames, fps):
     return total_bits / duration_sec / 1000  # kbps
 
 
-def run_compression(args):
+def decode_compressed(input_path, output_path, target_device=None):
+    """Decode saved KLT coefficients without access to encoder-side tensors."""
+    target_device = torch.device(target_device or device)
+    input_path, output_path = os.fspath(input_path), os.fspath(output_path)
+    decoder = torch.load(
+        os.path.join(input_path, "decoder_context.pt"),
+        map_location=target_device,
+        weights_only=True,
+    )
+    if decoder.get("schema") != "open4d.klt/v1":
+        raise ValueError(f"Unsupported KLT decoder context: {decoder.get('schema')!r}")
+    os.makedirs(output_path, exist_ok=True)
+    metadata_paths = sorted(glob(os.path.join(input_path, "*_quantized_metadata.npz")))
+    if not metadata_paths:
+        raise FileNotFoundError(f"No quantized KLT frames found in {input_path}")
+    outputs = []
+    for metadata_path in metadata_paths:
+        prefix = metadata_path.removesuffix("_metadata.npz")
+        indices, centers, fixed, volume_shape = load_quantized_coeffs(
+            prefix, target_device
+        )
+        coefficients = decompress_coeffs(
+            indices, centers, fixed, H=indices.shape[1]
+        )
+        blocks = reconstruct_blocks_torch(
+            coefficients, decoder["basis"].to(target_device),
+            decoder["mean"].to(target_device), decoder["num_components"],
+        )
+        volume = reconstruct_volume_from_blocks_torch(
+            blocks, volume_shape, decoder["block_size"]
+        )
+        grid, cubes = construct_voxel_grid(volume_shape[0] - 1, target_device)
+        vertices, faces = dynamic_marching_cubes(
+            grid * 2.2, cubes, volume.flatten()
+        )
+        frame_name = os.path.basename(prefix).removesuffix("_quantized")
+        destination = os.path.join(output_path, f"mesh_{frame_name}.obj")
+        trimesh.Trimesh(
+            vertices=vertices.cpu().numpy(), faces=faces.cpu().numpy(), process=False
+        ).export(destination)
+        outputs.append(destination)
+    return outputs
+
+
+def run_compression(args, *, verify_decode=True):
     """Learn a KLT basis, then compress + reconstruct each frame."""
     compressed_folder = os.path.join(args.output_path, "compressed")
     reconstructed_folder = os.path.join(args.output_path, "reconstructed_meshes")
     os.makedirs(compressed_folder, exist_ok=True)
-    os.makedirs(reconstructed_folder, exist_ok=True)
+    if verify_decode:
+        os.makedirs(reconstructed_folder, exist_ok=True)
 
     tsdf_paths = sorted(glob(os.path.join(args.input_path, "*.npz")))
     if not tsdf_paths:
@@ -344,7 +393,10 @@ def run_compression(args):
         "block_size": args.block_size,
         "num_components": args.num_components,
     }, context_path)
-    decoder = torch.load(context_path, map_location=device, weights_only=True)
+    decoder = (
+        torch.load(context_path, map_location=device, weights_only=True)
+        if verify_decode else None
+    )
     del training_tsdfs, training_blocks
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -374,6 +426,9 @@ def run_compression(args):
 
         # Theoretical bits (before entropy coding)
         total_bits += quantized_indices.numel() * np.log2(args.k_total)
+
+        if not verify_decode:
+            continue
 
         # 3) Decode / reconstruct timing
         start_time = time.time()
@@ -408,7 +463,6 @@ def run_compression(args):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    avg_decode_time = float(np.mean(decode_times))
     bitrate_kbps = compute_bitrate(total_bits, num_frames, args.fps)
 
     # Entropy-coding simulation (.zip) for a realistic bitrate
@@ -423,7 +477,9 @@ def run_compression(args):
     print(f"\nProcessed {num_frames} frames at {args.fps} FPS")
     print(f"Theoretical bitrate (no entropy coding): {bitrate_kbps:.2f} kbps")
     print(f"Entropy-coded bitrate (.zip size): {zip_bitrate_kbps:.2f} kbps")
-    print(f"Average decode time per frame: {avg_decode_time:.4f} s ({1.0 / avg_decode_time:.2f} FPS)")
+    if decode_times:
+        avg_decode_time = float(np.mean(decode_times))
+        print(f"Average decode time per frame: {avg_decode_time:.4f} s ({1.0 / avg_decode_time:.2f} FPS)")
     print(f"Compressed coeffs: {compressed_folder}")
     print(f"Reconstructed meshes: {reconstructed_folder}")
     return reconstructed_folder

@@ -8,6 +8,8 @@ from ._api import (
     register_codec,
 )
 from ._draco import DracoCodec
+from ._klt import KLTCodec
+from ._n4mc import N4MCCodec
 from ._npz import NumPyZipCodec
 from ._protocol import Codec, CodecError
 from ._vmesh import VMeshCodec
@@ -17,6 +19,8 @@ __all__ = [
     "CodecError",
     "CodecInfo",
     "DracoCodec",
+    "KLTCodec",
+    "N4MCCodec",
     "NumPyZipCodec",
     "VMeshCodec",
     "available_codecs",

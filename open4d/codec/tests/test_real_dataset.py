@@ -90,7 +90,7 @@ def test_every_input_codec_and_output_combination(tmp_path):
     for input_info in available_formats():
         source = write_sequence(canonical, tmp_path / f"in.{input_info.id}")
         for codec_info in available_codecs():
-            if codec_info.backend == "native-sequence":
+            if codec_info.backend not in {"python", "python-binding"}:
                 continue
             artifact = encode_sequence(
                 source,
