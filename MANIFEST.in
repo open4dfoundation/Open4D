@@ -16,18 +16,6 @@ prune scripts
 prune .github
 prune tests
 
-# Python research-codec packages used by the public in-process adapters.
-include open4d/codecs/__init__.py
-include open4d/codecs/klt/*.py
-include open4d/codecs/n4mc/*.py
-recursive-include open4d/codecs/n4mc/evaluation *.py
-recursive-include open4d/codecs/n4mc/losses *.py
-recursive-include open4d/codecs/n4mc/models *.py
-include open4d/codecs/qndf/*.py
-include open4d/codecs/qndf_int8/*.py
-include open4d/codecs/tvmc/__init__.py
-include open4d/codecs/tsmc/__init__.py
-
 recursive-exclude open4d/core/tests *
 recursive-exclude open4d/codec/tests *
 recursive-exclude open4d/io/tests *

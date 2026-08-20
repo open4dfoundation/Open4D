@@ -249,7 +249,9 @@ python -m pip install -e ".[all]"
 ```
 
 These extras do not install the heavyweight codec environments. Use the setup
-instructions inside the selected codec before running it.
+instructions inside the selected codec before running it. Research codec
+implementations remain source-checkout-only and are excluded from the
+lightweight wheel until their provenance review is complete.
 
 If an existing clone is missing Draco, initialize and build all three copies —
 the Draco baseline codec's own, plus TSMC's and TVMC's — with:
