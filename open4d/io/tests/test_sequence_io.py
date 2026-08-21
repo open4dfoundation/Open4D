@@ -246,21 +246,52 @@ def test_available_formats_names_optional_dependencies():
 
 def test_write_sequence_is_format_independent_and_reopenable(tmp_path):
     frames = [
-        Frame(index + 7, index / 24, TriangleMesh(
+        Frame(index + 41, 1.25 + index / 24, TriangleMesh(
             np.array([[index, 0, 0], [index + 1, 0, 0], [index, 1, 0]], dtype=np.float32),
             [[0, 1, 2]],
-        ))
+        ), metadata={"source_id": f"camera-{index}"})
         for index in range(2)
     ]
-    source = Sequence(MemoryFrameProvider(frames))
+    source = Sequence(MemoryFrameProvider(
+        frames,
+        metadata={"capture_id": "rafa"},
+        topology=TopologyMode.FIXED,
+        has_constant_vertex_count=True,
+        has_vertex_correspondence=True,
+    ))
 
     for format in ("obj", "ply"):
         output = write_sequence(source, tmp_path / format, format=format)
-        decoded = open_sequence(output, format=format, fps=24)
+        assert (output / "open4d.sequence.json").is_file()
+        info = inspect_sequence(output, format=format)
+        decoded = open_sequence(output, format=format)
+        with pytest.raises(UnsupportedFeatureError, match="manifest timestamps"):
+            open_sequence(output, format=format, fps=24)
         assert len(decoded) == 2
+        assert info.timing_source == "manifest"
+        assert decoded.metadata == source.metadata
+        assert decoded.topology is TopologyMode.FIXED
+        assert decoded.has_constant_vertex_count is True
+        assert decoded.has_vertex_correspondence is True
         for expected, actual in zip(source, decoded, strict=True):
+            assert actual.frame_index == expected.frame_index
+            assert actual.timestamp == expected.timestamp
+            assert actual.metadata == expected.metadata
             np.testing.assert_allclose(actual.geometry.positions, expected.geometry.positions)
             np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
+
+
+def test_writer_rejects_empty_sequence_without_touching_destination(tmp_path):
+    source = Sequence(MemoryFrameProvider([]))
+    destination = tmp_path / "frames"
+    destination.mkdir()
+    sentinel = destination / "keep.txt"
+    sentinel.write_text("existing", encoding="utf-8")
+
+    with pytest.raises(UnsupportedFeatureError, match="empty"):
+        write_sequence(source, destination, overwrite=True)
+
+    assert sentinel.read_text(encoding="utf-8") == "existing"
 
 
 def test_writer_rejects_silent_field_loss_and_cleans_partial_output(tmp_path):

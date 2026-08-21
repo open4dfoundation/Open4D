@@ -1,7 +1,9 @@
 # Python API plan for heterogeneous 3D sequences
 
-Status: initial design proposal. The mesh-loading part of slice 1 is
-implemented; writing, manifests, USD promotion, and plugins remain proposals.
+Status: implementation in progress. Mesh loading and geometry-only file export
+are implemented. Directory exports use `open4d.sequence.json` to preserve frame
+identity, timing, metadata, and topology declarations. USD promotion, richer
+manifest fields, additional representations, and plugins remain proposals.
 
 ## The central decision
 
@@ -369,10 +371,12 @@ their decoder state is self-contained. `open4d.visualization.visualize` and
 dependencies lazily.
 
 The executable notebook at `examples/open4d_sequence_codec.ipynb` opens all 157
-frames in `4d_files/Rafa_Approves_hd_4k` lazily and defaults to a ten-frame
-demonstration. A headless test executed five encode/fresh-decode paths and exact
-geometry comparisons over two real frames. A native macOS player environment
-also rendered those decoded frames to a visually inspected 320×320 GIF.
+frames in `4d_files/Rafa_Approves_hd_4k` lazily and defaults to a two-frame
+demonstration. It attempts every codec registered in that environment, reports
+missing optional/native prerequisites, validates every successful fresh decode,
+and opens each successful result in the public visualizer outside headless mode.
+The headless test requires all six NumPy-container identifiers to succeed and
+asserts that no registered codec silently disappears from the result table.
 
 On the same macOS/Python 3.13 machine, ten materialized Rafa frames (199,960
 vertices and 400,000 triangles total) produced artifacts from 3.19 MB (LZMA) to
@@ -380,8 +384,8 @@ vertices and 400,000 triangles total) produced artifacts from 3.19 MB (LZMA) to
 validated full decode ranged from 0.015 s (raw) to 0.25 s (LZMA). The benchmark
 checks every geometry channel, custom attribute, timestamp, and metadata value;
 wall-clock timing runs separately from memory tracing to avoid instrumentation
-bias. Codec and benchmark are in-process, and source parsing is reported
-separately.
+bias. These reference-codec measurements are in-process, and source parsing is
+reported separately. V-DMC is a separate native-process backend.
 
 ## Questions to settle with the first implementation
 

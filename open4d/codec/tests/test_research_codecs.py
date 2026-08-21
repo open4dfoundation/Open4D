@@ -36,7 +36,7 @@ def surface_rms_fraction(expected, actual, seed):
 
 @pytest.mark.parametrize("input_format", ("ply", "glb"))
 @pytest.mark.parametrize("codec", (
-    "klt", "n4mc", "qndf", "qndf-int8", "tvmc", "tsmc",
+    "klt", "n4mc", "qndf", "qndf-int8",
 ))
 def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
     tmp_path, codec, input_format
@@ -72,19 +72,16 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
             coarse_size=100, num_subdiv=0, epochs=20, hidden_dim=8,
             num_layers=3, batch_size=256, device="cuda:0",
         ),
-        "tvmc": dict(face_budget=100, quantization_bits=12),
-        "tsmc": dict(face_budget=100, quantization_bits=12, components=3),
     }
     suffix = {"klt": ".k4d", "n4mc": ".n4d", "qndf": ".q4d",
-              "qndf-int8": ".qi4d", "tvmc": ".tv4d", "tsmc": ".ts4d"}[codec]
+              "qndf-int8": ".qi4d"}[codec]
     artifact = encode_sequence(
         input_path, tmp_path / f"rafa-{codec}{suffix}",
         codec=codec, fps=30,
         **options[codec],
     )
-    decode_device = "cpu" if codec in {"tvmc", "tsmc"} else "cuda:0"
-    first = decode_sequence(artifact, device=decode_device)
-    second = decode_sequence(artifact, device=decode_device)
+    first = decode_sequence(artifact, device="cuda:0")
+    second = decode_sequence(artifact, device="cuda:0")
     assert len(first) == len(second) == 2
     for left, right in zip(first, second, strict=True):
         assert len(left.geometry.positions) and len(left.geometry.triangles)

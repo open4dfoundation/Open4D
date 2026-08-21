@@ -1,6 +1,6 @@
 import torch
 
-from models.tsdf_autoencoder import TSDFCompressionAutoencoder
+from open4d.codecs.n4mc.models.tsdf_autoencoder import TSDFCompressionAutoencoder
 
 
 def test_codec_forward_shapes():

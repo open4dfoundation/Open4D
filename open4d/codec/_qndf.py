@@ -34,6 +34,22 @@ def _torch_bytes(torch, value) -> bytes:
     return stream.getvalue()
 
 
+def _quantized_engine(torch, required=None):
+    supported = tuple(
+        engine for engine in torch.backends.quantized.supported_engines
+        if engine != "none"
+    )
+    selected = required or ("qnnpack" if "qnnpack" in supported else None)
+    selected = selected or (supported[0] if supported else None)
+    if selected not in supported:
+        raise CodecError(
+            f"QNDF-int8 needs PyTorch quantized linear support for {selected!r}; "
+            f"this runtime provides {supported or 'no quantized engine'}"
+        )
+    torch.backends.quantized.engine = selected
+    return selected
+
+
 def _manifest(sequence, codec):
     return {
         "schema": f"open4d.{codec}-sequence/v1", "codec": codec,
@@ -148,6 +164,7 @@ class QNDFCodec:
                         "output_scale": output_scale, "normalization": normalization,
                     }
                     if self.int8:
+                        context["quantized_engine"] = _quantized_engine(torch)
                         cpu_model = torch.ao.quantization.quantize_dynamic(
                             model.cpu().eval(), {torch.nn.Linear}, dtype=torch.qint8
                         )
@@ -196,6 +213,7 @@ class QNDFCodec:
                         encoded, inputs, faces, torch.zeros_like(coarse), progress=verbose
                     )
                     if self.int8:
+                        _quantized_engine(torch, context.get("quantized_engine"))
                         model = torch.jit.load(
                             BytesIO(archive.read(f"frames/{ordinal:06d}/model.pt")),
                             map_location="cpu",
