@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 from numbers import Real
 import operator
@@ -31,6 +32,8 @@ from ._errors import (
 )
 
 _DEFAULT_FPS = 30.0
+_MANIFEST_NAME = "open4d.sequence.json"
+_MANIFEST_SCHEMA = "open4d.sequence-manifest/v1"
 
 FrameReader = Callable[[Path], tuple[np.ndarray, np.ndarray, np.ndarray | None]]
 _FRAME_READERS: dict[str, FrameReader] = {
@@ -162,6 +165,78 @@ def _frame_files(directory: Path, suffix: str | None) -> tuple[Path, ...]:
     return tuple(sorted(files, key=_frame_sort_key))
 
 
+def _json_value(value, name: str):
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise EncodeError(f"{name} metadata numbers must be finite")
+        return value
+    if isinstance(value, np.generic):
+        return _json_value(value.item(), name)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise EncodeError(f"{name} metadata keys must be strings")
+        return {key: _json_value(item, f"{name}.{key}") for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item, name) for item in value]
+    raise EncodeError(f"{name} metadata value {type(value).__name__} is not serializable")
+
+
+def _read_manifest(
+    directory: Path, selected_suffix: str | None
+) -> tuple[dict, tuple[Path, ...], str] | None:
+    manifest_path = directory / _MANIFEST_NAME
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema") != _MANIFEST_SCHEMA:
+            raise ValueError(f"unsupported schema {manifest.get('schema')!r}")
+        suffix = _suffix_for(manifest["format"])
+        if selected_suffix is not None and selected_suffix != suffix:
+            raise UnsupportedFormatError(
+                f"manifest format {suffix!r} does not match requested format "
+                f"{selected_suffix!r}"
+            )
+        records = manifest["frames"]
+        if not isinstance(records, list):
+            raise TypeError("frames must be a list")
+        files = []
+        root = directory.resolve()
+        for ordinal, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise TypeError(f"frame {ordinal} must be an object")
+            index, timestamp, uri = record["index"], record["timestamp"], record["uri"]
+            if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+                raise ValueError(f"frame {ordinal} has an invalid index")
+            if not isinstance(timestamp, Real) or isinstance(timestamp, bool) or not math.isfinite(timestamp):
+                raise ValueError(f"frame {ordinal} has an invalid timestamp")
+            if not isinstance(record.get("metadata", {}), dict):
+                raise TypeError(f"frame {ordinal} metadata must be an object")
+            if not isinstance(uri, str) or not uri or Path(uri).is_absolute():
+                raise ValueError(f"frame {ordinal} has an invalid uri")
+            frame_path = (directory / uri).resolve()
+            if root not in frame_path.parents or frame_path.suffix.lower() != suffix:
+                raise ValueError(f"frame {ordinal} uri escapes the source or changes format")
+            if not frame_path.is_file():
+                raise FileNotFoundError(uri)
+            files.append(frame_path)
+        if not isinstance(manifest.get("metadata", {}), dict):
+            raise TypeError("metadata must be an object")
+        manifest["topology"] = TopologyMode(manifest.get("topology", "unknown"))
+        for name in ("has_constant_vertex_count", "has_vertex_correspondence"):
+            if manifest.get(name) is not None and not isinstance(manifest[name], bool):
+                raise TypeError(f"{name} must be bool or null")
+        return manifest, tuple(files), suffix
+    except UnsupportedFormatError:
+        raise
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as error:
+        raise DecodeError(f"Invalid sequence manifest {manifest_path}: {error}") from error
+
+
 def _read_geometry(path: Path, suffix: str | None = None) -> TriangleMesh:
     suffix = suffix or path.suffix.lower()
     try:
@@ -219,6 +294,36 @@ class _FolderProvider:
         )
 
 
+class _ManifestFolderProvider:
+    def __init__(self, directory: Path, files: tuple[Path, ...], manifest: dict) -> None:
+        self.directory = directory
+        self.files = files
+        self.frames = tuple(manifest["frames"])
+        self.metadata = MappingProxyType(dict(manifest.get("metadata", {})))
+        self.topology = manifest["topology"]
+        self.has_constant_vertex_count = manifest.get("has_constant_vertex_count")
+        self.has_vertex_correspondence = manifest.get("has_vertex_correspondence")
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.frames)
+
+    @property
+    def timestamps(self) -> tuple[float, ...]:
+        return tuple(float(record["timestamp"]) for record in self.frames)
+
+    def get_frame(self, index: int) -> Frame:
+        if index < 0 or index >= self.frame_count:
+            raise IndexError("frame index out of range")
+        record = self.frames[index]
+        return Frame(
+            frame_index=record["index"],
+            timestamp=record["timestamp"],
+            geometry=_read_geometry(self.files[index]),
+            metadata=record.get("metadata", {}),
+        )
+
+
 class _SingleFrameProvider:
     frame_count = 1
     timestamps = (0.0,)
@@ -246,15 +351,19 @@ class _SingleFrameProvider:
 
 def _resolve(
     source: str | os.PathLike[str], format: str | None
-) -> tuple[Path, str, tuple[Path, ...], str]:
+) -> tuple[Path, str, tuple[Path, ...], str, dict | None]:
     # Providers outlive this call, so freeze relative sources before lazy reads.
     path = Path(source).absolute()
     if not path.exists():
         raise SourceNotFoundError(f"Sequence source does not exist: {path}")
     suffix = _suffix_for(format)
     if path.is_dir():
+        manifested = _read_manifest(path, suffix)
+        if manifested is not None:
+            manifest, files, manifest_suffix = manifested
+            return path, "directory", files, manifest_suffix, manifest
         files = _frame_files(path, suffix)
-        return path, "directory", files, files[0].suffix.lower()
+        return path, "directory", files, files[0].suffix.lower(), None
     if not path.is_file():
         raise UnsupportedFormatError(
             f"Sequence source is not a file or directory: {path}"
@@ -266,24 +375,30 @@ def _resolve(
             f"No reader for {actual_suffix or '<no suffix>'!r}: {path}\n"
             f"{_supported_formats()}"
         )
-    return path, "file", (path,), selected
+    return path, "file", (path,), selected, None
 
 
 def inspect_sequence(
     source: str | os.PathLike[str], *, format: str | None = None
 ) -> SequenceInfo:
     """Inspect a local mesh file or frame directory without decoding geometry."""
-    path, storage, files, suffix = _resolve(source, format)
+    path, storage, files, suffix, manifest = _resolve(source, format)
     is_directory = storage == "directory"
+    timestamps = tuple(record["timestamp"] for record in manifest["frames"]) if manifest else ()
+    duration = abs(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0
     return SequenceInfo(
         source=path,
         storage=storage,
         format=suffix.lstrip("."),
         frame_count=len(files),
         geometry_kind="triangle_mesh",
-        fps=_DEFAULT_FPS if is_directory else None,
-        timing_source="default" if is_directory else "static",
-        topology=TopologyMode.UNKNOWN if is_directory else TopologyMode.FIXED,
+        fps=(len(timestamps) - 1) / duration if duration else (
+            _DEFAULT_FPS if is_directory and manifest is None else None
+        ),
+        timing_source="manifest" if manifest else ("default" if is_directory else "static"),
+        topology=manifest["topology"] if manifest else (
+            TopologyMode.UNKNOWN if is_directory else TopologyMode.FIXED
+        ),
     )
 
 
@@ -303,8 +418,12 @@ def open_sequence(
             raise UnsupportedFeatureError(
                 f"This reader has no options; received: {names}"
             )
-    path, storage, files, suffix = _resolve(source, format)
+    path, storage, files, suffix, manifest = _resolve(source, format)
     if storage == "directory":
+        if manifest is not None:
+            if fps is not None:
+                raise UnsupportedFeatureError("fps cannot override manifest timestamps")
+            return Sequence(_ManifestFolderProvider(path, files, manifest))
         return Sequence(_FolderProvider(path, files, _fps(fps)))
     if fps is not None:
         _fps(fps)  # Validate consistently even though one static frame has no rate.
@@ -364,6 +483,8 @@ def write_sequence(
         raise UnsupportedFormatError(
             f"destination suffix {destination.suffix!r} does not match format {suffix!r}"
         )
+    if not len(sequence):
+        raise UnsupportedFeatureError("empty sequences cannot be exported")
     if file_output and len(sequence) != 1:
         raise UnsupportedFeatureError(
             "a multi-frame sequence needs a destination directory"
@@ -381,8 +502,28 @@ def write_sequence(
                 destination.unlink()
             shutil.move(generated, destination)
         else:
+            manifest = {
+                "schema": _MANIFEST_SCHEMA,
+                "geometry_kind": "triangle_mesh",
+                "format": suffix.lstrip("."),
+                "metadata": _json_value(sequence.metadata, "sequence"),
+                "topology": sequence.topology.value,
+                "has_constant_vertex_count": sequence.has_constant_vertex_count,
+                "has_vertex_correspondence": sequence.has_vertex_correspondence,
+                "frames": [],
+            }
             for ordinal, frame in enumerate(sequence):
-                _write_frame(temporary / f"frame_{ordinal:06d}{suffix}", frame, suffix)
+                name = f"frame_{ordinal:06d}{suffix}"
+                _write_frame(temporary / name, frame, suffix)
+                manifest["frames"].append({
+                    "index": frame.frame_index,
+                    "timestamp": frame.timestamp,
+                    "uri": name,
+                    "metadata": _json_value(frame.metadata, f"frame {ordinal}"),
+                })
+            (temporary / _MANIFEST_NAME).write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             if destination.exists():
                 shutil.rmtree(destination)
             temporary.replace(destination)

@@ -1,4 +1,4 @@
-"""Pure-Python TVMC and TSMC reference-topology sequence adapters."""
+"""Experimental reference-topology sequence codecs authored by Open4D."""
 
 from __future__ import annotations
 
@@ -36,16 +36,21 @@ def _fit(sequence: Sequence, face_budget: int):
             raise CodecError("temporal mesh codecs need non-empty triangle meshes")
         if any((mesh.colors is not None, mesh.normals is not None,
                 mesh.texture_coordinates is not None, bool(mesh.attributes))):
-            raise CodecError("TVMC/TSMC cannot preserve mesh attributes")
+            raise CodecError("experimental temporal codecs cannot preserve mesh attributes")
     if len(first.triangles) > face_budget:
         try:
-            preprocessing = import_module("open4d.codecs.qndf.build_dataset_open3d")
+            open3d = import_module("open3d")
         except ImportError as error:
             raise CodecError("surface fitting needs open4d[temporal]") from error
-        low, faces, _, normalization = preprocessing.build_pair(
-            first.positions, first.triangles, face_budget, 0
+        mesh = open3d.geometry.TriangleMesh(
+            open3d.utility.Vector3dVector(first.positions),
+            open3d.utility.Vector3iVector(first.triangles),
         )
-        reference = low * normalization["scale"] + normalization["bbox_min"]
+        simplified = mesh.simplify_quadric_decimation(face_budget)
+        reference = np.asarray(simplified.vertices, dtype=np.float32)
+        faces = np.asarray(simplified.triangles, dtype=np.uint32)
+        if not len(reference) or not len(faces):
+            raise CodecError("surface fitting produced an empty reference mesh")
     else:
         reference, faces = first.positions.copy(), first.triangles.copy()
     fitted = []
@@ -80,13 +85,15 @@ def _quantize(values, bits):
 
 
 class TemporalMeshCodec:
-    backend = "python-in-process"
+    backend = "python-experimental"
     lossless = False
     preserves = ("positions", "triangles")
 
     def __init__(self, identifier: str) -> None:
+        if identifier not in {"temporal-delta", "temporal-pca"}:
+            raise ValueError(f"unknown experimental temporal profile: {identifier}")
         self.id = identifier
-        self.suffixes = (f".{identifier[:2]}4d",)
+        self.suffixes = ((".td4d",) if identifier == "temporal-delta" else (".tp4d",))
         self.schema = f"open4d.{identifier}-sequence/v1"
 
     def can_decode(self, source: Path) -> bool:
@@ -110,7 +117,7 @@ class TemporalMeshCodec:
         reference, faces, fitted = _fit(sequence, face_budget)
         displacement = fitted - reference[None]
         payload = {"reference": reference, "triangles": faces}
-        if self.id == "tvmc":
+        if self.id == "temporal-delta":
             payload["displacement"], payload["scale"] = _quantize(
                 displacement, quantization_bits
             )
@@ -159,7 +166,7 @@ class TemporalMeshCodec:
                 if manifest.get("schema") != self.schema:
                     raise CodecError(f"unsupported {self.id} artifact schema")
                 reference, faces = artifact["reference"], artifact["triangles"]
-                if self.id == "tvmc":
+                if self.id == "temporal-delta":
                     positions = reference[None] + artifact["displacement"] * artifact["scale"]
                 else:
                     trajectories = (
@@ -182,5 +189,5 @@ class TemporalMeshCodec:
         ))
 
 
-TVMC_CODEC = TemporalMeshCodec("tvmc")
-TSMC_CODEC = TemporalMeshCodec("tsmc")
+TEMPORAL_DELTA_CODEC = TemporalMeshCodec("temporal-delta")
+TEMPORAL_PCA_CODEC = TemporalMeshCodec("temporal-pca")

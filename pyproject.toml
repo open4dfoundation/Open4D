@@ -31,7 +31,7 @@ n4mc   = ["torch", "trimesh", "scikit-image", "point-cloud-utils"]
 qndf   = ["torch", "open3d>=0.19", "trimesh", "tqdm"]
 temporal = ["open3d>=0.19", "trimesh", "point-cloud-utils"]
 dev    = ["build>=1.2", "pytest>=8", "scipy", "tomli>=2; python_version < '3.11'"]
-all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
+all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "DracoPy>=2,<3", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
 
 [tool.setuptools]
 include-package-data = false

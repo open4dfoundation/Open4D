@@ -14,7 +14,7 @@ from ._n4mc import N4MC_CODEC
 from ._npz import REFERENCE_CODECS
 from ._protocol import Codec, CodecError
 from ._qndf import QNDF_CODEC, QNDF_INT8_CODEC
-from ._temporal import TSMC_CODEC, TVMC_CODEC
+from ._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC
 from ._vmesh import FASTER_VDMC_CODEC, VDMC_CODEC
 
 
@@ -27,18 +27,39 @@ class CodecInfo:
     preserves: tuple[str, ...]
 
 
+_BUILTIN_CODECS = (
+    *REFERENCE_CODECS, DRACO_CODEC, TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC,
+    VDMC_CODEC, FASTER_VDMC_CODEC,
+)
+_SOURCE_CODECS = (
+    (KLT_CODEC, "codecs/klt/klt.py"),
+    (N4MC_CODEC, "codecs/n4mc/models/__init__.py"),
+    (QNDF_CODEC, "codecs/qndf/compress.py"),
+    (QNDF_INT8_CODEC, "codecs/qndf/compress.py"),
+)
+
+
+def _source_available(relative_path: str) -> bool:
+    return (Path(__file__).resolve().parents[1] / relative_path).is_file()
+
+
 _CODECS: dict[str, Codec] = {
     codec.id: codec
-    for codec in (
-        *REFERENCE_CODECS, DRACO_CODEC, KLT_CODEC, N4MC_CODEC,
-        QNDF_CODEC, QNDF_INT8_CODEC, TVMC_CODEC, TSMC_CODEC,
-        VDMC_CODEC, FASTER_VDMC_CODEC,
-    )
+    for codec in _BUILTIN_CODECS
 }
+_UNAVAILABLE_CODECS = {}
+for _codec_implementation, _source_path in _SOURCE_CODECS:
+    if _source_available(_source_path):
+        _CODECS[_codec_implementation.id] = _codec_implementation
+    else:
+        _UNAVAILABLE_CODECS[_codec_implementation.id] = (
+            "research implementation is not included in this installation; "
+            "use an Open4D source checkout pending provenance review"
+        )
 
 
 def register_codec(codec: Codec, *, replace: bool = False) -> None:
-    """Register an in-process codec implementation by its stable identifier."""
+    """Register a codec implementation by its stable identifier."""
     if not isinstance(codec, Codec):
         raise TypeError("codec must implement the Codec protocol")
     if not codec.id or not isinstance(codec.id, str):
@@ -49,6 +70,7 @@ def register_codec(codec: Codec, *, replace: bool = False) -> None:
 
 
 def available_codecs() -> tuple[CodecInfo, ...]:
+    """Describe codecs registered in this installation or source checkout."""
     return tuple(
         CodecInfo(
             codec.id,
@@ -70,6 +92,10 @@ def _codec(value: str | Codec | None, path: Path) -> Codec:
         try:
             return _CODECS[value]
         except KeyError:
+            if value in _UNAVAILABLE_CODECS:
+                raise CodecError(
+                    f"codec {value!r} is unavailable: {_UNAVAILABLE_CODECS[value]}"
+                ) from None
             raise ValueError(f"unknown codec {value!r}") from None
     matches = [codec for codec in _CODECS.values() if path.suffix in codec.suffixes]
     if len(matches) > 1 and path.is_file():
@@ -94,7 +120,7 @@ def encode_sequence(
     fps: float | None = None,
     **options,
 ) -> Path:
-    """Encode a canonical sequence or any path supported by :mod:`open4d.io`."""
+    """Encode a triangle-mesh sequence or a supported mesh path."""
     path = Path(destination)
     implementation = _codec(codec, path)
     if isinstance(sequence, Sequence):

@@ -14,7 +14,7 @@ class CodecError(RuntimeError):
 
 @runtime_checkable
 class Codec(Protocol):
-    """A replaceable in-process sequence encoder and decoder."""
+    """A replaceable triangle-mesh sequence encoder and decoder."""
 
     id: str
     suffixes: tuple[str, ...]

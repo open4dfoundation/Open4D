@@ -33,7 +33,9 @@ def _executable(value: str | os.PathLike[str] | None, variable: str) -> Path:
 
 
 def _run(command: list[str], label: str) -> None:
-    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    result = subprocess.run(
+        command, shell=False, check=False, capture_output=True, text=True
+    )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         raise CodecError(
@@ -74,7 +76,7 @@ class _DecodedProvider:
 
 
 class VMeshCodec:
-    """Wrap one complete V-Mesh encode/decode, never one process per frame."""
+    """Invoke one external V-Mesh process per sequence direction."""
 
     suffixes = (".v4d",)
     backend = "native-sequence"

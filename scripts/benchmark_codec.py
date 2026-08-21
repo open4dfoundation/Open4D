@@ -33,18 +33,50 @@ def synthetic(side: int, frames: int) -> Sequence:
     for index in range(frames):
         z = np.sin(3 * x + index / 10).ravel() / 20
         positions = np.column_stack((x.ravel(), y.ravel(), z)).astype(np.float32)
-        values.append(Frame(index, index / 30, TriangleMesh(positions, triangles)))
+        attributes = {"height_band": np.rint(z.ravel() * 1000).astype(np.int16)}
+        values.append(Frame(
+            index, index / 30, TriangleMesh(positions, triangles, attributes=attributes)
+        ))
     return Sequence(MemoryFrameProvider(values))
 
 
-def measured(function):
-    tracemalloc.start()
+def timed(function):
     start = time.perf_counter()
+    result = function()
+    return result, time.perf_counter() - start
+
+
+def peak_bytes(function, cleanup=None):
+    tracemalloc.start()
     try:
         result = function()
-        return result, time.perf_counter() - start, tracemalloc.get_traced_memory()[1]
+        peak = tracemalloc.get_traced_memory()[1]
+        if cleanup is not None:
+            cleanup(result)
+        return peak
     finally:
         tracemalloc.stop()
+
+
+def _arrays_exact(left, right) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    return (
+        left.shape == right.shape
+        and left.dtype == right.dtype
+        and np.array_equal(left, right)
+    )
+
+
+def _geometry_exact(left: TriangleMesh, right: TriangleMesh) -> bool:
+    return (
+        all(_arrays_exact(getattr(left, name), getattr(right, name)) for name in _FIELDS)
+        and left.attributes.keys() == right.attributes.keys()
+        and all(
+            _arrays_exact(left.attributes[name], right.attributes[name])
+            for name in left.attributes
+        )
+    )
 
 
 def run(
@@ -55,13 +87,17 @@ def run(
     # the supplied Sequence normally; decode timing reads only the artifact.
     expected_frames = tuple(source)
     info = next(item for item in available_codecs() if item.id == codec)
-    artifact, encode_s, encode_peak = measured(
-        lambda: encode_sequence(
-            source, output, codec=codec, overwrite=True, **(encode_options or {})
-        )
+    encode = lambda: encode_sequence(
+        source, output, codec=codec, overwrite=True, **(encode_options or {})
     )
-    decoded, open_s, open_peak = measured(
+    artifact, encode_s = timed(encode)
+    encode_peak = peak_bytes(encode)
+    decoded, open_s = timed(
         lambda: decode_sequence(artifact, **(decode_options or {}))
+    )
+    open_peak = peak_bytes(
+        lambda: decode_sequence(artifact, **(decode_options or {})),
+        cleanup=lambda sequence: sequence.close(),
     )
     assert decoded.metadata == source.metadata
     if info.lossless:
@@ -78,13 +114,7 @@ def run(
             assert actual.frame_index == expected.frame_index
             assert actual.timestamp == expected.timestamp
             assert actual.metadata == expected.metadata
-            for name in _FIELDS:
-                left = getattr(actual.geometry, name)
-                right = getattr(expected.geometry, name)
-                exact &= (left is None and right is None) or (
-                    left is not None and right is not None and np.array_equal(left, right)
-                )
-            exact &= actual.geometry.attributes.keys() == expected.geometry.attributes.keys()
+            exact &= _geometry_exact(actual.geometry, expected.geometry)
             if actual.geometry.positions.shape == expected.geometry.positions.shape:
                 error = actual.geometry.positions - expected.geometry.positions
                 squared_error += float(np.square(error).sum())
@@ -97,9 +127,18 @@ def run(
         rms = (squared_error / compared_values) ** 0.5 if compared_values else float("nan")
         return vertices, triangles, exact, rms, maximum_error
 
-    result, decode_s, decode_peak = measured(lambda: decode_and_validate(decoded))
+    result, decode_s = timed(lambda: decode_and_validate(decoded))
     vertices, triangles, exact, rms_error, maximum_error = result
     decoded.close()
+
+    def decode_validate_close():
+        measured_sequence = decode_sequence(artifact, **(decode_options or {}))
+        try:
+            return decode_and_validate(measured_sequence)
+        finally:
+            measured_sequence.close()
+
+    decode_peak = peak_bytes(decode_validate_close)
     return {
         "codec": codec,
         "frames": len(source),
@@ -141,7 +180,8 @@ def main() -> None:
         open_sequence(args.source, fps=30)[: args.frames]
         if args.source else synthetic(args.side, args.frames)
     )
-    frames, load_s, load_peak = measured(lambda: tuple(lazy))
+    frames, load_s = timed(lambda: tuple(lazy))
+    load_peak = peak_bytes(lambda: tuple(lazy))
     sequence = Sequence(MemoryFrameProvider(
         frames,
         metadata=lazy.metadata,

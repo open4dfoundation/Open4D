@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -40,3 +41,35 @@ def test_adjacency_preprocessing_matches_original_face_scan():
 
     torch.testing.assert_close(actual.neighbors, torch.stack(expected_neighbors))
     torch.testing.assert_close(actual.edge_wts, torch.stack(expected_weights))
+
+
+@pytest.mark.open3d
+def test_simplification_retains_every_disconnected_component():
+    o3d = pytest.importorskip("open3d")
+    from open4d.codecs.qndf.build_dataset_open3d import build_pair
+
+    vertices = np.array([
+        [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+        [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+    ], dtype=np.float64)
+    faces = np.array([
+        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+        [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+        [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
+    ], dtype=np.int32)
+    vertices = np.vstack((vertices, vertices + [4, 0, 0]))
+    faces = np.vstack((faces, faces + 8))
+
+    low, low_faces, target, metadata = build_pair(
+        vertices, faces, coarse_size=8, num_subdiv=0
+    )
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(low), o3d.utility.Vector3iVector(low_faces)
+    )
+    _, component_counts, _ = mesh.cluster_connected_triangles()
+
+    assert metadata["component_count"] == 2
+    assert len(component_counts) == 2
+    assert sum(item["allocated_coarse_faces"] for item in metadata["components"]) == 8
+    assert all(item["actual_coarse_faces"] > 0 for item in metadata["components"])
+    assert target.shape == low.shape

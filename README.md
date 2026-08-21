@@ -244,7 +244,7 @@ python -m pip install -e ".[usd]"    # OpenUSD containers
 python -m pip install -e ".[tools]"  # trimesh, for extra mesh formats
 python -m pip install -e ".[open3d]" # Open3D adapter; Python 3.12 or older
 python -m pip install -e ".[qndf]"  # QNDF/QNDF-INT8 in-process adapters
-python -m pip install -e ".[temporal]" # TVMC/TSMC in-process adapters
+python -m pip install -e ".[temporal]" # experimental temporal-delta/PCA codecs
 python -m pip install -e ".[all]"
 ```
 
@@ -262,8 +262,8 @@ the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 
 ## Sequence viewer details
 
-The public Python API loads, encodes, decodes, and visualizes a sequence without
-shelling out:
+The public Python API loads, encodes, decodes, and visualizes finite
+triangle-mesh sequences independently of their supported file formats:
 
 ```python
 from open4d.codec import decode_sequence, encode_sequence
@@ -276,16 +276,34 @@ decoded = decode_sequence(artifact)
 visualize(decoded, up="y")
 ```
 
+`write_sequence(sequence, "frames/", format="ply")` writes a versioned
+`open4d.sequence.json` beside the frame files, so reopening the directory keeps
+source frame indices, timestamps, frame/sequence metadata, and topology
+declarations. Empty sequences are rejected before the destination is changed.
+
 Five lossless, in-process reference codecs are included: `raw`, `deflate`,
 `bzip2`, `lzma`, and byte-level `rle` (`npz` remains the default DEFLATE alias).
 They share a safe NumPy-array container so they compare storage strategies, not
-research geometry models. In-process research adapters are also registered for
-`klt`, `n4mc`, `qndf`, `qndf-int8`, `tvmc`, and `tsmc`; each writes a
-self-contained artifact that decodes without encoder-side state or shell
-scripts. Callers can also register another `open4d.codec.Codec`. For an
-executable reference-codec comparison using
+research geometry models. Source checkouts register in-process adapters for
+`klt`, `n4mc`, `qndf`, and `qndf-int8`; the lightweight wheel omits them until
+their provenance review is complete. Open4D's separate `temporal-delta` and
+`temporal-pca` experiments are not the repository's TVMC or TSMC pipelines.
+The V-DMC adapters do not execute shell scripts, but they do invoke configured
+native encoder and decoder processes once per sequence. Callers can also
+register another `open4d.codec.Codec`. For an all-registered-codec attempt using
 `4d_files/Rafa_Approves_hd_4k`, open
 [`examples/open4d_sequence_codec.ipynb`](examples/open4d_sequence_codec.ipynb).
+Set `OPEN4D_NOTEBOOK_REQUIRE_ALL=1` in a fully provisioned environment to make
+any codec failure stop the notebook instead of appearing only in its result table.
+
+This API slice standardizes files around `Sequence[Frame[TriangleMesh]]`; it is
+not yet representation-independent. First-class point-cloud, volume, Gaussian,
+USD-sequence, and live-stream values require separate contracts.
+
+Normal CI runs dependency-complete CPU encode/fresh-decode contracts for KLT,
+N4MC, QNDF, and QNDF-int8. The larger two-format Rafa quality/export matrix is
+an additional CUDA acceptance test gated by `OPEN4D_TEST_RESEARCH_CODECS=1` and
+`OPEN4D_RAFA_DATASET`; it is not presented as part of ordinary CI coverage.
 
 `examples/visualization/visualize_sequence.py` is the command-line client:
 

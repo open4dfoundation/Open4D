@@ -1,4 +1,4 @@
-"""Modular in-process codecs for Open4D sequences."""
+"""Modular codecs for finite Open4D triangle-mesh sequences."""
 
 from ._api import (
     CodecInfo,

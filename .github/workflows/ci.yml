@@ -72,6 +72,25 @@ jobs:
           python -m pytest -m open3d
           integrations/open3d/tests open4d/torch_ops/tests
 
+  research-codecs:
+    name: Research codec contracts / CPU
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install research codec dependencies
+        run: python -m pip install -e '.[dev,klt,n4mc,qndf]'
+      - name: Run real in-process encode and fresh-decode contracts on CPU
+        run: >-
+          python -m pytest
+          open4d/codec/tests/test_research_cpu.py
+          open4d/codec/tests/test_qndf_preprocess.py
+          open4d/codecs/n4mc/tests/test_codec.py
+
   io-tools:
     name: I/O / real optional formats and benchmark smoke
     runs-on: blacksmith-2vcpu-ubuntu-2404

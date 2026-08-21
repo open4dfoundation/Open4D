@@ -29,8 +29,12 @@ def test_sequence_codec_notebook_executes_real_data_headlessly(
 
     assert namespace["info"].frame_count == 157
     assert len(namespace["demo"]) == 2
-    assert [row[0] for row in namespace["results"]] == [
-        "raw", "deflate", "bzip2", "lzma", "rle"
-    ]
-    assert all((tmp_path / f"rafa-{codec}.o4d").is_file()
-               for codec in namespace["CODECS"])
+    rows = {row["codec"]: row for row in namespace["results"]}
+    assert set(rows) == set(namespace["CODECS"]) == set(namespace["CODEC_INFOS"])
+    reference = {"raw", "deflate", "bzip2", "lzma", "rle", "npz"}
+    assert all(rows[codec]["status"] == "ok" for codec in reference)
+    assert not {"tvmc", "tsmc"} & set(rows)
+    for codec, row in rows.items():
+        if row["status"] == "ok":
+            suffix = namespace["CODEC_INFOS"][codec].suffixes[0]
+            assert (tmp_path / f"rafa-{codec}{suffix}").is_file()

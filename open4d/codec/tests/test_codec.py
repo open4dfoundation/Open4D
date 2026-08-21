@@ -158,11 +158,16 @@ def test_all_reference_codec_ids_are_public():
     assert infos["npz"].lossless is True
     assert "attributes" in infos["npz"].preserves
     assert infos["draco"].backend == "python-binding"
-    research = {"klt", "n4mc", "qndf", "qndf-int8", "tvmc", "tsmc"}
+    research = {"klt", "n4mc", "qndf", "qndf-int8"}
     assert all(infos[codec].backend == "python-in-process" for codec in research)
+    experimental = {"temporal-delta", "temporal-pca"}
+    assert all(infos[codec].backend == "python-experimental" for codec in experimental)
+    assert not {"tvmc", "tsmc"} & set(infos)
 
 
-@pytest.mark.parametrize("codec,suffix", (("tvmc", ".tv4d"), ("tsmc", ".ts4d")))
+@pytest.mark.parametrize("codec,suffix", (
+    ("temporal-delta", ".td4d"), ("temporal-pca", ".tp4d"),
+))
 def test_temporal_codecs_fresh_decode_without_processes(tmp_path, codec, suffix):
     frames = [Frame(
         20 + index, index / 30,
@@ -257,6 +262,23 @@ def test_registered_codec_can_be_selected_by_name(tmp_path, monkeypatch):
     assert len(decode_sequence(destination)) == 2
     with pytest.raises(ValueError, match="already registered"):
         register_codec(codec)
+
+
+def test_source_only_codec_has_an_actionable_installed_package_error(
+    tmp_path, monkeypatch
+):
+    import open4d.codec._api as implementation
+
+    monkeypatch.setattr(
+        implementation, "_CODECS",
+        {key: value for key, value in implementation._CODECS.items() if key != "klt"},
+    )
+    monkeypatch.setattr(
+        implementation, "_UNAVAILABLE_CODECS",
+        {"klt": "research implementation is not included in this installation"},
+    )
+    with pytest.raises(CodecError, match="source|not included"):
+        encode_sequence(sequence(), tmp_path / "take.k4d", codec="klt")
 
 
 def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch):
