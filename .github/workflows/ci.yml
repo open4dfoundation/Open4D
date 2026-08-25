@@ -103,9 +103,9 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install I/O tools tier
-        run: python -m pip install -e '.[dev,tools]'
+        run: python -m pip install -e '.[dev,tools,draco]'
       - name: Exercise built-in and Trimesh-backed files
-        run: python -m pytest open4d/io/tests
+        run: python -m pytest open4d/io/tests open4d/codec/tests/test_draco.py
       - name: Validate benchmark paths
         run: |
           python scripts/benchmark_io.py --side 24 --frames 20 --repeats 2 --json
