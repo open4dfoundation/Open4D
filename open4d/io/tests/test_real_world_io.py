@@ -202,12 +202,13 @@ def test_every_supported_mesh_input_converts_to_every_output(tmp_path):
     expected = signature(canonical)
     for input_format in formats:
         input_path = write_sequence(
-            canonical, tmp_path / f"input.{input_format}"
+            canonical, tmp_path / f"input.{input_format}", allow_lossy=True
         )
         loaded = open_sequence(input_path)
         for output_format in formats:
             output_path = write_sequence(
-                loaded, tmp_path / f"{input_format}-to-{output_format}.{output_format}"
+                loaded, tmp_path / f"{input_format}-to-{output_format}.{output_format}",
+                allow_lossy=True,
             )
             actual = signature(open_sequence(output_path))
             np.testing.assert_allclose(actual[0], expected[0], atol=1e-5)

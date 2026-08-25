@@ -33,9 +33,8 @@ def synthetic(side: int, frames: int) -> Sequence:
     for index in range(frames):
         z = np.sin(3 * x + index / 10).ravel() / 20
         positions = np.column_stack((x.ravel(), y.ravel(), z)).astype(np.float32)
-        attributes = {"height_band": np.rint(z.ravel() * 1000).astype(np.int16)}
         values.append(Frame(
-            index, index / 30, TriangleMesh(positions, triangles, attributes=attributes)
+            index, index / 30, TriangleMesh(positions, triangles)
         ))
     return Sequence(MemoryFrameProvider(values))
 
@@ -79,10 +78,60 @@ def _geometry_exact(left: TriangleMesh, right: TriangleMesh) -> bool:
     )
 
 
+def _surface_points(mesh: TriangleMesh, count: int = 1024) -> np.ndarray:
+    vertices = np.asarray(mesh.positions, dtype=np.float64)
+    faces = np.asarray(mesh.triangles, dtype=np.int64)
+    if not len(vertices) or not len(faces):
+        raise AssertionError("decoded frames must contain vertices and triangles")
+    corners = vertices[faces]
+    areas = np.linalg.norm(
+        np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
+        axis=1,
+    )
+    if not np.any(areas):
+        raise AssertionError("decoded frames must contain nondegenerate triangles")
+    choices = np.searchsorted(
+        np.cumsum(areas) / areas.sum(), (np.arange(count) + .5) / count
+    ).clip(max=len(faces) - 1)
+    sample = np.arange(count, dtype=np.float64)
+    first = np.mod(sample * 0.7548776662466927, 1.0)
+    second = np.mod(sample * 0.5698402909980532, 1.0)
+    reflected = first + second > 1
+    first[reflected], second[reflected] = (
+        1 - first[reflected], 1 - second[reflected]
+    )
+    selected = corners[choices]
+    return (
+        selected[:, 0]
+        + first[:, None] * (selected[:, 1] - selected[:, 0])
+        + second[:, None] * (selected[:, 2] - selected[:, 0])
+    )
+
+
+def _nearest(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    distances = []
+    for start in range(0, len(left), 256):
+        difference = left[start:start + 256, None] - right[None]
+        distances.append(np.sqrt(np.square(difference).sum(2).min(1)))
+    return np.concatenate(distances)
+
+
+def _surface_errors(left: TriangleMesh, right: TriangleMesh) -> tuple[float, float]:
+    if _arrays_exact(left.positions, right.positions) and _arrays_exact(
+        left.triangles, right.triangles
+    ):
+        return 0.0, 0.0
+    left_points, right_points = _surface_points(left), _surface_points(right)
+    distances = np.concatenate((
+        _nearest(left_points, right_points), _nearest(right_points, left_points)
+    ))
+    return float(np.sqrt(np.mean(np.square(distances)))), float(distances.max())
+
+
 def run(
     source: Sequence, output: Path, codec: str = "npz", *,
     encode_options: dict | None = None, decode_options: dict | None = None,
-) -> dict[str, str | float | int]:
+) -> dict[str, str | float | int | bool | None]:
     # Keep reference parsing outside every measurement. Encode still consumes
     # the supplied Sequence normally; decode timing reads only the artifact.
     expected_frames = tuple(source)
@@ -109,36 +158,55 @@ def run(
         vertices = triangles = 0
         squared_error = maximum_error = 0.0
         compared_values = 0
+        surface_squared = surface_maximum = 0.0
         exact = True
         for expected, actual in zip(expected_frames, sequence, strict=True):
             assert actual.frame_index == expected.frame_index
             assert actual.timestamp == expected.timestamp
             assert actual.metadata == expected.metadata
+            assert len(actual.geometry.positions) and len(actual.geometry.triangles)
             exact &= _geometry_exact(actual.geometry, expected.geometry)
             if actual.geometry.positions.shape == expected.geometry.positions.shape:
                 error = actual.geometry.positions - expected.geometry.positions
                 squared_error += float(np.square(error).sum())
                 compared_values += error.size
                 maximum_error = max(maximum_error, float(np.abs(error).max()))
+            surface_rms, surface_max = _surface_errors(
+                expected.geometry, actual.geometry
+            )
+            surface_squared += surface_rms ** 2
+            surface_maximum = max(surface_maximum, surface_max)
             vertices += len(actual.geometry.positions)
             triangles += len(actual.geometry.triangles)
         if info.lossless and not exact:
             raise AssertionError(f"lossless codec {codec} changed decoded arrays")
-        rms = (squared_error / compared_values) ** 0.5 if compared_values else float("nan")
-        return vertices, triangles, exact, rms, maximum_error
+        rms = (squared_error / compared_values) ** 0.5 if compared_values else None
+        surface_rms = (surface_squared / len(expected_frames)) ** .5
+        return (
+            vertices, triangles, exact, rms,
+            maximum_error if compared_values else None,
+            surface_rms, surface_maximum,
+        )
 
-    result, decode_s = timed(lambda: decode_and_validate(decoded))
-    vertices, triangles, exact, rms_error, maximum_error = result
+    result, validate_s = timed(lambda: decode_and_validate(decoded))
+    (
+        vertices, triangles, exact, rms_error, maximum_error,
+        surface_rms_error, surface_max_error,
+    ) = result
     decoded.close()
+    decode_s = open_s + validate_s
 
-    def decode_validate_close():
+    def decode_consume_close():
         measured_sequence = decode_sequence(artifact, **(decode_options or {}))
         try:
-            return decode_and_validate(measured_sequence)
+            return sum(
+                len(frame.geometry.positions) + len(frame.geometry.triangles)
+                for frame in measured_sequence
+            )
         finally:
             measured_sequence.close()
 
-    decode_peak = peak_bytes(decode_validate_close)
+    decode_peak = peak_bytes(decode_consume_close)
     return {
         "codec": codec,
         "frames": len(source),
@@ -147,6 +215,7 @@ def run(
         "artifact_bytes": artifact.stat().st_size,
         "encode_s": encode_s,
         "decode_open_ms": open_s * 1000,
+        "decode_validate_s": validate_s,
         "decode_all_s": decode_s,
         "encode_frames_per_s": len(source) / encode_s,
         "decode_frames_per_s": len(source) / decode_s,
@@ -156,6 +225,8 @@ def run(
         "exact": exact,
         "position_rms_error": rms_error,
         "position_max_error": maximum_error,
+        "surface_rms_error": surface_rms_error,
+        "surface_max_error": surface_max_error,
     }
 
 
@@ -188,6 +259,7 @@ def main() -> None:
         topology=lazy.topology,
         has_constant_vertex_count=lazy.has_constant_vertex_count,
         has_vertex_correspondence=lazy.has_vertex_correspondence,
+        allow_nonmonotonic_timestamps=lazy.allow_nonmonotonic_timestamps,
     ))
     codecs = tuple(dict.fromkeys(
         item.strip() for item in args.codecs.split(",") if item.strip()
@@ -208,15 +280,15 @@ def main() -> None:
     report = {"source_load_s": load_s, "source_load_peak_bytes": load_peak,
               "results": results}
     if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     else:
         print(f"source_load_s                  {load_s:.3f}")
-        print("codec      bytes       encode_s   decode_s   exact  position_rms")
+        print("codec      bytes       encode_s   decode_s   exact  surface_rms")
         for result in results:
             print(
                 f"{result['codec']:<10} {result['artifact_bytes']:<11} "
                 f"{result['encode_s']:<10.3f} {result['decode_all_s']:<10.3f} "
-                f"{str(result['exact']):<6} {result['position_rms_error']:.3g}"
+                f"{str(result['exact']):<6} {result['surface_rms_error']:.3g}"
             )
 
 

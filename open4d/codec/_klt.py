@@ -39,6 +39,9 @@ class _KLTProvider:
         self.topology = TopologyMode.CHANGING
         self.has_constant_vertex_count = None
         self.has_vertex_correspondence = False
+        self.allow_nonmonotonic_timestamps = manifest.get(
+            "allow_nonmonotonic_timestamps", False
+        )
         normalization = manifest["normalization"]
         self.center = np.asarray(normalization["center"], dtype=np.float32)
         self.scale = float(normalization["scale"])
@@ -99,6 +102,7 @@ class KLTCodec:
         manifest = {
             "schema": _SCHEMA, "codec": self.id,
             "metadata": _json_value(sequence.metadata, "sequence"),
+            "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [{
                 "frame_index": frame.frame_index, "timestamp": frame.timestamp,
                 "metadata": _json_value(frame.metadata, f"frame {ordinal}"),

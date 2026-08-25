@@ -88,7 +88,9 @@ def test_every_input_codec_and_output_combination(tmp_path):
 
     expected = signature(canonical)
     for input_info in available_formats():
-        source = write_sequence(canonical, tmp_path / f"in.{input_info.id}")
+        source = write_sequence(
+            canonical, tmp_path / f"in.{input_info.id}", allow_lossy=True
+        )
         for codec_info in available_codecs():
             if codec_info.backend not in {"python", "python-binding"}:
                 continue
@@ -102,6 +104,7 @@ def test_every_input_codec_and_output_combination(tmp_path):
                 output = write_sequence(
                     decoded,
                     tmp_path / f"{input_info.id}-{codec_info.id}-{output_info.id}.{output_info.id}",
+                    allow_lossy=True,
                 )
                 actual = signature(open_sequence(output))
                 np.testing.assert_allclose(actual[0], expected[0], atol=1e-4)

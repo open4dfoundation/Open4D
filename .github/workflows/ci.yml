@@ -89,6 +89,7 @@ jobs:
           python -m pytest
           open4d/codec/tests/test_research_cpu.py
           open4d/codec/tests/test_qndf_preprocess.py
+          open4d/codec/tests/test_qndf_entrypoints.py
           open4d/codecs/n4mc/tests/test_codec.py
 
   io-tools:

@@ -54,6 +54,23 @@ def surface_rms_fraction(expected, actual, seed):
     return np.sqrt(np.mean(distances ** 2)) / np.linalg.norm(np.ptp(left, axis=0))
 
 
+def component_count(mesh):
+    parent = np.arange(len(mesh.positions))
+
+    def find(value):
+        while parent[value] != value:
+            parent[value] = parent[parent[value]]
+            value = parent[value]
+        return value
+
+    for first, second, third in mesh.triangles:
+        for left, right in ((first, second), (first, third)):
+            left, right = find(left), find(right)
+            if left != right:
+                parent[right] = left
+    return len({find(value) for value in np.unique(mesh.triangles)})
+
+
 @pytest.mark.parametrize("codec,suffix,options", (
     ("klt", ".k4d", {
         "resolution": 7, "num_components": 4, "block_size": 2,
@@ -88,7 +105,7 @@ def test_research_codec_cpu_encode_and_fresh_decode(
     assert artifact.stat().st_size > 0
     assert len(first) == len(second) == len(source)
     assert first.metadata == second.metadata == source.metadata
-    quality_limits = {"klt": .2, "n4mc": .45, "qndf": .15, "qndf-int8": .15}
+    quality_limits = {"klt": .2, "n4mc": .08, "qndf": .15, "qndf-int8": .15}
     for ordinal, (expected, left, right) in enumerate(
         zip(source, first, second, strict=True)
     ):
@@ -98,8 +115,51 @@ def test_research_codec_cpu_encode_and_fresh_decode(
         assert left.metadata == right.metadata == expected.metadata
         np.testing.assert_array_equal(left.geometry.positions, right.geometry.positions)
         np.testing.assert_array_equal(left.geometry.triangles, right.geometry.triangles)
+        assert component_count(left.geometry) == 1
         assert surface_rms_fraction(
             expected.geometry, left.geometry, 200 + ordinal * 2
         ) < quality_limits[codec]
+    first.close()
+    second.close()
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("codec,suffix,options", (
+    ("n4mc", ".n4d", {
+        "resolution": 7, "epochs": 30, "hidden_channels": (4, 8),
+        "latent_channels": 4, "learning_rate": 3e-3,
+    }),
+    ("qndf", ".q4d", {
+        "coarse_size": 12, "num_subdiv": 0, "epochs": 2,
+        "hidden_dim": 8, "num_layers": 2, "batch_size": 32,
+    }),
+    ("qndf-int8", ".qi4d", {
+        "coarse_size": 12, "num_subdiv": 0, "epochs": 2,
+        "hidden_dim": 8, "num_layers": 2, "batch_size": 32,
+    }),
+))
+def test_neural_codec_mps_encode_and_fresh_decode(tmp_path, codec, suffix, options):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("trimesh")
+    pytest.importorskip("point_cloud_utils")
+    pytest.importorskip("open3d")
+    if not torch.backends.mps.is_available():
+        pytest.skip("Apple Metal/MPS is unavailable")
+    source = moving_cube()
+    artifact = encode_sequence(
+        source, tmp_path / f"cube{suffix}", codec=codec, device="mps", **options
+    )
+    first = decode_sequence(artifact, device="mps")
+    second = decode_sequence(artifact, device="mps")
+
+    for ordinal, (expected, left, right) in enumerate(
+        zip(source, first, second, strict=True)
+    ):
+        np.testing.assert_array_equal(left.geometry.positions, right.geometry.positions)
+        np.testing.assert_array_equal(left.geometry.triangles, right.geometry.triangles)
+        assert component_count(left.geometry) == 1
+        assert surface_rms_fraction(
+            expected.geometry, left.geometry, 400 + ordinal * 2
+        ) < .15
     first.close()
     second.close()

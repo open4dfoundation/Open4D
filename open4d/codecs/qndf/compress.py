@@ -83,6 +83,15 @@ class MeshDataset(Dataset):
     def __getitem__(self, idx):
         return [self.pv[idx], self.neighbors[idx], self.edge_wts[idx], self.gv[idx]]
 
+
+def _remove_pruning(parameters):
+    """Make a pruned model state loadable by the ordinary decoder MLP."""
+    from torch.nn.utils import prune
+
+    for module, name in parameters:
+        if prune.is_pruned(module):
+            prune.remove(module, name)
+
 def parse_args():
     pr = ap.ArgumentParser()
     pr.add_argument("mesh_name", type=str, help="name of the mesh file to be compressed")
@@ -96,7 +105,7 @@ def parse_args():
     pr.add_argument("--output_scale", "-os", type=float, default=1414, help="Scale factor of the outputs")
     pr.add_argument("--run_suffix", "-rs", type=str, default="", help="a suffix to add to the run name")
     pr.add_argument("--output-dir", type=str, default="", help="directory in which to retain run artifacts")
-    pr.add_argument("--keep-artifacts", action="store_true", help="retain the reconstruction and model files")
+    pr.add_argument("--keep-artifacts", action="store_true", help="retain reconstruction files in addition to the decoder checkpoint")
     pr.add_argument("--device", type=str, default="cuda:0",
                     help="torch device to train on. The default matches the "
                          "NVIDIA boxes this codec was developed on; pass cpu "
@@ -250,6 +259,7 @@ if __name__=="__main__":
         # mq = quantize_dynamic(model, qconfig_spec={nn.Linear}, dtype=torch.qint8, inplace=False).cpu()
         # tv = lr.cpu() + mq(pe_inputs.cpu(), dset.neighbors.cpu(), dset.edge_wts.cpu())/args.output_scale
         # tv = tv.cuda()
+        _remove_pruning(params_to_prune)
         torch.save({
             "schema": "open4d.qndf/v1",
             "model_state_dict": model.state_dict(),
@@ -264,6 +274,10 @@ if __name__=="__main__":
             "output_scale": args.output_scale,
             "normalization": normalization,
         }, best_model_path)
+        try:
+            mlflow.log_artifact(best_model_path, artifact_path=artifact_path)
+        except Exception:
+            pass
         reloaded = MLP(
             3 * args.pe_dim, args.hidden_dim, 3, args.num_layers
         ).to(device)
@@ -358,7 +372,7 @@ if __name__=="__main__":
         print(f'Total Size of Compressed Representation is {((size+coarse_mem)/1024):.2f}KB')
 
         if not args.keep_artifacts:
-            for path in (best_model_path, prequant_path, reconstruction_path, os.path.join(output_dir, 'coded_weights.bin')):
+            for path in (prequant_path, reconstruction_path, os.path.join(output_dir, 'coded_weights.bin')):
                 try:
                     os.remove(path)
                 except FileNotFoundError:
