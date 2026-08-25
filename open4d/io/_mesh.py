@@ -200,8 +200,11 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                     [columns["x"], columns["y"], columns["z"]], axis=-1
                 ).astype(np.float32)
                 if {"red", "green", "blue"} <= set(columns):
+                    color_names = ["red", "green", "blue"]
+                    if "alpha" in columns:
+                        color_names.append("alpha")
                     color_values = np.stack(
-                        [columns["red"], columns["green"], columns["blue"]], axis=-1
+                        [columns[name] for name in color_names], axis=-1
                     )
                     color_properties = {
                         prop["name"]: prop for prop in properties if not prop["list"]
@@ -210,7 +213,7 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                         np.issubdtype(
                             _ply_dtype(color_properties[name]["type"]), np.integer
                         )
-                        for name in ("red", "green", "blue")
+                        for name in color_names
                     }
                     if len(color_kinds) != 1:
                         raise UnsupportedPlyVariant(
@@ -290,14 +293,19 @@ def write_ply(
     path.parent.mkdir(parents=True, exist_ok=True)
     positions = np.asarray(positions, dtype=np.float32)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    color_names = []
     if colors is not None:
-        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+        colors = np.asarray(colors, dtype=np.float32)
+        color_names = ["red", "green", "blue"]
+        if colors.shape[1] == 4:
+            color_names.append("alpha")
+        fields += [(name, "<f4") for name in color_names]
 
     vertices = np.empty(len(positions), dtype=np.dtype(fields))
     vertices["x"], vertices["y"], vertices["z"] = positions.T
     if colors is not None:
-        colors = np.asarray(colors, dtype=np.uint8)
-        vertices["red"], vertices["green"], vertices["blue"] = colors.T
+        for column, name in enumerate(color_names):
+            vertices[name] = colors[:, column]
 
     header = [
         "ply",
@@ -308,11 +316,7 @@ def write_ply(
         "property float z",
     ]
     if colors is not None:
-        header += [
-            "property uchar red",
-            "property uchar green",
-            "property uchar blue",
-        ]
+        header += [f"property float {name}" for name in color_names]
     if triangles is not None and len(triangles) > 0:
         header += [
             f"element face {len(triangles)}",

@@ -36,6 +36,9 @@ class _DracoProvider:
         self.topology = TopologyMode(manifest.get("topology", "unknown"))
         self.has_constant_vertex_count = manifest.get("has_constant_vertex_count")
         self.has_vertex_correspondence = manifest.get("has_vertex_correspondence")
+        self.allow_nonmonotonic_timestamps = manifest.get(
+            "allow_nonmonotonic_timestamps", False
+        )
 
     @property
     def frame_count(self) -> int:
@@ -112,6 +115,7 @@ class DracoCodec:
             "topology": sequence.topology.value,
             "has_constant_vertex_count": sequence.has_constant_vertex_count,
             "has_vertex_correspondence": sequence.has_vertex_correspondence,
+            "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [],
         }
         with tempfile.NamedTemporaryFile(

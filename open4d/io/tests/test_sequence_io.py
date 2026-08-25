@@ -281,6 +281,70 @@ def test_write_sequence_is_format_independent_and_reopenable(tmp_path):
             np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
 
 
+def test_directory_manifest_preserves_reversed_view_timing_policy(tmp_path):
+    frames = [
+        Frame(index, float(index), TriangleMesh(
+            [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]
+        ))
+        for index in range(2)
+    ]
+    source = Sequence(MemoryFrameProvider(frames))[::-1]
+
+    decoded = open_sequence(write_sequence(source, tmp_path / "reversed"))
+
+    assert decoded.allow_nonmonotonic_timestamps is True
+    assert decoded.timestamps == (1.0, 0.0)
+
+
+def test_single_file_export_requires_explicit_lossy_policy(tmp_path):
+    source = Sequence(MemoryFrameProvider([
+        Frame(41, 1.25, TriangleMesh(
+            [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]
+        ), metadata={"camera": "left"})
+    ], metadata={"capture": "rafa"}, topology=TopologyMode.UNKNOWN))
+
+    with pytest.raises(UnsupportedFeatureError, match="temporal identity"):
+        write_sequence(source, tmp_path / "frame.obj")
+    assert not (tmp_path / "frame.obj").exists()
+
+    output = write_sequence(source, tmp_path / "frame.obj", allow_lossy=True)
+    assert output.is_file()
+
+
+def test_ply_round_trip_preserves_float_rgba_colors(tmp_path):
+    colors = np.array([
+        [0.125, 0.25, 0.5, 0.75],
+        [0.9, 0.8, 0.7, 0.6],
+        [0.01, 0.02, 0.03, 0.04],
+    ], dtype=np.float32)
+    source = Sequence(MemoryFrameProvider([Frame(
+        0, 0, TriangleMesh(
+            [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]], colors=colors
+        )
+    )]))
+
+    decoded = open_sequence(write_sequence(source, tmp_path / "rgba", format="ply"))
+
+    np.testing.assert_array_equal(decoded[0].geometry.colors, colors)
+
+
+@pytest.mark.parametrize("format", ("off", "glb", "gltf"))
+def test_trimesh_color_export_requires_explicit_lossy_policy(tmp_path, format):
+    source = Sequence(MemoryFrameProvider([Frame(
+        0, 0, TriangleMesh(
+            np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
+            [[0, 1, 2]],
+            colors=[[0.125, 0.25, 0.5], [0.9, 0.8, 0.7], [0.01, 0.02, 0.03]],
+        )
+    )]))
+    destination = tmp_path / format
+
+    with pytest.raises(UnsupportedFeatureError, match="color export.*lossy"):
+        write_sequence(source, destination, format=format)
+
+    assert not destination.exists()
+
+
 def test_writer_rejects_empty_sequence_without_touching_destination(tmp_path):
     source = Sequence(MemoryFrameProvider([]))
     destination = tmp_path / "frames"
@@ -304,6 +368,6 @@ def test_writer_rejects_silent_field_loss_and_cleans_partial_output(tmp_path):
     destination = tmp_path / "frames"
 
     with pytest.raises(UnsupportedFeatureError, match="label"):
-        write_sequence(source, destination, format="obj")
+        write_sequence(source, destination, format="obj", allow_lossy=True)
 
     assert not destination.exists()

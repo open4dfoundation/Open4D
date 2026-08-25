@@ -280,6 +280,10 @@ visualize(decoded, up="y")
 `open4d.sequence.json` beside the frame files, so reopening the directory keeps
 source frame indices, timestamps, frame/sequence metadata, and topology
 declarations. Empty sequences are rejected before the destination is changed.
+Single mesh-file exports require `allow_lossy=True` because that storage cannot
+preserve sequence timing, metadata, or topology declarations.
+Trimesh-backed OFF/GLB/glTF color export also requires that opt-in because OFF
+drops vertex color and GLB/glTF quantize canonical float colors to eight bits.
 
 Five lossless, in-process reference codecs are included: `raw`, `deflate`,
 `bzip2`, `lzma`, and byte-level `rle` (`npz` remains the default DEFLATE alias).
@@ -295,6 +299,10 @@ register another `open4d.codec.Codec`. For an all-registered-codec attempt using
 [`examples/open4d_sequence_codec.ipynb`](examples/open4d_sequence_codec.ipynb).
 Set `OPEN4D_NOTEBOOK_REQUIRE_ALL=1` in a fully provisioned environment to make
 any codec failure stop the notebook instead of appearing only in its result table.
+The N4MC and QNDF adapters accept `device="auto"` (CUDA, then Apple Metal/MPS,
+then CPU), or an explicit `"cuda"`, `"mps"`, or `"cpu"`. QNDF-int8 can train
+on CUDA or Metal, but its quantized decoder remains CPU-only. Override the
+notebook selection with `OPEN4D_NOTEBOOK_DEVICE=mps` when needed.
 
 This API slice standardizes files around `Sequence[Frame[TriangleMesh]]`; it is
 not yet representation-independent. First-class point-cloud, volume, Gaussian,

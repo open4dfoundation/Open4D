@@ -65,6 +65,11 @@ class Scene:
     def __init__(self, frames: list, args) -> None:
         QtWidgets, _QtCore, gl = _qt()
         from pyqtgraph import Vector
+        from pyqtgraph.opengl import shaders
+
+        # PyQtGraph caches program IDs globally, but they belong to the GL
+        # context destroyed with the previous viewer window.
+        shaders.initShaders()
 
         # Qt refuses to build widgets before an application exists.
         self.application = (

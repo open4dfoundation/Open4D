@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import torch
 
-from compress import MLP, MeshDataset, PE
+if __package__:
+    from .compress import MLP, MeshDataset, PE
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from open4d.codecs.qndf.compress import MLP, MeshDataset, PE
 from open4d.torch_ops import save_obj
 
 

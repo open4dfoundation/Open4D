@@ -230,6 +230,8 @@ def _read_manifest(
         for name in ("has_constant_vertex_count", "has_vertex_correspondence"):
             if manifest.get(name) is not None and not isinstance(manifest[name], bool):
                 raise TypeError(f"{name} must be bool or null")
+        if not isinstance(manifest.get("allow_nonmonotonic_timestamps", False), bool):
+            raise TypeError("allow_nonmonotonic_timestamps must be bool")
         return manifest, tuple(files), suffix
     except UnsupportedFormatError:
         raise
@@ -303,6 +305,9 @@ class _ManifestFolderProvider:
         self.topology = manifest["topology"]
         self.has_constant_vertex_count = manifest.get("has_constant_vertex_count")
         self.has_vertex_correspondence = manifest.get("has_vertex_correspondence")
+        self.allow_nonmonotonic_timestamps = manifest.get(
+            "allow_nonmonotonic_timestamps", False
+        )
 
     @property
     def frame_count(self) -> int:
@@ -430,7 +435,9 @@ def open_sequence(
     return Sequence(_SingleFrameProvider(path, suffix))
 
 
-def _write_frame(path: Path, frame: Frame, suffix: str) -> Path:
+def _write_frame(
+    path: Path, frame: Frame, suffix: str, *, allow_lossy: bool = False
+) -> Path:
     mesh = frame.geometry
     present = {"positions", "triangles"}
     present.update(
@@ -443,14 +450,18 @@ def _write_frame(path: Path, frame: Frame, suffix: str) -> Path:
         raise UnsupportedFeatureError(
             f"{suffix} cannot preserve: {', '.join(unsupported)}"
         )
+    if mesh.colors is not None and suffix in {".off", ".glb", ".gltf"} and not allow_lossy:
+        raise UnsupportedFeatureError(
+            f"{suffix} color export through Trimesh is lossy; "
+            "pass allow_lossy=True to export it"
+        )
     try:
         if suffix == ".obj":
             return _mesh.write_obj(path, mesh.positions, mesh.triangles)
         if suffix == ".ply":
-            colors = None
-            if mesh.colors is not None:
-                colors = np.rint(np.clip(mesh.colors[:, :3], 0, 1) * 255).astype(np.uint8)
-            return _mesh.write_ply(path, mesh.positions, mesh.triangles, colors)
+            return _mesh.write_ply(
+                path, mesh.positions, mesh.triangles, mesh.colors
+            )
         return _mesh.write_with_trimesh(
             path, mesh.positions, mesh.triangles, mesh.colors
         )
@@ -470,10 +481,13 @@ def write_sequence(
     *,
     format: str | None = None,
     overwrite: bool = False,
+    allow_lossy: bool = False,
 ) -> Path:
-    """Write a decoded sequence independently of the codec that produced it."""
+    """Write a sequence, requiring ``allow_lossy`` for single mesh files."""
     if not isinstance(sequence, Sequence):
         raise TypeError("sequence must be an open4d.Sequence")
+    if not isinstance(allow_lossy, bool):
+        raise TypeError("allow_lossy must be bool")
     destination = Path(destination).absolute()
     suffix = _suffix_for(format)
     file_output = destination.suffix.lower() in _FRAME_READERS
@@ -489,6 +503,11 @@ def write_sequence(
         raise UnsupportedFeatureError(
             "a multi-frame sequence needs a destination directory"
         )
+    if file_output and not allow_lossy:
+        raise UnsupportedFeatureError(
+            "single mesh files cannot preserve temporal identity, frame or sequence "
+            "metadata, or topology declarations; pass allow_lossy=True to export geometry"
+        )
     if destination.exists() and not overwrite:
         raise FileExistsError(f"destination already exists: {destination}")
 
@@ -497,7 +516,7 @@ def write_sequence(
     try:
         if file_output:
             generated = temporary / destination.name
-            _write_frame(generated, sequence[0], suffix)
+            _write_frame(generated, sequence[0], suffix, allow_lossy=allow_lossy)
             if destination.exists():
                 destination.unlink()
             shutil.move(generated, destination)
@@ -510,11 +529,14 @@ def write_sequence(
                 "topology": sequence.topology.value,
                 "has_constant_vertex_count": sequence.has_constant_vertex_count,
                 "has_vertex_correspondence": sequence.has_vertex_correspondence,
+                "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
                 "frames": [],
             }
             for ordinal, frame in enumerate(sequence):
                 name = f"frame_{ordinal:06d}{suffix}"
-                _write_frame(temporary / name, frame, suffix)
+                _write_frame(
+                    temporary / name, frame, suffix, allow_lossy=allow_lossy
+                )
                 manifest["frames"].append({
                     "index": frame.frame_index,
                     "timestamp": frame.timestamp,

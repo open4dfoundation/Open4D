@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 import json
+from numbers import Integral
 from pathlib import Path
 import tempfile
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
@@ -16,6 +17,7 @@ from open4d.io import open_sequence
 from ._klt import _KLTProvider
 from ._npz import _json_value
 from ._protocol import CodecError
+from ._torch import torch_device
 from ._tsdf import write_tsdf_sequence
 
 _SCHEMA = "open4d.n4mc-sequence/v1"
@@ -38,6 +40,26 @@ def _volume(torch, path: Path, device):
     if values.ndim == 4:
         values = np.moveaxis(values, -1, 0)
     return torch.from_numpy(np.ascontiguousarray(values)).float().to(device)
+
+
+def _filter_components(mesh, min_component_faces: int | None):
+    if min_component_faces is None:
+        return mesh
+    if (
+        not isinstance(min_component_faces, Integral)
+        or isinstance(min_component_faces, bool)
+        or min_component_faces < 1
+    ):
+        raise ValueError("min_component_faces must be a positive integer or None")
+    kept = [
+        part for part in mesh.split(only_watertight=False)
+        if len(part.faces) >= min_component_faces
+    ]
+    if not kept:
+        raise CodecError("N4MC component filtering removed all decoded geometry")
+    if len(kept) == 1:
+        return kept[0]
+    return import_module("trimesh").util.concatenate(kept)
 
 
 class N4MCCodec:
@@ -69,7 +91,7 @@ class N4MCCodec:
                     mesh.texture_coordinates is not None, bool(mesh.attributes))):
                 raise CodecError("N4MC's TSDF profile cannot preserve mesh attributes")
         torch, models, losses, _ = _backend()
-        target_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        target_device = torch_device(torch, device)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -89,6 +111,7 @@ class N4MCCodec:
         manifest = {
             "schema": _SCHEMA, "codec": self.id,
             "metadata": _json_value(sequence.metadata, "sequence"),
+            "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [{
                 "frame_index": frame.frame_index, "timestamp": frame.timestamp,
                 "metadata": _json_value(frame.metadata, f"frame {ordinal}"),
@@ -141,9 +164,12 @@ class N4MCCodec:
                 raise
         return destination
 
-    def decode(self, source: Path, *, device: str | None = None) -> Sequence:
+    def decode(
+        self, source: Path, *, device: str | None = None,
+        min_component_faces: int | None = None,
+    ) -> Sequence:
         torch, models, _, metrics = _backend()
-        target_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        target_device = torch_device(torch, device)
         temporary = tempfile.TemporaryDirectory(prefix="open4d-n4mc-decode-")
         work = Path(temporary.name)
         try:
@@ -174,6 +200,7 @@ class N4MCCodec:
                     mesh = metrics.reconstruct_mesh_from_tsdf(volume)
                     if mesh is None:
                         raise CodecError(f"N4MC frame {ordinal} has no decoded surface")
+                    mesh = _filter_components(mesh, min_component_faces)
                     mesh.export(output / f"frame_{ordinal:06d}.obj")
             decoded = open_sequence(output)
             return Sequence(_KLTProvider(temporary, decoded, manifest))

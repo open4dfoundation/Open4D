@@ -187,6 +187,13 @@ class Sequence:
     def has_vertex_correspondence(self) -> bool | None:
         return self._optional_provider_flag("has_vertex_correspondence")
 
+    @property
+    def allow_nonmonotonic_timestamps(self) -> bool:
+        value = getattr(self._provider, "allow_nonmonotonic_timestamps", False)
+        if not isinstance(value, bool):
+            raise TypeError("provider allow_nonmonotonic_timestamps must be bool")
+        return value
+
     def close(self) -> None:
         """
         Close the sequence's provider resources once.

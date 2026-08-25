@@ -18,8 +18,30 @@ from open4d.codec import (
     register_codec,
     VMeshCodec,
 )
+from open4d.codec._torch import torch_device
 
 pytestmark = pytest.mark.cpu
+
+
+def fake_torch(*, cuda=False, mps=False):
+    return SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: cuda),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: mps)),
+        device=lambda value: SimpleNamespace(type=value.split(":")[0]),
+    )
+
+
+def test_neural_device_auto_prefers_cuda_then_metal_then_cpu():
+    assert torch_device(fake_torch(cuda=True, mps=True), "auto").type == "cuda"
+    assert torch_device(fake_torch(mps=True), None).type == "mps"
+    assert torch_device(fake_torch(), "auto").type == "cpu"
+
+
+def test_neural_device_rejects_unavailable_accelerators():
+    with pytest.raises(CodecError, match="Metal/MPS"):
+        torch_device(fake_torch(), "mps")
+    with pytest.raises(CodecError, match="CUDA"):
+        torch_device(fake_torch(), "cuda:0")
 
 
 def sequence() -> Sequence:
@@ -76,6 +98,32 @@ def test_numpy_zip_round_trip_is_lazy_and_preserves_geometry(tmp_path, monkeypat
         actual.geometry.attributes["labels"], expected.geometry.attributes["labels"]
     )
     decoded.close()
+
+
+def test_numpy_zip_preserves_reversed_view_timing_policy(tmp_path):
+    source = sequence()[::-1]
+    artifact = encode_sequence(source, tmp_path / "reversed.o4d")
+
+    decoded = decode_sequence(artifact)
+
+    assert decoded.allow_nonmonotonic_timestamps is True
+    assert decoded.timestamps == source.timestamps
+    decoded.close()
+
+
+def test_n4mc_component_filter_is_disabled_by_default():
+    from open4d.codec._n4mc import _filter_components
+
+    small = SimpleNamespace(faces=np.zeros((4, 3), dtype=np.uint32))
+    large = SimpleNamespace(faces=np.zeros((40, 3), dtype=np.uint32))
+    mesh = SimpleNamespace(split=lambda **_: [large, small])
+
+    assert _filter_components(mesh, None) is mesh
+    assert _filter_components(mesh, 32) is large
+
+    only_small = SimpleNamespace(split=lambda **_: [small])
+    with pytest.raises(CodecError, match="removed all"):
+        _filter_components(only_small, 32)
 
 
 def test_encode_refuses_to_overwrite_and_decode_rejects_corruption(tmp_path):
@@ -286,41 +334,41 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
 
     clean = Sequence(MemoryFrameProvider([
         Frame(7, 0.25, TriangleMesh(
-            [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]
+            [[-2.0, 3, 4], [2, 3, 4], [-2, 7, 4]], [[0, 1, 2]]
         ))
     ]))
     executable = tmp_path / "native"
     executable.write_text("native test double", encoding="ascii")
     executable.chmod(0o700)
-    encoder_config = tmp_path / "encoder.cfg"
-    decoder_config = tmp_path / "decoder.cfg"
-    encoder_config.write_text("profile: test\n", encoding="ascii")
-    decoder_config.write_text("profile: test\n", encoding="ascii")
     calls = []
 
     def native_call(command, label):
         calls.append((command, label))
         options = dict(item[2:].split("=", 1) for item in command[1:] if "=" in item)
         if "compressed" in options and "srcMesh" in options:
+            encoded = Path(options["srcMesh"].replace("%06d", "000000")).read_text()
+            assert "v 0 0 0" in encoded and "v 4095 0 0" in encoded
             Path(options["compressed"]).write_bytes(b"real-native-stream")
         elif "decMesh" in options:
             Path(options["decMesh"].replace("%06d", "000000")).write_text(
-                "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="ascii"
+                "v 0 0 0\nv 4095 0 0\nv 0 4095 0\nf 1 2 3\n", encoding="ascii"
             )
 
     monkeypatch.setattr(implementation, "_run", native_call)
     codec = VMeshCodec("native-test")
     artifact = codec.encode(
         clean, tmp_path / "sequence.v4d", encoder=executable,
-        encoder_config=encoder_config, decoder_config=decoder_config,
     )
     decoded = codec.decode(artifact, decoder=executable)
 
     assert len(decoded) == 1 and decoded[0].frame_index == 7
+    np.testing.assert_allclose(decoded[0].geometry.positions, clean[0].geometry.positions)
     assert [label for _, label in calls] == [
         "native-test encoder", "native-test decoder"
     ]
     assert all(isinstance(command, list) for command, _ in calls)
+    assert "--encodeDisplacements=1" in calls[0][0]
+    assert not any(item.startswith("--config=") for command, _ in calls for item in command)
     assert any(item.startswith("--decTex=") for item in calls[1][0])
     decoded.close()
 

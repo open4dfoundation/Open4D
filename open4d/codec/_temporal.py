@@ -19,6 +19,7 @@ def _manifest(sequence, codec):
     return {
         "schema": f"open4d.{codec}-sequence/v1", "codec": codec,
         "metadata": _json_value(sequence.metadata, "sequence"),
+        "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
         "frames": [{
             "frame_index": frame.frame_index, "timestamp": frame.timestamp,
             "metadata": _json_value(frame.metadata, f"frame {ordinal}"),
@@ -186,6 +187,9 @@ class TemporalMeshCodec:
         return Sequence(MemoryFrameProvider(
             frames, metadata=manifest.get("metadata", {}), topology=TopologyMode.FIXED,
             has_constant_vertex_count=True, has_vertex_correspondence=True,
+            allow_nonmonotonic_timestamps=manifest.get(
+                "allow_nonmonotonic_timestamps", False
+            ),
         ))
 
 

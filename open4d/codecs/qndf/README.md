@@ -31,6 +31,10 @@ For Example:
 
  ```python compress.py pegasus -ns 3 -cs 7000 -hd 96 -nl 32```
 
+The encoder retains the self-contained decoder input as `best_model.pth` in
+`--output-dir` (or the current directory) and logs it to MLflow. Pass that file
+to `decode.py`; `--keep-artifacts` additionally retains reconstruction files.
+
 ## Disconnected meshes (basketball player)
 
 The original SSP preprocessing can collapse small disconnected parts or project

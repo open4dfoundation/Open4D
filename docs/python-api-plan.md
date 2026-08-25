@@ -67,6 +67,7 @@ def write_sequence(
     *,
     format: str | None = None,
     overwrite: bool = False,
+    allow_lossy: bool = False,
     options: Mapping[str, object] | None = None,
 ) -> Path: ...
 
