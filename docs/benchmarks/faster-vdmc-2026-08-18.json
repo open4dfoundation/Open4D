@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-18",
+  "environment_verified_at": "2026-08-25",
+  "codec": {
+    "reference_revision": "ecffe4212e5e956761c4fa14a17c453ae916b0b1",
+    "optimized_revision": "93cdd5e1367b0f9f81c251ef89255bcb2f0d2d3f",
+    "encoder_revision": "9d9b229b0d199ac809690bb22661015d3d81e337",
+    "build_type": "Release",
+    "bitstream_trace": false
+  },
+  "dataset": {
+    "name": "Rafa_Approves_hd_4k",
+    "availability": "internal; not redistributed",
+    "license_status": "not established in this repository",
+    "frame_count": 157,
+    "inspected_vertices_per_frame": [19996, 20000, 19998, 19996],
+    "faces_per_frame": 40000,
+    "texture": "4096x4096 8-bit three-component JPEG",
+    "windows": [
+      {
+        "name": "start",
+        "first_frame": 1,
+        "frame_count": 10,
+        "input_manifest_sha256": "83680fb7165584f17b5187e8cc6ee6a5ab6ac8215f7930326e11228e34eb141b",
+        "reference_stream_bytes": 112021,
+        "reference_stream_sha256": "84908c634630925f9a758e87e073d09c03a315b6d8da92a65b448cbbbccfa798"
+      },
+      {
+        "name": "middle",
+        "first_frame": 74,
+        "frame_count": 10,
+        "input_manifest_sha256": "d9eff15479445787bf526e4a0a5ebde10154820931d91a1d62ed1c87a36a2f62",
+        "reference_stream_bytes": 110058,
+        "reference_stream_sha256": "ff03d086af5b0de22bf57d54f33c71a473456723b79feeef0f9184cc4221520f"
+      },
+      {
+        "name": "end",
+        "first_frame": 148,
+        "frame_count": 10,
+        "input_manifest_sha256": "a769d61fa253d9a74953c44daad9b7133fbe2d81fa8de35ce01ad344e420e6eb",
+        "reference_stream_bytes": 115254,
+        "reference_stream_sha256": "9388714ed07c1f8c0dd769dfb281ab41ed11fdf25f8106da0468a9b0da34e955"
+      }
+    ]
+  },
+  "configuration": {
+    "sha256": "05608aee3d1eda5c51b85074eb49c764d3d1ae0b95dd41a745d2076c7c6194de",
+    "position_bit_depth": 12,
+    "texture_coordinate_bit_depth": 13,
+    "subdivision_iterations": 2,
+    "base_mesh_position_bit_depth": 11,
+    "base_mesh_texture_coordinate_bit_depth": 10,
+    "texture_atlas": "1024x1024",
+    "texture_qp": 44,
+    "gof_size": 10,
+    "x265": {
+      "preset": "fast",
+      "wavefront": true,
+      "frame_threads": 4,
+      "pool_threads": 24,
+      "slices": 1,
+      "all_intra": false
+    }
+  },
+  "machine": {
+    "hostname": "frozzzen-Lambda-Vector",
+    "os": "Ubuntu 24.04 x86-64",
+    "cpu": "AMD Ryzen Threadripper 7960X 24-Cores",
+    "hardware_threads": 48,
+    "memory_kib": 131380832,
+    "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "gpus": [
+      "NVIDIA GeForce RTX 4090, 24564 MiB",
+      "NVIDIA GeForce RTX 4090, 24564 MiB"
+    ],
+    "gpu_used_by_measured_paths": false
+  },
+  "results": {
+    "reference_stage_profile_mean_seconds": {
+      "encode_wall": 128.653,
+      "preprocess": 31.644,
+      "mesh_compress": 14.949,
+      "geometry_compress": 0.894,
+      "attribute_compress": 80.834,
+      "color_transfer_nested": 12.658,
+      "writer": 0.004,
+      "peak_rss_mib": 554.78
+    },
+    "exact_fork_three_window_mean": {
+      "encode_wall_seconds": 120.477,
+      "attribute_seconds": 73.783,
+      "color_transfer_seconds": 4.757,
+      "peak_rss_mib": 523.61,
+      "texture_transfer_workers": 48,
+      "bitstream_sha256_equal_windows": 3,
+      "checksum_equal": 60,
+      "checksum_different": 0
+    },
+    "x265_start_window": {
+      "threaded_hm_wall_seconds": 119.71,
+      "x265_wall_seconds": 55.61,
+      "threaded_hm_attribute_seconds": 73.4330432,
+      "x265_attribute_seconds": 7.98619604,
+      "threaded_hm_stream_bytes": 112021,
+      "x265_stream_bytes": 119157,
+      "x265_attribute_bytes": 40784,
+      "x265_peak_rss_kib": 535776,
+      "checksum_equal": 20,
+      "checksum_different": 0,
+      "geometry_obj_sha256_equal": "10/10",
+      "decoded_texture_atlas_rgb_psnr_aggregate_db_vs_hm": 22.856,
+      "decoded_texture_atlas_rgb_psnr_mean_frame_db_vs_hm": 23.638403,
+      "source_referenced_quality": null
+    },
+    "parallel_gof_six_frames": {
+      "serial_wall_seconds": 33.75,
+      "parallel_wall_seconds": 17.12,
+      "gof_count": 2,
+      "frames_per_gof": 3,
+      "stream_bytes": 102796,
+      "checksum_equal": 12,
+      "checksum_different": 0
+    },
+    "decoder_matched_five_run_mean": {
+      "serial_wall_seconds": 1.844,
+      "parallel_conversion_wall_seconds": 1.554,
+      "parallel_output_wall_seconds": 1.032,
+      "parallel_both_wall_seconds": 0.724,
+      "serial_peak_rss_mib": 218,
+      "parallel_both_peak_rss_mib": 434,
+      "checksum_equal": 100,
+      "checksum_different": 0,
+      "output_sha256_equal_files": "30/30"
+    }
+  },
+  "methodology": {
+    "encoder_repetitions_per_window": 1,
+    "decoder_repetitions_per_mode": 5,
+    "warmup_runs": 0,
+    "cpu_pinned": false,
+    "fixed_cpu_frequency": false,
+    "timing": "/usr/bin/time -v plus V-DMC stage timers"
+  },
+  "quality_limitations": [
+    "D1, D2, PCQM, source-referenced texture PSNR, and SSIM were not produced.",
+    "The V-DMC metric executable failed on this custom OBJ/JPEG sequence.",
+    "The x265 timing is not evidence of equivalent rate-distortion performance.",
+    "The internal dataset has no redistribution or license record in this repository."
+  ]
+}
