@@ -50,21 +50,19 @@ flowchart TB
 
 ## Local verification snapshot
 
-- Python 3.13: 218 runnable tests pass on macOS; three optional tests skip and
-  the pre-existing empty-integer-attribute failure is deselected after baseline
-  reproduction.
-- Python 3.12 on the Ubuntu SSH host: 83 codec, visualization, and example tests
-  pass; the dataset/display-gated integrations skip explicitly.
-- The macOS player environment passes 81 tests, including a native OpenGL
-  load -> encode -> fresh decode -> two-frame GIF render of the Rafa sequence.
-- Python 3.10: 78 core tests pass; the full local visualization tier is blocked
-  by a SciPy macOS binary that the current linker rejects. The Linux
-  Blacksmith matrix is the authoritative remaining 3.10 check.
-- Open3D 0.19 on Python 3.12: 5 adapter tests pass.
-- Exact wheel and source-distribution inventories pass, followed by a clean
-  wheel installation and dependency check.
-- Markdown links, Python compilation, shell syntax, provenance containment,
-  release-block presence, and whitespace checks pass locally.
+Snapshot taken 2026-08-25 on macOS:
+
+- A clean Python 3.13 environment installed with `uv pip install -e '.[dev]'`
+  and run with `python -m pytest -q` reports 233 passed and 26 explicit
+  optional-dependency, research-host, or GUI skips; nothing is deselected.
+- The dependency-complete Python 3.12 codec environment run with
+  `.venv/bin/python -m pytest -q` reports 286 passed and 10 research-host/GUI
+  skips; nothing is deselected.
+- The focused manifest and Draco declaration regressions run with
+  `.venv/bin/python -m pytest -q open4d/codec/tests/test_draco.py
+  open4d/io/tests/test_sequence_io.py open4d/codec/tests/test_codec.py`.
+- `scripts/check_provenance.py`, `scripts/check_markdown_links.py`, Python
+  compilation, distribution inventory checks, and `git diff --check` pass.
 
 ## Not currently implemented
 

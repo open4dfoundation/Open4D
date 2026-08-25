@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("DracoPy")
 
-from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
+from open4d import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
 from open4d.codec import decode_sequence, encode_sequence
 
 pytestmark = pytest.mark.cpu
@@ -69,3 +69,34 @@ def test_draco_round_trip_preserves_per_corner_uv_seams_by_splitting_vertices(tm
     np.testing.assert_allclose(
         actual.texture_coordinates, corner_uvs.reshape(-1, 2), atol=1e-4
     )
+
+
+def test_draco_recomputes_declarations_after_uv_corner_splitting(tmp_path):
+    positions = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float32
+    )
+    triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+    vertex_uvs = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
+    corner_uvs = vertex_uvs[triangles]
+    source = Sequence(MemoryFrameProvider(
+        [
+            Frame(0, 0, TriangleMesh(
+                positions, triangles, texture_coordinates=vertex_uvs
+            )),
+            Frame(1, 1, TriangleMesh(
+                positions, triangles, texture_coordinates=corner_uvs
+            )),
+        ],
+        topology=TopologyMode.FIXED,
+        has_constant_vertex_count=True,
+        has_vertex_correspondence=True,
+    ))
+
+    decoded = decode_sequence(encode_sequence(
+        source, tmp_path / "mixed-layout.d4d", codec="draco"
+    ))
+
+    assert [len(frame.geometry.positions) for frame in decoded] == [4, 6]
+    assert decoded.topology is TopologyMode.UNKNOWN
+    assert decoded.has_constant_vertex_count is False
+    assert decoded.has_vertex_correspondence is None

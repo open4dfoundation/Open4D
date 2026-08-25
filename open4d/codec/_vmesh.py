@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -102,7 +103,11 @@ class VMeshCodec:
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
-            return manifest.get("schema") == _SCHEMA and manifest.get("codec") == self.id
+            return (
+                isinstance(manifest, Mapping)
+                and manifest.get("schema") == _SCHEMA
+                and manifest.get("codec") == self.id
+            )
         except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
             return False
 
@@ -203,6 +208,8 @@ class VMeshCodec:
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
+                if not isinstance(manifest, Mapping):
+                    raise CodecError("V-Mesh artifact manifest root must be an object")
                 if manifest.get("schema") != _SCHEMA or manifest.get("codec") != self.id:
                     raise CodecError(f"artifact is not {self.id}")
                 archive.extract("sequence.vmesh", work)

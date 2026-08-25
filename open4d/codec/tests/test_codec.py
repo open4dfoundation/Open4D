@@ -136,6 +136,19 @@ def test_encode_refuses_to_overwrite_and_decode_rejects_corruption(tmp_path):
         decode_sequence(broken)
 
 
+@pytest.mark.parametrize(("suffix", "codec"), (
+    (".o4d", "npz"), (".d4d", "draco"), (".v4d", None),
+))
+def test_non_object_codec_manifests_are_codec_errors(tmp_path, suffix, codec):
+    artifact = tmp_path / f"invalid{suffix}"
+    with ZipFile(artifact, "w") as archive:
+        archive.writestr("manifest.json", "[]")
+
+    options = {} if codec is None else {"codec": codec}
+    with pytest.raises(CodecError, match="manifest|no known codec"):
+        decode_sequence(artifact, **options)
+
+
 def test_encode_failure_removes_partial_artifact(tmp_path):
     bad = Sequence(
         MemoryFrameProvider(tuple(sequence()), metadata={"bad": object()})

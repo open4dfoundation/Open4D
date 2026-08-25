@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib import import_module
 import json
 from pathlib import Path
@@ -110,7 +111,7 @@ class DracoCodec:
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
-            return manifest.get("schema") == _SCHEMA
+            return isinstance(manifest, Mapping) and manifest.get("schema") == _SCHEMA
         except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
             return False
 
@@ -140,6 +141,8 @@ class DracoCodec:
             "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [],
         }
+        encoded_vertex_counts = []
+        split_uv_corners = False
         with tempfile.NamedTemporaryFile(
             prefix=f".{destination.name}.", suffix=".tmp",
             dir=destination.parent, delete=False,
@@ -153,6 +156,11 @@ class DracoCodec:
                         raise CodecError("Draco custom attributes are not yet supported")
                     positions, triangles, colors, normals, texture_coordinates = (
                         _encoder_arrays(mesh)
+                    )
+                    encoded_vertex_counts.append(len(positions))
+                    split_uv_corners |= (
+                        mesh.texture_coordinates is not None
+                        and mesh.texture_coordinates.ndim == 3
                     )
                     member = f"frames/{ordinal:06d}.drc"
                     archive.writestr(member, backend.encode(
@@ -171,6 +179,12 @@ class DracoCodec:
                         "metadata": _json_value(frame.metadata, f"frame {ordinal}"),
                         "member": member,
                     })
+                if split_uv_corners:
+                    manifest["topology"] = TopologyMode.UNKNOWN.value
+                    manifest["has_constant_vertex_count"] = (
+                        len(set(encoded_vertex_counts)) == 1
+                    )
+                    manifest["has_vertex_correspondence"] = None
                 archive.writestr("manifest.json", json.dumps(
                     manifest, separators=(",", ":"), sort_keys=True,
                 ))
@@ -188,6 +202,8 @@ class DracoCodec:
         try:
             archive = ZipFile(source)
             manifest = json.loads(archive.read("manifest.json"))
+            if not isinstance(manifest, Mapping):
+                raise CodecError("Draco artifact manifest root must be an object")
             if manifest.get("schema") != _SCHEMA:
                 raise CodecError("unsupported Draco artifact schema")
             if not isinstance(manifest.get("frames"), list):
