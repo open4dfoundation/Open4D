@@ -22,7 +22,10 @@ from open4d.torch_ops import load_obj, save_obj
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from mesh_errors import normal_error, point2mesh_error
+try:
+    from .mesh_errors import normal_error, point2mesh_error
+except ImportError:  # Direct script execution.
+    from mesh_errors import normal_error, point2mesh_error
 
 
 class PE(nn.Module):
@@ -89,10 +92,14 @@ class MeshDataset(Dataset):
     def _preprocess(self) -> tuple[torch.Tensor, torch.Tensor]:
         neighbors = []
         edge_wts = []
+        adjacency = [set() for _ in range(self.pv.size(0))]
+        for face in self.f.detach().cpu().tolist():
+            for vertex in face:
+                adjacency[vertex].update(face)
         for idx in tqdm(range(self.pv.size(0)), desc="Building neighborhoods"):
-            face_numbers, _ = torch.nonzero(self.f == idx, as_tuple=True)
-            neighbor_vertices = torch.unique(self.f[face_numbers, :])
-            neighbor_vertices = neighbor_vertices[neighbor_vertices != idx]
+            neighbor_vertices = torch.tensor(
+                sorted(adjacency[idx] - {idx}), device=self.f.device, dtype=torch.long
+            )
             neighbor_pe = self.pv[neighbor_vertices]
             edges = self.v[neighbor_vertices] - self.v[idx]
             weights = F.softmax((edges**2).sum(dim=1).sqrt(), dim=0)
@@ -175,7 +182,9 @@ def main() -> None:
     normalized_original = normalized_original / original_scale
 
     inputs = low * args.input_scale
-    inputs = (inputs - inputs.mean(dim=0, keepdim=True)) / inputs.std(dim=0, keepdim=True)
+    input_mean = inputs.mean(dim=0, keepdim=True)
+    input_std = inputs.std(dim=0, keepdim=True)
+    inputs = (inputs - input_mean) / input_std
     pe_inputs = PE(args.pe_dim)(inputs)
     dataset = MeshDataset(pe_inputs, inputs, low_faces, (target - low) * args.output_scale)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
@@ -247,10 +256,44 @@ def main() -> None:
     traced = torch.jit.trace(quantized_model, example, strict=False)
     int8_model_path = run_dir / "model_int8_torchscript.pt"
     torch.jit.save(traced, str(int8_model_path))
+    context_path = run_dir / "decoder_context.pt"
+    torch.save({
+        "schema": "open4d.qndf-int8/v1",
+        "coarse_vertices": cpu_low,
+        "coarse_faces": low_faces.cpu(),
+        "original_min": original_min.cpu(),
+        "original_scale": original_scale.cpu(),
+        "pe_dim": args.pe_dim,
+        "input_scale": args.input_scale,
+        "input_mean": input_mean.cpu(),
+        "input_std": input_std.cpu(),
+        "output_scale": args.output_scale,
+    }, context_path)
     reloaded = torch.jit.load(str(int8_model_path), map_location="cpu").eval()
+    context = torch.load(context_path, map_location="cpu", weights_only=True)
+    fresh_inputs = context["coarse_vertices"] * context["input_scale"]
+    fresh_inputs = (
+        fresh_inputs - context.get("input_mean", fresh_inputs.mean(0, keepdim=True))
+    ) / context.get("input_std", fresh_inputs.std(0, keepdim=True))
+    fresh_pe = PE(context["pe_dim"])(fresh_inputs)
+    fresh_dataset = MeshDataset(
+        fresh_pe, fresh_inputs, context["coarse_faces"], torch.zeros_like(cpu_low)
+    )
     with torch.inference_mode():
-        reloaded_vertices = cpu_low + reloaded(cpu_inputs, cpu_neighbors, cpu_weights) / args.output_scale
-    reload_max_abs_difference = float((int8_vertices - reloaded_vertices).abs().max())
+        reloaded_vertices = context["coarse_vertices"] + reloaded(
+            fresh_pe, fresh_dataset.neighbors, fresh_dataset.edge_wts
+        ) / context["output_scale"]
+    encoder_to_decoder_max_abs_difference = float(
+        (int8_vertices - reloaded_vertices).abs().max()
+    )
+    second_reloaded = torch.jit.load(str(int8_model_path), map_location="cpu").eval()
+    with torch.inference_mode():
+        second_reloaded_vertices = context["coarse_vertices"] + second_reloaded(
+            fresh_pe, fresh_dataset.neighbors, fresh_dataset.edge_wts
+        ) / context["output_scale"]
+    reload_max_abs_difference = float(
+        (reloaded_vertices - second_reloaded_vertices).abs().max()
+    )
     if reload_max_abs_difference > 1e-7:
         raise RuntimeError(f"Reloaded INT8 decoder changed output by {reload_max_abs_difference}")
 
@@ -266,6 +309,7 @@ def main() -> None:
     fp32_size = (run_dir / "model_fp32_state_dict.pt").stat().st_size
     fp32_torchscript_size = fp32_model_path.stat().st_size
     int8_size = int8_model_path.stat().st_size
+    context_size = context_path.stat().st_size
     coarse_obj_size = low_path.stat().st_size
     report = {
         "variant": "QNDF-SSP-INT8 experimental",
@@ -281,7 +325,9 @@ def main() -> None:
         "int8": int8_metrics
         | {
             "loadable_torchscript_bytes": int8_size,
+            "decoder_context_bytes": context_size,
             "decoder_reload_max_abs_difference": reload_max_abs_difference,
+            "encoder_to_decoder_max_abs_difference": encoder_to_decoder_max_abs_difference,
         },
         "coarse_mesh": {
             "obj_bytes": coarse_obj_size,
@@ -295,7 +341,7 @@ def main() -> None:
             "The upstream theoretical coarse-mesh size omits a concrete encoder/decoder container.",
         ],
     }
-    report["int8"]["total_loadable_model_plus_coarse_obj_bytes"] = int8_size + coarse_obj_size
+    report["int8"]["total_self_contained_decoder_bytes"] = int8_size + context_size
     (run_dir / "metrics.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
     print(f"Outputs saved to: {run_dir.resolve()}")

@@ -243,11 +243,15 @@ python -m pip install -e ".[player]" # the example viewer (PyQt6 + pyqtgraph)
 python -m pip install -e ".[usd]"    # OpenUSD containers
 python -m pip install -e ".[tools]"  # trimesh, for extra mesh formats
 python -m pip install -e ".[open3d]" # Open3D adapter; Python 3.12 or older
+python -m pip install -e ".[qndf]"  # QNDF/QNDF-INT8 in-process adapters
+python -m pip install -e ".[temporal]" # experimental temporal-delta/PCA codecs
 python -m pip install -e ".[all]"
 ```
 
 These extras do not install the heavyweight codec environments. Use the setup
-instructions inside the selected codec before running it.
+instructions inside the selected codec before running it. Research codec
+implementations remain source-checkout-only and are excluded from the
+lightweight wheel until their provenance review is complete.
 
 If an existing clone is missing Draco, initialize and build all three copies —
 the Draco baseline codec's own, plus TSMC's and TVMC's — with:
@@ -258,16 +262,65 @@ the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 
 ## Sequence viewer details
 
-`examples/visualization/visualize_sequence.py` loads a sequence, reports what it
-contains, and animates it. After following the quick start above, point it at
-your own data:
+The public Python API loads, encodes, decodes, and visualizes finite
+triangle-mesh sequences independently of their supported file formats:
+
+```python
+from open4d.codec import decode_sequence, encode_sequence
+from open4d.io import open_sequence
+from open4d.visualization import visualize
+
+sequence = open_sequence("path/to/frames", fps=30)
+artifact = encode_sequence(sequence, "sequence.o4d", codec="lzma")
+decoded = decode_sequence(artifact)
+visualize(decoded, up="y")
+```
+
+`write_sequence(sequence, "frames/", format="ply")` writes a versioned
+`open4d.sequence.json` beside the frame files, so reopening the directory keeps
+source frame indices, timestamps, frame/sequence metadata, and topology
+declarations. Empty sequences are rejected before the destination is changed.
+Single mesh-file exports require `allow_lossy=True` because that storage cannot
+preserve sequence timing, metadata, or topology declarations.
+Trimesh-backed OFF/GLB/glTF color export also requires that opt-in because OFF
+drops vertex color and GLB/glTF quantize canonical float colors to eight bits.
+
+Five lossless, in-process reference codecs are included: `raw`, `deflate`,
+`bzip2`, `lzma`, and byte-level `rle` (`npz` remains the default DEFLATE alias).
+They share a safe NumPy-array container so they compare storage strategies, not
+research geometry models. Source checkouts register in-process adapters for
+`klt`, `n4mc`, `qndf`, and `qndf-int8`; the lightweight wheel omits them until
+their provenance review is complete. Open4D's separate `temporal-delta` and
+`temporal-pca` experiments are not the repository's TVMC or TSMC pipelines.
+The V-DMC adapters do not execute shell scripts, but they do invoke configured
+native encoder and decoder processes once per sequence. Callers can also
+register another `open4d.codec.Codec`. For an all-registered-codec attempt using
+`4d_files/Rafa_Approves_hd_4k`, open
+[`examples/open4d_sequence_codec.ipynb`](examples/open4d_sequence_codec.ipynb).
+Set `OPEN4D_NOTEBOOK_REQUIRE_ALL=1` in a fully provisioned environment to make
+any codec failure stop the notebook instead of appearing only in its result table.
+The N4MC and QNDF adapters accept `device="auto"` (CUDA, then Apple Metal/MPS,
+then CPU), or an explicit `"cuda"`, `"mps"`, or `"cpu"`. QNDF-int8 can train
+on CUDA or Metal, but its quantized decoder remains CPU-only. Override the
+notebook selection with `OPEN4D_NOTEBOOK_DEVICE=mps` when needed.
+
+This API slice standardizes files around `Sequence[Frame[TriangleMesh]]`; it is
+not yet representation-independent. First-class point-cloud, volume, Gaussian,
+USD-sequence, and live-stream values require separate contracts.
+
+Normal CI runs dependency-complete CPU encode/fresh-decode contracts for KLT,
+N4MC, QNDF, and QNDF-int8. The larger two-format Rafa quality/export matrix is
+an additional CUDA acceptance test gated by `OPEN4D_TEST_RESEARCH_CODECS=1` and
+`OPEN4D_RAFA_DATASET`; it is not presented as part of ordinary CI coverage.
+
+`examples/visualization/visualize_sequence.py` is the command-line client:
 
 ```bash
 python examples/visualization/visualize_sequence.py my_capture/ --info
 python examples/visualization/visualize_sequence.py my_capture/
 ```
 
-Playback is our own PyQt6 window: drag to orbit, scroll to zoom, drag the slider
+Playback uses `open4d.visualization`'s PyQt6 window: drag to orbit, scroll to zoom, drag the slider
 to scrub, space to pause, left/right to step a frame. `--save out.gif` writes an
 animated GIF through the same renderer.
 
@@ -276,15 +329,19 @@ need no extra dependencies to read — or a single time-sampled USD file. `--inf
 reports frame count, duration, topology and bounds without decoding geometry,
 which is the quickest way to check a dataset loads.
 
-Loading is one call, and frames are decoded on access:
+The public Python loader handles local mesh files and frame folders in one call;
+frames are decoded on access:
 
 ```python
-from frame_sources import open_sequence
+from open4d.io import open_sequence
 
 with open_sequence("path/to/frames", fps=30.0) as sequence:
     print(len(sequence), sequence.duration, sequence.fps)
     mesh = sequence[0].geometry          # TriangleMesh: positions, triangles
 ```
+
+The viewer additionally retains its example-local OpenUSD sequence reader while
+that backend is promoted to the public API.
 
 OpenUSD is the container the example writes. `--pack-usd out.usdc` packs any
 source into one compressed `.usdc` file carrying the frame rate, the key-frame

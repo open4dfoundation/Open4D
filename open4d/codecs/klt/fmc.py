@@ -1,5 +1,8 @@
 import torch
-from tables import *
+try:
+    from .tables import *
+except ImportError:  # Direct script execution.
+    from tables import *
 
 class FMC:
     def __init__(self,device='cuda'):

@@ -11,8 +11,8 @@ The directory names are stable, lowercase identifiers:
 - `vdmc`, the pinned MPEG V-DMC test-model submodule
 - `faster_vdmc`, Open4D's performance-oriented V-DMC fork
 
-These implementations are not imported by the lightweight `open4d` package and
-their heavyweight dependencies remain optional.
+Implementations are imported lazily only when their public codec is selected,
+so their heavyweight dependencies remain optional.
 
 Gaussian-splatting compression is not here. QUEEN's quantization and 3DGStream's
 neural transformation cache are inseparable from the training loops that produce

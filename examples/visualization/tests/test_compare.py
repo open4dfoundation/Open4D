@@ -21,10 +21,10 @@ import pytest
 import colormaps
 import compare_frames
 import compare_sequences as cli
-import formats_mesh
 import mesh_metrics
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
-from render_frames import UP_TO_Z
+from open4d.io import _mesh as formats_mesh
+from open4d.visualization._frames import UP_TO_Z
 
 pytestmark = pytest.mark.cpu
 

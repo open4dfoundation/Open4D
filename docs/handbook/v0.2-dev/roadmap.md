@@ -65,11 +65,12 @@ flowchart LR
 
 ### Public interfaces
 
-- [ ] Add `open4d.io.open_sequence(path, fps=None) -> Sequence`.
+- [x] Add `open4d.io.open_sequence(path, fps=None) -> Sequence` for local mesh
+  files and frame folders.
 - [ ] Add `open4d.io.write_usd_container(path, frames, ...) -> Path`.
 - [ ] Add `open4d.metrics.compare_meshes(...)`.
 - [ ] Add `open4d.metrics.compare_sequences(..., allow_truncate=False)`.
-- [ ] Keep the base NumPy-only and lazily load SciPy/OpenUSD/Open3D/viewers.
+- [x] Keep the base NumPy-only and lazily load SciPy/OpenUSD/Open3D/viewers.
 - [ ] Convert examples into thin clients of the public functions.
 
 ### Correctness and interchange

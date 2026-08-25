@@ -1,8 +1,7 @@
 """Readers and writers for per-frame mesh files: `.obj`, `.ply`, and the rest.
 
-Each reader returns `(positions, triangles, colors)` for a single frame, which
-is the contract `frame_sources.FRAME_READERS` dispatches on. A frame with no
-faces comes back with zero triangles.
+Each reader returns `(positions, triangles, colors)` for a single frame. A
+frame with no faces comes back with zero triangles.
 
 `.obj` and `.ply` are parsed here with NumPy, so they need nothing beyond the
 base install. Other formats (`.stl`, `.off`, `.glb`, `.gltf`) are delegated to
@@ -21,7 +20,12 @@ BUILTIN_SUFFIXES = (".obj", ".ply")
 TRIMESH_SUFFIXES = (".off", ".stl", ".glb", ".gltf")
 SUFFIXES = BUILTIN_SUFFIXES + TRIMESH_SUFFIXES
 
-NO_TRIANGLES = np.empty((0, 3), dtype=np.uint32)
+def _empty_triangles() -> np.ndarray:
+    return np.empty((0, 3), dtype=np.uint32)
+
+
+class UnsupportedPlyVariant(ValueError):
+    """A valid PLY feature requires a more complete optional reader."""
 
 # ----------------------------
 # Wavefront OBJ
@@ -128,7 +132,11 @@ def _parse_ply_header(stream) -> tuple[str, list[dict[str, Any]], int]:
                 )
             else:
                 elements[-1]["properties"].append(
-                    {"name": fields[2].decode(), "list": False, "type": fields[1].decode()}
+                    {
+                        "name": fields[2].decode(),
+                        "list": False,
+                        "type": fields[1].decode(),
+                    }
                 )
         elif keyword == b"end_header":
             return ply_format, elements, stream.tell()
@@ -136,7 +144,7 @@ def _parse_ply_header(stream) -> tuple[str, list[dict[str, Any]], int]:
 
 def _ply_dtype(name: str) -> np.dtype:
     if name not in _PLY_DTYPES:
-        raise ValueError(f"unsupported PLY property type {name!r}")
+        raise UnsupportedPlyVariant(f"unsupported PLY property type {name!r}")
     return np.dtype(_PLY_DTYPES[name])
 
 
@@ -152,15 +160,15 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     with open(path, "rb") as stream:
         ply_format, elements, _offset = _parse_ply_header(stream)
         if ply_format == "binary_big_endian":
-            raise ValueError(
+            raise UnsupportedPlyVariant(
                 f"{path} is big-endian PLY; install trimesh to read it "
-                "(python -m pip install -e '.[tools]')"
+                "(python -m pip install 'open4d[tools]')"
             )
         ascii_mode = ply_format == "ascii"
 
-        positions = NO_TRIANGLES.astype(np.float32)
+        positions = np.empty((0, 3), dtype=np.float32)
         colors: np.ndarray | None = None
-        triangles = NO_TRIANGLES
+        triangles = _empty_triangles()
 
         for element in elements:
             name = element["name"]
@@ -192,20 +200,51 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                     [columns["x"], columns["y"], columns["z"]], axis=-1
                 ).astype(np.float32)
                 if {"red", "green", "blue"} <= set(columns):
-                    colors = np.stack(
-                        [columns["red"], columns["green"], columns["blue"]], axis=-1
-                    ).astype(np.uint8)
+                    color_names = ["red", "green", "blue"]
+                    if "alpha" in columns:
+                        color_names.append("alpha")
+                    color_values = np.stack(
+                        [columns[name] for name in color_names], axis=-1
+                    )
+                    color_properties = {
+                        prop["name"]: prop for prop in properties if not prop["list"]
+                    }
+                    color_kinds = {
+                        np.issubdtype(
+                            _ply_dtype(color_properties[name]["type"]), np.integer
+                        )
+                        for name in color_names
+                    }
+                    if len(color_kinds) != 1:
+                        raise UnsupportedPlyVariant(
+                            f"{path} mixes integer and floating-point color properties"
+                        )
+                    if color_kinds == {True}:
+                        if np.any(color_values < 0) or np.any(color_values > 255):
+                            raise ValueError(
+                                f"{path} integer colors must be in [0, 255]"
+                            )
+                        colors = color_values.astype(np.uint8)
+                    else:
+                        colors = color_values.astype(np.float32)
 
             elif name == "face":
                 corners: list[tuple[int, int, int]] = []
-                list_property = next(
-                    (prop for prop in properties if prop["list"]), None
-                )
-                if list_property is None:
-                    raise ValueError(f"{path} face element has no list property")
+                list_properties = [prop for prop in properties if prop["list"]]
+                if len(list_properties) != 1 or len(properties) != 1:
+                    raise UnsupportedPlyVariant(
+                        f"{path} face elements must contain exactly one list property"
+                    )
+                list_property = list_properties[0]
 
                 if ascii_mode:
                     for row in rows:
+                        vertices_in_face = int(row[0])
+                        if len(row) != vertices_in_face + 1:
+                            raise ValueError(
+                                f"{path} face declares {vertices_in_face} indices "
+                                f"but contains {len(row) - 1}"
+                            )
                         indices = [int(value) for value in row[1:]]
                         for corner in range(1, len(indices) - 1):
                             corners.append(
@@ -235,7 +274,7 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                 triangles = np.array(corners, dtype=np.uint32).reshape(-1, 3)
 
             elif not ascii_mode and rows is None:
-                raise ValueError(
+                raise UnsupportedPlyVariant(
                     f"{path} has an unsupported binary list element {name!r}"
                 )
 
@@ -254,14 +293,19 @@ def write_ply(
     path.parent.mkdir(parents=True, exist_ok=True)
     positions = np.asarray(positions, dtype=np.float32)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    color_names = []
     if colors is not None:
-        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+        colors = np.asarray(colors, dtype=np.float32)
+        color_names = ["red", "green", "blue"]
+        if colors.shape[1] == 4:
+            color_names.append("alpha")
+        fields += [(name, "<f4") for name in color_names]
 
     vertices = np.empty(len(positions), dtype=np.dtype(fields))
     vertices["x"], vertices["y"], vertices["z"] = positions.T
     if colors is not None:
-        colors = np.asarray(colors, dtype=np.uint8)
-        vertices["red"], vertices["green"], vertices["blue"] = colors.T
+        for column, name in enumerate(color_names):
+            vertices[name] = colors[:, column]
 
     header = [
         "ply",
@@ -272,11 +316,7 @@ def write_ply(
         "property float z",
     ]
     if colors is not None:
-        header += [
-            "property uchar red",
-            "property uchar green",
-            "property uchar blue",
-        ]
+        header += [f"property float {name}" for name in color_names]
     if triangles is not None and len(triangles) > 0:
         header += [
             f"element face {len(triangles)}",
@@ -301,34 +341,76 @@ def write_ply(
 # ----------------------------
 # Per-frame mesh files
 # ----------------------------
-def read_with_trimesh(path: Path) -> tuple[np.ndarray, np.ndarray, None]:
+def read_with_trimesh(
+    path: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Read any trimesh-supported mesh file, merging multi-part scenes."""
     try:
         import trimesh
     except ImportError:
-        raise SystemExit(
-            f"Reading {path.suffix} frames needs trimesh.\n"
-            "Install it with: python -m pip install -e '.[tools]'\n"
-            "(.obj and .ply folders work without it.)"
+        raise ModuleNotFoundError(
+            f"Reading {path.suffix} frames needs trimesh. Install it with: "
+            "python -m pip install 'open4d[tools]' (.obj and .ply work without it.)"
         ) from None
 
     loaded = trimesh.load(path, process=False)
     if isinstance(loaded, trimesh.Scene):
-        parts = [
-            part
-            for part in loaded.geometry.values()
-            if isinstance(part, trimesh.Trimesh)
-        ]
-        if not parts:
-            raise ValueError(f"{path} contains no mesh geometry")
-        loaded = trimesh.util.concatenate(parts)
+        # Bake node transforms and repeated instances before concatenation.
+        loaded = (
+            loaded.to_mesh()
+            if hasattr(loaded, "to_mesh")
+            else loaded.dump(concatenate=True)
+        )
+    if not isinstance(loaded, trimesh.Trimesh):
+        raise ValueError(f"{path} contains no mesh geometry")
 
     positions = np.asarray(loaded.vertices, dtype=np.float32)
     faces = getattr(loaded, "faces", None)
     triangles = (
-        NO_TRIANGLES
+        _empty_triangles()
         if faces is None or len(faces) == 0
         else np.asarray(faces, dtype=np.uint32)
     )
-    return positions, triangles, None
+    colors = None
+    visual = getattr(loaded, "visual", None)
+    if getattr(visual, "kind", None) == "vertex":
+        colors = np.asarray(visual.vertex_colors)
+        valid_shape = (
+            colors.ndim == 2
+            and colors.shape[0] == len(positions)
+            and colors.shape[1] in (3, 4)
+        )
+        if not valid_shape:
+            raise ValueError(f"{path} has invalid Trimesh vertex colors {colors.shape}")
+    return positions, triangles, colors
 
+
+def write_with_trimesh(
+    path: Path,
+    positions: np.ndarray,
+    triangles: np.ndarray,
+    colors: np.ndarray | None = None,
+) -> Path:
+    """Write one frame through the optional trimesh exporter."""
+    try:
+        import trimesh
+    except ImportError:
+        raise ModuleNotFoundError(
+            f"Writing {path.suffix} frames needs trimesh. Install it with: "
+            "python -m pip install 'open4d[tools]'"
+        ) from None
+    kwargs = {}
+    if colors is not None:
+        kwargs["vertex_colors"] = np.rint(np.clip(colors, 0, 1) * 255).astype(np.uint8)
+    mesh = trimesh.Trimesh(
+        vertices=positions, faces=triangles, process=False, **kwargs
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() == ".gltf":
+        payload = trimesh.exchange.gltf.export_gltf(
+            mesh.scene(), embed_buffers=True
+        )["model.gltf"]
+        path.write_bytes(payload)
+    else:
+        mesh.export(path)
+    return path
