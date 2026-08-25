@@ -18,7 +18,7 @@ flowchart TB
 
     Handbook --> P0
     Core --> Examples
-    Research -. "shared adapters missing" .-> Core
+    Research -- "selected shared codec adapters" --> Core
     Core -. "vertical slice missing" .-> Apps
 ```
 
@@ -42,8 +42,9 @@ flowchart TB
 - Public mesh sequence loading, a lossless modular reference codec, the Qt
   sequence viewer, example comparison tools, and Open3D conversion within the
   scopes recorded in the component register.
-- Independent codec and reconstruction research trees, without a common
-  Open4D adapter or complete end-to-end application.
+- Independent codec and reconstruction research trees, with public adapters
+  for KLT, N4MC, QNDF/QNDF-int8, temporal mesh experiments, and V-Mesh; they
+  do not yet form a complete end-to-end application.
 - Checksum-based artifact-fetching policy and the component-specific mechanics
   explicitly identified in the handbook as worth preserving.
 
@@ -67,12 +68,12 @@ flowchart TB
 
 ## Not currently implemented
 
-The working tree contains the first mesh-loading slice of `open4d.io`, a
-NumPy/ZIP reference codec, and the public Qt visualizer. It does **not** contain
-`open4d.metrics`, research-codec adapters, the schema-v1 USD API, complete Draco
-reference application, TVMC shared adapter, RGB-D finite replay adapter, or
-live-stream contract implementation. These are roadmap items, not current
-capabilities.
+The working tree contains the first mesh-loading slice of `open4d.io`,
+NumPy/ZIP reference codecs, public KLT, N4MC, QNDF/QNDF-int8, temporal-mesh,
+Draco, and V-Mesh adapters, and the public Qt visualizer. It does **not** contain
+`open4d.metrics`, the schema-v1 USD API, a complete Draco reference application,
+TVMC/TSMC shared adapters, an RGB-D finite replay adapter, or a live-stream
+contract implementation. These remain roadmap items.
 
 Blacksmith is an automation surface, not evidence by itself. Its pull-request
 results must still prove the tests, packaging boundary, provenance containment,

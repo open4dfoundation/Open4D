@@ -28,6 +28,28 @@ def _backend():
         ) from error
 
 
+def _encoder_arrays(mesh: TriangleMesh):
+    """Adapt canonical arrays to DracoPy, splitting vertices at UV seams."""
+    positions, triangles = mesh.positions, mesh.triangles
+    colors = mesh.colors
+    normals = mesh.normals
+    texture_coordinates = mesh.texture_coordinates
+    if texture_coordinates is not None and texture_coordinates.ndim == 3:
+        source_indices = triangles.reshape(-1)
+        positions = positions[source_indices]
+        triangles = np.arange(len(source_indices), dtype=np.uint32).reshape(-1, 3)
+        colors = None if colors is None else colors[source_indices]
+        normals = None if normals is None else normals[source_indices]
+        texture_coordinates = texture_coordinates.reshape(-1, 2)
+    if colors is not None:
+        colors = np.rint(np.clip(colors, 0, 1) * 255).astype(np.uint8)
+    if normals is not None:
+        normals = np.asarray(normals, dtype=np.float64)
+    if texture_coordinates is not None:
+        texture_coordinates = np.asarray(texture_coordinates, dtype=np.float64)
+    return positions, triangles, colors, normals, texture_coordinates
+
+
 class _DracoProvider:
     def __init__(self, archive: ZipFile, manifest: dict) -> None:
         self.archive = archive
@@ -129,16 +151,16 @@ class DracoCodec:
                     mesh = frame.geometry
                     if mesh.attributes:
                         raise CodecError("Draco custom attributes are not yet supported")
-                    colors = mesh.colors
-                    if colors is not None:
-                        colors = np.rint(np.clip(colors, 0, 1) * 255).astype(np.uint8)
+                    positions, triangles, colors, normals, texture_coordinates = (
+                        _encoder_arrays(mesh)
+                    )
                     member = f"frames/{ordinal:06d}.drc"
                     archive.writestr(member, backend.encode(
-                        mesh.positions,
-                        mesh.triangles,
+                        positions,
+                        triangles,
                         colors=colors,
-                        normals=mesh.normals,
-                        tex_coord=mesh.texture_coordinates,
+                        normals=normals,
+                        tex_coord=texture_coordinates,
                         quantization_bits=quantization_bits,
                         compression_level=compression_level,
                         preserve_order=True,
