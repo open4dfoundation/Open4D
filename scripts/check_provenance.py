@@ -23,8 +23,11 @@ EXPLICIT_REQUIRED_LEDGER_PATHS = (
 )
 ALLOWED_PACKAGES = {
     "open4d",
+    "open4d.codec",
     "open4d.core",
+    "open4d.io",
     "open4d.torch_ops",
+    "open4d.visualization",
     "integrations",
     "integrations.open3d",
 }
@@ -68,6 +71,8 @@ def discover_required_ledger_paths(root: Path) -> set[str]:
                 f"{directory_root}/{child.name}"
                 for child in directory.iterdir()
                 if child.is_dir()
+                and child.name != "__pycache__"
+                and not child.name.startswith(".")
             )
 
     gitmodules_path = root / ".gitmodules"

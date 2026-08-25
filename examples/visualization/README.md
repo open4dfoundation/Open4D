@@ -147,17 +147,12 @@ Every frame you display is decoded and measured up front, so reach for
 ## In your own code
 
 ```python
-import sys; sys.path.insert(0, "examples/visualization")
-import compare_frames
-from frame_sources import open_sequence
+from open4d.io import open_sequence
+from open4d.visualization import visualize
 
-with open_sequence("ref/") as reference, open_sequence("decoded/") as decoded:
-    print(len(reference), reference.duration, reference.fps)
-    reference[0].geometry            # open4d.TriangleMesh: positions, triangles, colors
-
-    comparison = compare_frames.compare_sequences(reference, decoded, metric="plane")
-    print(comparison.summary())      # sequence-level figures
-    comparison.frames[0].decoded_distances    # one distance per decoded vertex
+with open_sequence("frames/") as sequence:
+    print(len(sequence), sequence.duration, sequence.fps)
+    visualize(sequence, up="y")
 ```
 
 Loading is lazy — frames decode on access. Measuring needs no viewer. To add a
@@ -179,10 +174,9 @@ frames.
 | `visualize_sequence.py` | The single-sequence program |
 | `compare_sequences.py` | The comparison program |
 | `frame_sources.py` | Format registry and `open_sequence()` |
-| `formats_mesh.py` | `.obj` and `.ply`, trimesh fallback |
+| `open4d.io._mesh` | `.obj` and `.ply`, trimesh fallback |
 | `formats_usd.py` | USD container read and write |
-| `render_frames.py` | Renderer-neutral frames, up-axis rotation, shading |
-| `viewer_qt.py` | The single-sequence PyQt6 viewer |
+| `open4d.visualization` | Public viewer, renderer-neutral frames, rotation, shading |
 | `mesh_metrics.py` | Nearest-neighbour search, point-to-point/plane, RMS and PSNR |
 | `compare_frames.py` | Frame pairing, per-frame error, error colours |
 | `colormaps.py` | The sequential ramp and the colourbar gradient |

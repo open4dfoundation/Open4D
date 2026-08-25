@@ -33,14 +33,14 @@ from typing import Any
 import numpy as np
 
 # Import first: this puts the repository on sys.path for uninstalled clones.
-from _common import existing_source, require
+from _common import existing_source
 from frame_sources import (
     DEFAULT_FPS,
     describe_source,
     open_sequence,
     supported_formats,
 )
-from render_frames import UP_AXES, UP_TO_Z, bounds, decode_all
+from open4d.visualization._frames import UP_AXES, UP_TO_Z, bounds, decode_all
 
 # pyqtgraph draws with +Z up, so the source's up axis is rotated onto Z and the
 # axis pointing up in the view is index 2.
@@ -279,7 +279,7 @@ def main() -> None:
 
     report_geometry(frames, args.stride)
 
-    import viewer_qt
+    from open4d.visualization import _qt as viewer_qt
 
     if args.save:
         viewer_qt.record(frames, args, args.save)

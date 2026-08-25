@@ -21,7 +21,7 @@ all required notices to be assembled, and a recorded maintainer approval.
 
 | Package | Basis | Candidate decision |
 | --- | --- | --- |
-| `open4d`, `open4d.core` | Project-authored, root MIT; NumPy base | Candidate after final review |
+| `open4d`, `open4d.codec`, `open4d.core`, `open4d.io`, `open4d.visualization` | Project-authored, root MIT; NumPy base | Candidate after final review; research implementations remain excluded |
 | `open4d.torch_ops` | Project-authored source; Torch optional and not redistributed | Candidate after final review |
 | `integrations`, `integrations.open3d` | Project-authored adapter source; Open3D optional and not redistributed | Candidate after final review |
 

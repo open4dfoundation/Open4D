@@ -1,7 +1,19 @@
 # Scripts
 
-Repository-level developer utilities live here. Run them from anywhere inside
-the checkout; scripts resolve the repository root themselves.
+Repository-level developer utilities live here. Unless noted below, they can
+run from anywhere inside the checkout and resolve the repository root.
+
+- `benchmark_io.py` times validated, in-process calls to the public sequence
+  API. Run it in an environment where Open4D is installed, or use
+  `PYTHONPATH=. python scripts/benchmark_io.py --json` from the checkout root.
+  With the `[tools]` extra it also measures OFF, STL, GLB, and glTF decoding.
+- `benchmark_codec.py` measures a complete encode, lazy decoder open, and
+  validated full decode using the selected backend. The reference and Python
+  research adapters are in-process; V-DMC invokes its configured native
+  executable once per direction. Pass `--source 4d_files/Rafa_Approves_hd_4k`
+  for real OBJ frames instead of the generated moving grid.
+- `smoke_installed_io.py` is the package CI smoke test. It deliberately imports
+  an installed wheel and loads a real OBJ from outside the checkout.
 
 - `setup_draco.sh` initializes and builds all three Draco submodules: the one
   backing the `codecs/draco` baseline, and TVMC's and TSMC's copies.

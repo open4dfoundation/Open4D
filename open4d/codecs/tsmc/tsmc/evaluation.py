@@ -25,6 +25,8 @@ parser.add_argument('--firstIndex', type=int, required=True, help="first index")
 parser.add_argument('--lastIndex', type=int, required=True, help="last index")
 parser.add_argument('--reference_mesh_path', type=str, required=True, help="Enter path for DECODED reference mesh")
 parser.add_argument('--group_idx', type=int, default=1, help="Group index (e.g., group=1 frame[0:num_frames])")
+parser.add_argument('--no-static', action='store_true', help="Decode an all-dynamic sequence without a static background")
+parser.add_argument('--skip-render-metrics', action='store_true', help="Skip Open3D screenshot metrics on headless systems")
 
 args = parser.parse_args()
 
@@ -131,45 +133,24 @@ for f in range(num_frames):
 print(f"Saved reconstructed displacements to '{output_dir}/'")
 
 
-result = subprocess.run([
-    '../draco/build/draco_encoder',
-    '-i', os.path.join(dynamic_static_path, "static", f'mesh_00.obj'),
-    '-o', os.path.join(dynamic_static_path, "static", f'static_backgrounds.drc'),
-    '-qp', str('12'),
-    '-cl', '7'
-], capture_output=True, text=True)
-print(result.stdout)
-print(result.stderr)
-
-result = subprocess.run([
-    '../draco/build/draco_decoder',
-    '-i', os.path.join(dynamic_static_path, "static", f'static_backgrounds.drc'),
-    '-o', os.path.join(dynamic_static_path, "static", f'static_backgrounds.obj')
-], capture_output=True, text=True)
-print(result.stdout)
-print(result.stderr)
-
-
-static_backgrounds_path = os.path.join(dynamic_static_path, "static", "static_backgrounds.drc")
-result = subprocess.run([
-    '../draco/build/draco_decoder',
-    '-i', static_backgrounds_path,
-    '-o', os.path.join(dynamic_static_path, "static", "static_backgrounds.obj")
-    ], capture_output=True, text=True)
-print(result.stdout)
-print(result.stderr)
-times = []
-time_pattern = re.compile(r"(\d+) ms to decode")
-match = time_pattern.search(result.stdout)
-if match:
-    times.append(int(match.group(1)))
-
-if times:
-    mean_time = sum(times) / len(times)
-    print(f"Decoding time for static backgrounds: {mean_time:.6f} ms")
-    decoding_time += mean_time
-
-static_backgrounds_mesh = o3d.io.read_triangle_mesh(os.path.join(dynamic_static_path, "static", "static_backgrounds.obj"))
+static_backgrounds_mesh = o3d.geometry.TriangleMesh()
+static_backgrounds_size = 0
+if not args.no_static:
+    static_dir = os.path.join(dynamic_static_path, "static")
+    static_encoded = os.path.join(static_dir, "static_backgrounds.drc")
+    static_decoded = os.path.join(static_dir, "static_backgrounds.obj")
+    subprocess.run([
+        '../draco/build/draco_encoder', '-i', os.path.join(static_dir, 'mesh_00.obj'),
+        '-o', static_encoded, '-qp', '12', '-cl', '7'
+    ], check=True)
+    result = subprocess.run([
+        '../draco/build/draco_decoder', '-i', static_encoded, '-o', static_decoded
+    ], check=True, capture_output=True, text=True)
+    match = re.search(r"(\d+) ms to decode", result.stdout)
+    if match:
+        decoding_time += int(match.group(1))
+    static_backgrounds_mesh = o3d.io.read_triangle_mesh(static_decoded)
+    static_backgrounds_size = os.path.getsize(static_encoded)
 
 output_mesh_dir = os.path.join(input_path, "decoded_reconstructed_meshes")
 os.makedirs(output_mesh_dir, exist_ok=True)
@@ -219,8 +200,6 @@ print(f"B matrix size: {B_size} bytes, t_mean size: {t_mean_size} bytes, D_encod
 
 total_size += B_size + t_mean_size + D_encoded_size
 displacements_bitrate = calculate_bitrate(B_size + t_mean_size + D_encoded_size, total_duration) / 1000000
-
-static_backgrounds_size = os.path.getsize(os.path.join(dynamic_static_path, "static", "static_backgrounds.drc"))
 
 static_backgrounds_bitrate = calculate_bitrate(static_backgrounds_size, total_duration) / 1000000
 total_size += static_backgrounds_size
@@ -273,7 +252,8 @@ print(f"{reference_bitrate:.2f}, {displacements_bitrate:.2f}, {static_background
 SSIM_depth = []
 SSIM_color = []
 if_povs = False
-for t in range(firstIndex, lastIndex):
+metric_frames = () if args.skip_render_metrics else range(firstIndex, lastIndex)
+for t in metric_frames:
     original_mesh = o3d.io.read_triangle_mesh(os.path.join(f"../data/{dataset}/meshes/gt", f'mesh_0{t:01}.obj'))
     reconstruct_mesh = o3d.io.read_triangle_mesh(os.path.join(input_path, 'decoded_reconstructed_meshes', f'{dataset}_{t:03d}.obj'))
     #reconstruct_mesh = o3d.io.read_triangle_mesh(os.path.join(input_path, 'test', f'{dataset}_{t:03d}.obj'))
@@ -302,9 +282,11 @@ for t in range(firstIndex, lastIndex):
 
 
 #print("average D1:", np.mean(d1s))
-print("average SSIM depth:", np.mean(SSIM_depth))
-print("average SSIM color:", np.mean(SSIM_color))
-print(json.dumps({"bitrate_mbps": bitrate_mbps, "SSIM_depth_mean": np.mean(SSIM_depth), "SSIM_color_mean": np.mean(SSIM_color), "decoding_time":(decoding_time/num_frames), "reference_bitrate": reference_bitrate, "displacements_bitrate": displacements_bitrate, "static_backgrounds_bitrate": static_backgrounds_bitrate}))
+ssim_depth_mean = float(np.mean(SSIM_depth)) if SSIM_depth else None
+ssim_color_mean = float(np.mean(SSIM_color)) if SSIM_color else None
+print("average SSIM depth:", ssim_depth_mean)
+print("average SSIM color:", ssim_color_mean)
+print(json.dumps({"bitrate_mbps": bitrate_mbps, "SSIM_depth_mean": ssim_depth_mean, "SSIM_color_mean": ssim_color_mean, "decoding_time":(decoding_time/num_frames), "reference_bitrate": reference_bitrate, "displacements_bitrate": displacements_bitrate, "static_backgrounds_bitrate": static_backgrounds_bitrate}))
 
 
 

@@ -22,9 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-# Import first: this puts the repository on sys.path for uninstalled clones.
-from _common import require
-import render_frames
+from ._deps import require
+from . import _frames as render_frames
 
 
 def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
@@ -53,12 +52,24 @@ def _qt():
     return QtWidgets, QtCore, gl
 
 
+def check_available(*, gif: bool = False) -> None:
+    """Fail before geometry decoding when the requested backend is unavailable."""
+    _qt()
+    if gif:
+        require("PIL.Image", "player")
+
+
 class Scene:
     """A GL view holding one sequence, with the frame it shows swappable."""
 
     def __init__(self, frames: list, args) -> None:
         QtWidgets, _QtCore, gl = _qt()
         from pyqtgraph import Vector
+        from pyqtgraph.opengl import shaders
+
+        # PyQtGraph caches program IDs globally, but they belong to the GL
+        # context destroyed with the previous viewer window.
+        shaders.initShaders()
 
         # Qt refuses to build widgets before an application exists.
         self.application = (
@@ -147,6 +158,12 @@ class Scene:
         self.view.update()
         self.application.processEvents()
         image = self.view.grabFramebuffer()
+        if image.isNull():
+            raise RuntimeError(
+                "Qt could not create an OpenGL framebuffer. Use a desktop "
+                "session with OpenGL support; QT_QPA_PLATFORM=offscreen does "
+                "not support this viewer."
+            )
         image = image.convertToFormat(image.Format.Format_RGB888)
         width, height = image.width(), image.height()
         raw = image.constBits().asstring(height * image.bytesPerLine())
@@ -192,8 +209,10 @@ def play(frames: list, args) -> None:
     class Window(QtWidgets.QMainWindow):
         def __init__(self) -> None:
             super().__init__()
-            self.setWindowTitle("Open4D")
+            self.setWindowTitle(args.title)
             self.resize(args.width, args.height)
+            if args.x is not None and args.y is not None:
+                self.move(args.x, args.y)
             self.playing = True
 
             self.play_button = QtWidgets.QPushButton("Pause")
@@ -297,7 +316,7 @@ def record(frames: list, args, output: Path) -> None:
     """Render every frame to an animated GIF, without opening a window."""
     image_module = require("PIL.Image", "player")
     if output.suffix.lower() != ".gif":
-        raise SystemExit(
+        raise ValueError(
             f"--save writes an animated .gif; got {output.suffix or 'no suffix'}"
         )
 

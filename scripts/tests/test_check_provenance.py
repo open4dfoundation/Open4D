@@ -73,6 +73,17 @@ def test_nested_submodules_are_covered_by_their_top_level_component(tmp_path: Pa
     }
 
 
+def test_component_discovery_ignores_generated_and_hidden_directories(tmp_path: Path):
+    (tmp_path / "open4d/codecs/qndf").mkdir(parents=True)
+    (tmp_path / "open4d/codecs/__pycache__").mkdir()
+    (tmp_path / "open4d/codecs/.pytest_cache").mkdir()
+
+    assert discover_required_ledger_paths(tmp_path) == {
+        "integrations/unity",
+        "open4d/codecs/qndf",
+    }
+
+
 def test_an_unledgered_discovered_component_fails_coverage():
     required = {
         "open4d/codecs/draco",

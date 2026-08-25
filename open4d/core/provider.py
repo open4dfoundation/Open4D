@@ -48,6 +48,7 @@ class MemoryFrameProvider:
         topology: TopologyMode = TopologyMode.UNKNOWN,
         has_constant_vertex_count: bool | None = None,
         has_vertex_correspondence: bool | None = None,
+        allow_nonmonotonic_timestamps: bool = False,
     ) -> None:
         if not isinstance(frames, CollectionSequence):
             raise TypeError("frames must be a sequence")
@@ -64,12 +65,15 @@ class MemoryFrameProvider:
         ):
             if value is not None and not isinstance(value, bool):
                 raise TypeError(f"{name} must be bool or None")
+        if not isinstance(allow_nonmonotonic_timestamps, bool):
+            raise TypeError("allow_nonmonotonic_timestamps must be bool")
 
         self._frames = stored_frames
         self.metadata = MappingProxyType(dict(metadata or {}))
         self.topology = topology
         self.has_constant_vertex_count = has_constant_vertex_count
         self.has_vertex_correspondence = has_vertex_correspondence
+        self.allow_nonmonotonic_timestamps = allow_nonmonotonic_timestamps
 
     @property
     def frame_count(self) -> int:

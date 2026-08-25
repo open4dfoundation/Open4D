@@ -29,7 +29,7 @@ import numpy as np
 from _common import require
 import colormaps
 import compare_frames
-import render_frames
+from open4d.visualization import _frames as render_frames
 
 # Ink colours for overlay text, on the dark surface the comparison defaults to.
 _TEXT = (222, 222, 228)

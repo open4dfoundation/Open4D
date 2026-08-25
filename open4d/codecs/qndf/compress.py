@@ -48,20 +48,25 @@ class MLP(nn.Module):
         return out
 
 class MeshDataset(Dataset):
-    def __init__(self, pe_verts, verts, faces, gt_verts):
+    def __init__(self, pe_verts, verts, faces, gt_verts, progress=True):
         self.pv = pe_verts
         self.v = verts
         self.f = faces
         self.gv = gt_verts
+        self.progress = progress
         self.preproc()
     def preproc(self):
         ln = self.pv.size(0)
         self.edge_wts = []
         self.neighbors = []
-        for idx in tqdm(range(ln)):
-            fnum, _ = torch.nonzero(self.f==idx, as_tuple=True)
-            n_verts = torch.unique(self.f[fnum,:])
-            n_verts = n_verts[n_verts!=idx]
+        adjacency = [set() for _ in range(ln)]
+        for face in self.f.detach().cpu().tolist():
+            for vertex in face:
+                adjacency[vertex].update(face)
+        for idx in tqdm(range(ln), disable=not self.progress):
+            n_verts = torch.tensor(
+                sorted(adjacency[idx] - {idx}), device=self.f.device, dtype=torch.long
+            )
             npv = self.pv[n_verts]
             edges = self.v[n_verts] - self.v[idx]
             edge_weights = F.softmax((edges**2).sum(dim=1)**0.5, dim=0)
@@ -78,6 +83,15 @@ class MeshDataset(Dataset):
     def __getitem__(self, idx):
         return [self.pv[idx], self.neighbors[idx], self.edge_wts[idx], self.gv[idx]]
 
+
+def _remove_pruning(parameters):
+    """Make a pruned model state loadable by the ordinary decoder MLP."""
+    from torch.nn.utils import prune
+
+    for module, name in parameters:
+        if prune.is_pruned(module):
+            prune.remove(module, name)
+
 def parse_args():
     pr = ap.ArgumentParser()
     pr.add_argument("mesh_name", type=str, help="name of the mesh file to be compressed")
@@ -91,7 +105,7 @@ def parse_args():
     pr.add_argument("--output_scale", "-os", type=float, default=1414, help="Scale factor of the outputs")
     pr.add_argument("--run_suffix", "-rs", type=str, default="", help="a suffix to add to the run name")
     pr.add_argument("--output-dir", type=str, default="", help="directory in which to retain run artifacts")
-    pr.add_argument("--keep-artifacts", action="store_true", help="retain the reconstruction and model files")
+    pr.add_argument("--keep-artifacts", action="store_true", help="retain reconstruction files in addition to the decoder checkpoint")
     pr.add_argument("--device", type=str, default="cuda:0",
                     help="torch device to train on. The default matches the "
                          "NVIDIA boxes this codec was developed on; pass cpu "
@@ -116,6 +130,7 @@ if __name__=="__main__":
     from dahuffman import HuffmanCodec
     import numpy as np
     import os
+    import json
 
     args = parse_args()
     device = args.device
@@ -140,6 +155,11 @@ if __name__=="__main__":
     mn,_ = ov.min(dim=0)
     ov -= mn
     ov /= ov.max()
+    transform_path = f'experiments/{args.mesh_name}/transform_f{args.coarse_size}_s{args.num_subdiv}.json'
+    normalization = None
+    if os.path.isfile(transform_path):
+        with open(transform_path, encoding="utf-8") as stream:
+            normalization = json.load(stream)
 
     # Create dataset and dataloader
     ip = lr*args.input_scale
@@ -239,7 +259,42 @@ if __name__=="__main__":
         # mq = quantize_dynamic(model, qconfig_spec={nn.Linear}, dtype=torch.qint8, inplace=False).cpu()
         # tv = lr.cpu() + mq(pe_inputs.cpu(), dset.neighbors.cpu(), dset.edge_wts.cpu())/args.output_scale
         # tv = tv.cuda()
-        tv = lr + model(pe_inputs, dset.neighbors, dset.edge_wts)/args.output_scale
+        _remove_pruning(params_to_prune)
+        torch.save({
+            "schema": "open4d.qndf/v1",
+            "model_state_dict": model.state_dict(),
+            "coarse_vertices": lr.detach().cpu(),
+            "coarse_faces": lf.detach().cpu(),
+            "input_mean": mean.detach().cpu(),
+            "input_std": std.detach().cpu(),
+            "pe_dim": args.pe_dim,
+            "hidden_dim": args.hidden_dim,
+            "num_layers": args.num_layers,
+            "input_scale": args.input_scale,
+            "output_scale": args.output_scale,
+            "normalization": normalization,
+        }, best_model_path)
+        try:
+            mlflow.log_artifact(best_model_path, artifact_path=artifact_path)
+        except Exception:
+            pass
+        reloaded = MLP(
+            3 * args.pe_dim, args.hidden_dim, 3, args.num_layers
+        ).to(device)
+        reloaded.load_state_dict(
+            torch.load(best_model_path, map_location=device)["model_state_dict"]
+        )
+        reloaded.eval()
+        with torch.no_grad():
+            reload_difference = (
+                model(pe_inputs, dset.neighbors, dset.edge_wts)
+                - reloaded(pe_inputs, dset.neighbors, dset.edge_wts)
+            ).abs().max().item()
+        if reload_difference > 1e-7:
+            raise RuntimeError(
+                f"Reloaded QNDF decoder changed output by {reload_difference}"
+            )
+        tv = lr + reloaded(pe_inputs, dset.neighbors, dset.edge_wts)/args.output_scale
         r2t,_,_ = point2mesh_error(tv,lf, ov, of)
         print(f'Rec to Tar Compression Error obtained: {r2t}')
         mlflow.log_metric("Rec2Tar Error", f"{r2t}")
@@ -317,7 +372,7 @@ if __name__=="__main__":
         print(f'Total Size of Compressed Representation is {((size+coarse_mem)/1024):.2f}KB')
 
         if not args.keep_artifacts:
-            for path in (best_model_path, prequant_path, reconstruction_path, os.path.join(output_dir, 'coded_weights.bin')):
+            for path in (prequant_path, reconstruction_path, os.path.join(output_dir, 'coded_weights.bin')):
                 try:
                     os.remove(path)
                 except FileNotFoundError:

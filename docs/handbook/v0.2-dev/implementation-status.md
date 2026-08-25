@@ -12,13 +12,13 @@ flowchart TB
     Handbook["v0.2-dev handbook<br/>LOCAL DRAFT"]
     P0["Packaging / CI / governance<br/>VERIFIED-PARTIAL"]
     Core["Core model<br/>VERIFIED-PARTIAL"]
-    Examples["Example loaders / metrics / viewers<br/>VERIFIED-PARTIAL"]
+    Examples["Public I/O / reference codec / viewer<br/>VERIFIED-PARTIAL"]
     Apps["End-to-end applications<br/>SCAFFOLD"]
     Research["Independent research pipelines<br/>WORKING-ISOLATED"]
 
     Handbook --> P0
     Core --> Examples
-    Research -. "shared adapters missing" .-> Core
+    Research -- "selected shared codec adapters" --> Core
     Core -. "vertical slice missing" .-> Apps
 ```
 
@@ -27,7 +27,7 @@ flowchart TB
 | Work item | Current state | Next evidence required |
 | --- | --- | --- |
 | Versioned handbook | Source and root README link prepared; Wiki export committed locally with validated links | Initialize the enabled GitHub Wiki, push the prepared export, review, and merge this branch |
-| Explicit lightweight package allowlist | Implemented for exactly five packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
+| Explicit lightweight package allowlist | Implemented for exactly seven packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
 | Exact distribution assertion | Wheel and source archive inventories pass locally | Confirm the packaging job on Blacksmith for this pull request |
 | Third-party/provenance ledger | Root ledger covers the high-risk research, data, model, binary, paper, and submodule areas | Resolve each entry with immutable provenance and reviewed distribution terms |
 | License/distribution gate | Supported release workflow fails while `BLOCK` entries remain | Resolve TVMC, QNDF, copied-upstream, binary, dataset, checkpoint, and paper scope |
@@ -39,31 +39,39 @@ flowchart TB
 
 - NumPy-backed `TriangleMesh`, `Frame`, finite lazy `Sequence`, and their
   existing tested behaviors.
-- Example sequence loaders, comparison tools, viewers, and Open3D conversion
-  within the scopes recorded in the component register.
-- Independent codec and reconstruction research trees, without a common
-  Open4D adapter or complete end-to-end application.
+- Public mesh sequence loading, a lossless modular reference codec, the Qt
+  sequence viewer, example comparison tools, and Open3D conversion within the
+  scopes recorded in the component register.
+- Independent codec and reconstruction research trees, with public adapters
+  for KLT, N4MC, QNDF/QNDF-int8, temporal mesh experiments, and V-Mesh; they
+  do not yet form a complete end-to-end application.
 - Checksum-based artifact-fetching policy and the component-specific mechanics
   explicitly identified in the handbook as worth preserving.
 
 ## Local verification snapshot
 
-- Python 3.11, 3.12, and 3.13: 154 default tests pass on macOS.
-- Python 3.10: 78 core tests pass; the full local visualization tier is blocked
-  by a SciPy macOS binary that the current linker rejects. The Linux
-  Blacksmith matrix is the authoritative remaining 3.10 check.
-- Open3D 0.19 on Python 3.12: 5 adapter tests pass.
-- Exact wheel and source-distribution inventories pass, followed by a clean
-  wheel installation and dependency check.
-- Markdown links, Python compilation, shell syntax, provenance containment,
-  release-block presence, and whitespace checks pass locally.
+Snapshot taken 2026-08-25 on macOS:
+
+- A clean Python 3.13 environment installed with `uv pip install -e '.[dev]'`
+  and run with `python -m pytest -q` reports 233 passed and 26 explicit
+  optional-dependency, research-host, or GUI skips; nothing is deselected.
+- The dependency-complete Python 3.12 codec environment run with
+  `.venv/bin/python -m pytest -q` reports 286 passed and 10 research-host/GUI
+  skips; nothing is deselected.
+- The focused manifest and Draco declaration regressions run with
+  `.venv/bin/python -m pytest -q open4d/codec/tests/test_draco.py
+  open4d/io/tests/test_sequence_io.py open4d/codec/tests/test_codec.py`.
+- `scripts/check_provenance.py`, `scripts/check_markdown_links.py`, Python
+  compilation, distribution inventory checks, and `git diff --check` pass.
 
 ## Not currently implemented
 
-The working tree does **not** currently contain the proposed `open4d.io` or
-`open4d.metrics` public packages, schema-v1 USD API, complete Draco reference
-application, TVMC shared adapter, RGB-D finite replay adapter, or live-stream
-contract implementation. These are roadmap items, not current capabilities.
+The working tree contains the first mesh-loading slice of `open4d.io`,
+NumPy/ZIP reference codecs, public KLT, N4MC, QNDF/QNDF-int8, temporal-mesh,
+Draco, and V-Mesh adapters, and the public Qt visualizer. It does **not** contain
+`open4d.metrics`, the schema-v1 USD API, a complete Draco reference application,
+TVMC/TSMC shared adapters, an RGB-D finite replay adapter, or a live-stream
+contract implementation. These remain roadmap items.
 
 Blacksmith is an automation surface, not evidence by itself. Its pull-request
 results must still prove the tests, packaging boundary, provenance containment,

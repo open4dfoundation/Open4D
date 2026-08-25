@@ -1,5 +1,9 @@
 # Shared temporal geometry design
 
+For the proposed public loading, format detection, directory manifest, and
+writer API built on this model, see [Python API plan for heterogeneous 3D
+sequences](python-api-plan.md).
+
 ## Purpose
 
 `Sequence` is the central Open4D data abstraction: it gives loaders, processors,
