@@ -89,6 +89,14 @@ def test_inspection_does_not_decode_geometry(tmp_path):
         open_sequence(tmp_path)[0]
 
 
+def test_non_object_sequence_manifest_is_a_decode_error(tmp_path):
+    (tmp_path / "open4d.sequence.json").write_text("[]", encoding="utf-8")
+
+    for operation in (open_sequence, inspect_sequence):
+        with pytest.raises(DecodeError, match="manifest root must be an object"):
+            operation(tmp_path)
+
+
 def test_ascii_ply_colors_are_normalized_without_optional_dependencies(tmp_path):
     path = tmp_path / "frame.ply"
     path.write_text(

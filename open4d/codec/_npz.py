@@ -168,7 +168,8 @@ class NumPyZipCodec:
     def can_decode(self, source: Path) -> bool:
         try:
             with ZipFile(source, "r") as archive:
-                return json.loads(archive.read("manifest.json")).get("codec") == self.id
+                manifest = json.loads(archive.read("manifest.json"))
+                return isinstance(manifest, Mapping) and manifest.get("codec") == self.id
         except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
             return False
 
@@ -250,6 +251,8 @@ class NumPyZipCodec:
         try:
             archive = ZipFile(source, "r")
             manifest = json.loads(archive.read("manifest.json"))
+            if not isinstance(manifest, Mapping):
+                raise CodecError("artifact manifest root must be an object")
             if manifest.get("schema") != _SCHEMA:
                 raise CodecError(
                     f"unsupported artifact schema {manifest.get('schema')!r}"

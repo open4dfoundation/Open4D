@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import math
@@ -13,7 +14,7 @@ import re
 import shutil
 import tempfile
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable
 
 import numpy as np
 
@@ -193,6 +194,8 @@ def _read_manifest(
         return None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, Mapping):
+            raise TypeError("manifest root must be an object")
         if manifest.get("schema") != _MANIFEST_SCHEMA:
             raise ValueError(f"unsupported schema {manifest.get('schema')!r}")
         suffix = _suffix_for(manifest["format"])
