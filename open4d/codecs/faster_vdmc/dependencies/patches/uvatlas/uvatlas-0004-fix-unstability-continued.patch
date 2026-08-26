@@ -1,0 +1,680 @@
+From e1de53a68015627e9c8bfe2e124e0b28be599ffc Mon Sep 17 00:00:00 2001
+From: Olivier Mocquard <olivier.mocquard@interdigital.com>
+Date: Fri, 22 Jul 2022 18:36:21 +0200
+Subject: [PATCH] uvatlas: fix unstability continued -finalize replacement to
+ std - fix critical (float)cos((double)fvalue) in meshoptimizestretch.cpp -
+ are there other similar critical cases remaining ?
+
+This patch is licensed as follows:
+
+The copyright in this software is being made available under the BSD
+Licence, included below.  This software may be subject to other third
+party and contributor rights, including patent rights, and no such
+rights are granted under this licence.
+
+Copyright (c) 2022, ISO/IEC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the ISO/IEC nor the names of its contributors
+  may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+---
+ UVAtlas/geodesics/ApproximateOneToAll.cpp |  14 +--
+ UVAtlas/geodesics/ExactOneToAll.cpp       | 100 +++++++++++-----------
+ UVAtlas/geodesics/datatypes.h             |   2 +-
+ UVAtlas/geodesics/mathutils.cpp           |   6 +-
+ UVAtlas/isochart/SymmetricMatrix.hpp      |  40 ++++-----
+ UVAtlas/isochart/imtcomputation.cpp       |   4 +-
+ UVAtlas/isochart/isochartutil.h           |   2 +-
+ UVAtlas/isochart/meshoptimizestretch.cpp  |   4 +-
+ UVAtlas/isochart/progressivemesh.cpp      |   4 +-
+ UVAtlas/isochart/sparsematrix.hpp         |   2 +-
+ 10 files changed, 89 insertions(+), 89 deletions(-)
+
+diff --git a/UVAtlas/geodesics/ApproximateOneToAll.cpp b/UVAtlas/geodesics/ApproximateOneToAll.cpp
+index b38b997..b8f4640 100644
+--- a/UVAtlas/geodesics/ApproximateOneToAll.cpp
++++ b/UVAtlas/geodesics/ApproximateOneToAll.cpp
+@@ -56,7 +56,7 @@ void CApproximateOneToAll::CutHeapTopData(EdgeWindow& EdgeWindowOut)
+                 double D1 = pWindowRight->dPseuSrcToSrcDistance + SqrtMin0(SquredD2Dist(DVector2(b1pie, 0), pWindowRight->dv2Src));
+                 double D0 = pWindowLeft->dPseuSrcToSrcDistance + SqrtMin0(SquredD2Dist(DVector2(b0pie, 0), pWindowLeft->dv2Src));
+ 
+-                if (fabs(D1 - D0) < DBL_EPSILON)
++                if (std::fabs(D1 - D0) < DBL_EPSILON)
+                 {
+                     continue;	// prevent divide-by-zero on very narrow windows
+                 }
+@@ -154,25 +154,25 @@ void CApproximateOneToAll::CutHeapTopData(EdgeWindow& EdgeWindowOut)
+                     case 0:
+                         tmpp.x = pWindowLeft->b0;
+                         tmpDp = pWindowLeft->dPseuSrcToSrcDistance + pWindowLeft->d0;
+-                        tmpdif = fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
++                        tmpdif = std::fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
+                         break;
+ 
+                     case 1:
+                         tmpp.x = pWindowLeft->b1;
+                         tmpDp = pWindowLeft->dPseuSrcToSrcDistance + pWindowLeft->d1;
+-                        tmpdif = fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
++                        tmpdif = std::fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
+                         break;
+ 
+                     case 2:
+                         tmpp.x = pWindowRight->b0;
+                         tmpDp = pWindowRight->dPseuSrcToSrcDistance + pWindowRight->d0;
+-                        tmpdif = fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
++                        tmpdif = std::fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
+                         break;
+ 
+                     case 3:
+                         tmpp.x = pWindowRight->b1;
+                         tmpDp = pWindowRight->dPseuSrcToSrcDistance + pWindowRight->d1;
+-                        tmpdif = fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
++                        tmpdif = std::fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
+                         break;
+ 
+                     case 4:
+@@ -222,7 +222,7 @@ void CApproximateOneToAll::CutHeapTopData(EdgeWindow& EdgeWindowOut)
+                         }
+ 
+                         tmpDp = pWindowLeft->dPseuSrcToSrcDistance + SqrtMin0(SquredD2Dist(pWindowLeft->dv2Src, tmpp));
+-                        tmpdif = fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
++                        tmpdif = std::fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
+                     }
+                     break;
+ 
+@@ -273,7 +273,7 @@ void CApproximateOneToAll::CutHeapTopData(EdgeWindow& EdgeWindowOut)
+                         }
+ 
+                         tmpDp = pWindowRight->dPseuSrcToSrcDistance + SqrtMin0(SquredD2Dist(pWindowRight->dv2Src, tmpp));
+-                        tmpdif = fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
++                        tmpdif = std::fabs(sigma + SqrtMin0(SquredD2Dist(spie, tmpp)) - tmpDp);
+                     }
+                     break;
+                     }
+diff --git a/UVAtlas/geodesics/ExactOneToAll.cpp b/UVAtlas/geodesics/ExactOneToAll.cpp
+index 39a853a..65fcf67 100644
+--- a/UVAtlas/geodesics/ExactOneToAll.cpp
++++ b/UVAtlas/geodesics/ExactOneToAll.cpp
+@@ -64,8 +64,8 @@ void CExactOneToAll::SetSrcVertexIdx(const uint32_t dwSrcVertexIdx)
+             tmpEdgeWindow.dPseuSrcToSrcDistance = 0;
+             tmpEdgeWindow.b0 = 0;
+             tmpEdgeWindow.b1 = tmpEdgeWindow.pEdge->dEdgeLength;
+-            tmpEdgeWindow.d0 = sqrt(SquredD3Dist(*tmpEdgeWindow.pEdge->pVertex0, m_VertexList[dwSrcVertexIdx]));
+-            tmpEdgeWindow.d1 = sqrt(SquredD3Dist(*tmpEdgeWindow.pEdge->pVertex1, m_VertexList[dwSrcVertexIdx]));
++            tmpEdgeWindow.d0 = std::sqrt(SquredD3Dist(*tmpEdgeWindow.pEdge->pVertex0, m_VertexList[dwSrcVertexIdx]));
++            tmpEdgeWindow.d1 = std::sqrt(SquredD3Dist(*tmpEdgeWindow.pEdge->pVertex1, m_VertexList[dwSrcVertexIdx]));
+             ParameterizePt3ToPt2(*tmpEdgeWindow.pEdge->pVertex0, *tmpEdgeWindow.pEdge->pVertex1, m_VertexList[dwSrcVertexIdx], tmpEdgeWindow.dv2Src);
+             tmpEdgeWindow.SetPseuSrcVertexIdx(m_VertexList, dwSrcVertexIdx);
+             tmpEdgeWindow.SetMarkFromEdgeVertexIdx(m_VertexList, tmpEdgeWindow.pEdge->dwVertexIdx0);
+@@ -153,7 +153,7 @@ void CExactOneToAll::InternalRun()
+             continue;
+         }
+ 
+-        if (fabs(WindowToBePropagated.b0 - WindowToBePropagated.b1) <= double(FLT_EPSILON))
++        if (std::fabs(WindowToBePropagated.b0 - WindowToBePropagated.b1) <= double(FLT_EPSILON))
+         {
+             // we don't process these too small windows
+             continue;
+@@ -202,7 +202,7 @@ void CExactOneToAll::InternalRun()
+         e2.y = -e2.y;
+ 
+         GetCommonPointOf2Lines(e0, e2, w2, w0, w0_to_e0_e2, bW2W0OnE0E2);
+-        if (w0_to_e0_e2.x == DBL_MAX && fabs(w0.x - e0.x) < double(FLT_EPSILON))
++        if (w0_to_e0_e2.x == DBL_MAX && std::fabs(w0.x - e0.x) < double(FLT_EPSILON))
+         {
+             bW2W0OnE0E2 = true;
+             w0_to_e0_e2 = e0;
+@@ -212,7 +212,7 @@ void CExactOneToAll::InternalRun()
+         GetCommonPointOf2Lines(e0, e2, w2, w1, w1_to_e0_e2, bW2W1OnE0E2);
+ 
+         GetCommonPointOf2Lines(e1, e2, w2, w1, w1_to_e1_e2, bW2W1OnE1E2);
+-        if (w1_to_e1_e2.x == DBL_MAX && fabs(e1.x - w1.x) < double(FLT_EPSILON))
++        if (w1_to_e1_e2.x == DBL_MAX && std::fabs(e1.x - w1.x) < double(FLT_EPSILON))
+         {
+             bW2W1OnE1E2 = true;
+             w1_to_e1_e2 = e1;
+@@ -222,7 +222,7 @@ void CExactOneToAll::InternalRun()
+         if (bW2W0OnE0E2 && bW2W1OnE1E2 && !bW2W1OnE0E2 && !bW2W0OnE1E2)
+         {
+             // the first possible new window
+-            if ((tmpWindow0.b1 = sqrt(SquredD2Dist(w0_to_e0_e2, e2))) > double(FLT_EPSILON))
++            if ((tmpWindow0.b1 = std::sqrt(SquredD2Dist(w0_to_e0_e2, e2))) > double(FLT_EPSILON))
+             {
+                 if (w0.x == e0.x)
+                     tmpWindow0.b1 = pEdge0->dEdgeLength;
+@@ -232,14 +232,14 @@ void CExactOneToAll::InternalRun()
+                 tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance;
+                 tmpWindow0.SetFaceIdxPropagatedFrom(m_FaceList, dwFacePropagateTo);
+                 tmpWindow0.b0 = 0;
+-                tmpWindow0.d0 = sqrt(SquredD2Dist(w2, e2));
++                tmpWindow0.d0 = std::sqrt(SquredD2Dist(w2, e2));
+                 if (w0.x == e0.x)
+                 {
+-                    tmpWindow0.d1 = sqrt(SquredD2Dist(e0, w2));
++                    tmpWindow0.d1 = std::sqrt(SquredD2Dist(e0, w2));
+                 }
+                 else
+                 {
+-                    tmpWindow0.d1 = sqrt(SquredD2Dist(w0_to_e0_e2, w2));
++                    tmpWindow0.d1 = std::sqrt(SquredD2Dist(w0_to_e0_e2, w2));
+                 }
+                 ParameterizePt2ToPt2(e2, e0, w2, tmpWindow0.dv2Src);
+                 tmpWindow0.SetMarkFromEdgeVertexIdx(m_VertexList, dwThirdPtIdxOnFacePropagateTo);
+@@ -254,7 +254,7 @@ void CExactOneToAll::InternalRun()
+             }
+ 
+             // the second possible new window
+-            if ((tmpWindow0.b1 = sqrt(SquredD2Dist(w1_to_e1_e2, e2))) > double(FLT_EPSILON))
++            if ((tmpWindow0.b1 = std::sqrt(SquredD2Dist(w1_to_e1_e2, e2))) > double(FLT_EPSILON))
+             {
+                 if (w1.x == e1.x)
+                     tmpWindow0.b1 = pEdge1->dEdgeLength;
+@@ -264,14 +264,14 @@ void CExactOneToAll::InternalRun()
+                 tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance;
+                 tmpWindow0.SetFaceIdxPropagatedFrom(m_FaceList, dwFacePropagateTo);
+                 tmpWindow0.b0 = 0;
+-                tmpWindow0.d0 = sqrt(SquredD2Dist(w2, e2));
++                tmpWindow0.d0 = std::sqrt(SquredD2Dist(w2, e2));
+                 if (w1.x == e1.x)
+                 {
+-                    tmpWindow0.d1 = sqrt(SquredD2Dist(e1, w2));
++                    tmpWindow0.d1 = std::sqrt(SquredD2Dist(e1, w2));
+                 }
+                 else
+                 {
+-                    tmpWindow0.d1 = sqrt(SquredD2Dist(w1_to_e1_e2, w2));
++                    tmpWindow0.d1 = std::sqrt(SquredD2Dist(w1_to_e1_e2, w2));
+                 }
+                 ParameterizePt2ToPt2(e2, e1, w2, tmpWindow0.dv2Src);
+                 tmpWindow0.SetMarkFromEdgeVertexIdx(m_VertexList, dwThirdPtIdxOnFacePropagateTo);
+@@ -293,7 +293,7 @@ void CExactOneToAll::InternalRun()
+             tmpWindow0.SetEdgeIdx(m_EdgeList, dwEdgeIdxPropagateTo1);
+             tmpWindow0.SetFaceIdxPropagatedFrom(m_FaceList, dwFacePropagateTo);
+             tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance;
+-            tmpWindow0.b0 = sqrt(SquredD2Dist(w0_to_e1_e2, e2));
++            tmpWindow0.b0 = std::sqrt(SquredD2Dist(w0_to_e1_e2, e2));
+             if (tmpWindow0.b0 < double(FLT_EPSILON))
+             {
+                 tmpWindow0.b0 = 0;
+@@ -301,15 +301,15 @@ void CExactOneToAll::InternalRun()
+             if (w1.x == e1.x)
+             {
+                 tmpWindow0.b1 = pEdge1->dEdgeLength;  //SqrtWithAssert( SquredD2Dist( e1, e2 ) ) ;
+-                tmpWindow0.d1 = sqrt(SquredD2Dist(e1, w2));
++                tmpWindow0.d1 = std::sqrt(SquredD2Dist(e1, w2));
+             }
+             else
+             {
+-                tmpWindow0.b1 = sqrt(SquredD2Dist(w1_to_e1_e2, e2));
+-                tmpWindow0.d1 = sqrt(SquredD2Dist(w1_to_e1_e2, w2));
++                tmpWindow0.b1 = std::sqrt(SquredD2Dist(w1_to_e1_e2, e2));
++                tmpWindow0.d1 = std::sqrt(SquredD2Dist(w1_to_e1_e2, w2));
+             }
+             ParameterizePt2ToPt2(e2, e1, w2, tmpWindow0.dv2Src);
+-            tmpWindow0.d0 = sqrt(SquredD2Dist(w0_to_e1_e2, w2));
++            tmpWindow0.d0 = std::sqrt(SquredD2Dist(w0_to_e1_e2, w2));
+             tmpWindow0.SetMarkFromEdgeVertexIdx(m_VertexList, dwThirdPtIdxOnFacePropagateTo);
+ 
+             tmpWindow0.ksi = WindowToBePropagated.ksi;
+@@ -327,9 +327,9 @@ void CExactOneToAll::InternalRun()
+                 tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance + WindowToBePropagated.d0;
+                 tmpWindow0.SetFaceIdxPropagatedFrom(m_FaceList, dwFacePropagateTo);
+                 tmpWindow0.b0 = 0;
+-                tmpWindow0.b1 = sqrt(SquredD2Dist(w0_to_e1_e2, e2));
++                tmpWindow0.b1 = std::sqrt(SquredD2Dist(w0_to_e1_e2, e2));
+                 tmpWindow0.d0 = pEdge0->dEdgeLength;
+-                tmpWindow0.d1 = sqrt(SquredD2Dist(w0_to_e1_e2, e0));
++                tmpWindow0.d1 = std::sqrt(SquredD2Dist(w0_to_e1_e2, e0));
+                 tmpWindow0.SetMarkFromEdgeVertexIdx(m_VertexList, dwThirdPtIdxOnFacePropagateTo);
+                 //ParameterizePt2ToPt2( e2, e1, e0, tmpWindow0.dv2Src ) ;
+                 ParameterizePt3ToPt2(*pThridPtOnFacePropagateTo, *pPtE1, *WindowToBePropagated.pMarkFromEdgeVertex, tmpWindow0.dv2Src);
+@@ -395,8 +395,8 @@ void CExactOneToAll::InternalRun()
+                             tmpWindow0.SetPseuSrcVertexIdx(m_VertexList, WindowToBePropagated.dwMarkFromEdgeVertexIdx);
+                             tmpWindow0.b0 = 0;
+                             tmpWindow0.b1 = tmpWindow0.pEdge->dEdgeLength;
+-                            tmpWindow0.d0 = sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex0, *WindowToBePropagated.pMarkFromEdgeVertex));
+-                            tmpWindow0.d1 = sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex1, *WindowToBePropagated.pMarkFromEdgeVertex));
++                            tmpWindow0.d0 = std::sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex0, *WindowToBePropagated.pMarkFromEdgeVertex));
++                            tmpWindow0.d1 = std::sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex1, *WindowToBePropagated.pMarkFromEdgeVertex));
+                             tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance + WindowToBePropagated.d0;
+                             ParameterizePt3ToPt2(*tmpWindow0.pEdge->pVertex0, *tmpWindow0.pEdge->pVertex1, *tmpWindow0.pPseuSrcVertex, tmpWindow0.dv2Src);
+                             tmpWindow0.pEdgePropagatedFrom = WindowToBePropagated.pEdge;
+@@ -419,7 +419,7 @@ void CExactOneToAll::InternalRun()
+             tmpWindow0.SetEdgeIdx(m_EdgeList, dwEdgeIdxPropagateTo0);
+             tmpWindow0.SetFaceIdxPropagatedFrom(m_FaceList, dwFacePropagateTo);
+             tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance;
+-            tmpWindow0.b0 = sqrt(SquredD2Dist(w1_to_e0_e2, e2));
++            tmpWindow0.b0 = std::sqrt(SquredD2Dist(w1_to_e0_e2, e2));
+             if (tmpWindow0.b0 < double(FLT_EPSILON))
+             {
+                 tmpWindow0.b0 = 0;
+@@ -427,15 +427,15 @@ void CExactOneToAll::InternalRun()
+             if (w0.x == e0.x)
+             {
+                 tmpWindow0.b1 = pEdge0->dEdgeLength; //SqrtWithAssert( SquredD2Dist( e0, e2 ) ) ;
+-                tmpWindow0.d1 = sqrt(SquredD2Dist(e0, w2));
++                tmpWindow0.d1 = std::sqrt(SquredD2Dist(e0, w2));
+             }
+             else
+             {
+-                tmpWindow0.b1 = sqrt(SquredD2Dist(w0_to_e0_e2, e2));
+-                tmpWindow0.d1 = sqrt(SquredD2Dist(w0_to_e0_e2, w2));
++                tmpWindow0.b1 = std::sqrt(SquredD2Dist(w0_to_e0_e2, e2));
++                tmpWindow0.d1 = std::sqrt(SquredD2Dist(w0_to_e0_e2, w2));
+             }
+             ParameterizePt2ToPt2(e2, e0, w2, tmpWindow0.dv2Src);
+-            tmpWindow0.d0 = sqrt(SquredD2Dist(w1_to_e0_e2, w2));
++            tmpWindow0.d0 = std::sqrt(SquredD2Dist(w1_to_e0_e2, w2));
+             tmpWindow0.SetMarkFromEdgeVertexIdx(m_VertexList, dwThirdPtIdxOnFacePropagateTo);
+ 
+             tmpWindow0.ksi = WindowToBePropagated.ksi;
+@@ -453,9 +453,9 @@ void CExactOneToAll::InternalRun()
+                 tmpWindow0.SetFaceIdxPropagatedFrom(m_FaceList, dwFacePropagateTo);
+                 tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance + WindowToBePropagated.d1;
+                 tmpWindow0.b0 = 0;
+-                tmpWindow0.b1 = sqrt(SquredD2Dist(w1_to_e0_e2, e2));
++                tmpWindow0.b1 = std::sqrt(SquredD2Dist(w1_to_e0_e2, e2));
+                 tmpWindow0.d0 = pEdge1->dEdgeLength;
+-                tmpWindow0.d1 = sqrt(SquredD2Dist(w1_to_e0_e2, e1));
++                tmpWindow0.d1 = std::sqrt(SquredD2Dist(w1_to_e0_e2, e1));
+                 tmpWindow0.SetMarkFromEdgeVertexIdx(m_VertexList, dwThirdPtIdxOnFacePropagateTo);
+                 ParameterizePt3ToPt2(*pThridPtOnFacePropagateTo, *WindowToBePropagated.pMarkFromEdgeVertex, *pPtE1, tmpWindow0.dv2Src);
+ 
+@@ -521,8 +521,8 @@ void CExactOneToAll::InternalRun()
+                             tmpWindow0.SetPseuSrcVertexIdx(m_VertexList, dwE1);
+                             tmpWindow0.b0 = 0;
+                             tmpWindow0.b1 = tmpWindow0.pEdge->dEdgeLength;
+-                            tmpWindow0.d0 = sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex0, m_VertexList[dwE1]));
+-                            tmpWindow0.d1 = sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex1, m_VertexList[dwE1]));
++                            tmpWindow0.d0 = std::sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex0, m_VertexList[dwE1]));
++                            tmpWindow0.d1 = std::sqrt(SquredD3Dist(*tmpWindow0.pEdge->pVertex1, m_VertexList[dwE1]));
+                             tmpWindow0.dPseuSrcToSrcDistance = WindowToBePropagated.dPseuSrcToSrcDistance + WindowToBePropagated.d1;
+                             ParameterizePt3ToPt2(*tmpWindow0.pEdge->pVertex0, *tmpWindow0.pEdge->pVertex1, *tmpWindow0.pPseuSrcVertex, tmpWindow0.dv2Src);
+                             tmpWindow0.pEdgePropagatedFrom = WindowToBePropagated.pEdge;
+@@ -843,9 +843,9 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+ 
+     // the new window is almost the same as the existing one, simply drop the new window
+     if (SquredD2Dist(ExistingWindowSrc, NewWindowSrc) < double(FLT_EPSILON) &&
+-        fabs(pExistingWindow->b0 - pNewWindow->b0) < double(FLT_EPSILON) &&
+-        fabs(pExistingWindow->b1 - pNewWindow->b1) < double(FLT_EPSILON) &&
+-        fabs(pExistingWindow->dPseuSrcToSrcDistance - pNewWindow->dPseuSrcToSrcDistance) < double(FLT_EPSILON))
++        std::fabs(pExistingWindow->b0 - pNewWindow->b0) < double(FLT_EPSILON) &&
++        std::fabs(pExistingWindow->b1 - pNewWindow->b1) < double(FLT_EPSILON) &&
++        std::fabs(pExistingWindow->dPseuSrcToSrcDistance - pNewWindow->dPseuSrcToSrcDistance) < double(FLT_EPSILON))
+     {
+         *pNewWindowChanged = true;
+         *pNewWindowNotAvailable = true;
+@@ -868,21 +868,21 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+             m_NewExistingWindow.SetFaceIdxPropagatedFrom(m_FaceList, pExistingWindow->dwFaceIdxPropagatedFrom);
+             m_NewExistingWindow.SetMarkFromEdgeVertexIdx(m_VertexList, pExistingWindow->dwMarkFromEdgeVertexIdx);
+             m_NewExistingWindow.SetPseuSrcVertexIdx(m_VertexList, pExistingWindow->dwPseuSrcVertexIdx);
+-            m_NewExistingWindow.d1 = sqrt(SquredD2Dist(DVector2(m_NewExistingWindow.b1, 0), m_NewExistingWindow.dv2Src));
++            m_NewExistingWindow.d1 = std::sqrt(SquredD2Dist(DVector2(m_NewExistingWindow.b1, 0), m_NewExistingWindow.dv2Src));
+             m_NewExistingWindow.dPseuSrcToSrcDistance = pExistingWindow->dPseuSrcToSrcDistance;
+ 
+             m_NewExistingWindow.ksi = pExistingWindow->ksi;
+             m_NewExistingWindow.pEdgePropagatedFrom = pExistingWindow->pEdgePropagatedFrom;
+ 
+             pExistingWindow->b0 = pNewWindow->b0;
+-            pExistingWindow->d0 = sqrt(SquredD2Dist(DVector2(pExistingWindow->b0, 0), ExistingWindowSrc));
++            pExistingWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pExistingWindow->b0, 0), ExistingWindowSrc));
+ 
+             *pExistingWindowChanged = true;
+         }
+         else
+         {
+             pExistingWindow->b0 = pNewWindow->b0;
+-            pExistingWindow->d0 = sqrt(SquredD2Dist(DVector2(pExistingWindow->b0, 0), ExistingWindowSrc));
++            pExistingWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pExistingWindow->b0, 0), ExistingWindowSrc));
+ 
+             *pExistingWindowChanged = true;
+         }
+@@ -901,21 +901,21 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+             m_AnotherNewWindow.SetFaceIdxPropagatedFrom(m_FaceList, pNewWindow->dwFaceIdxPropagatedFrom);
+             m_AnotherNewWindow.SetMarkFromEdgeVertexIdx(m_VertexList, pNewWindow->dwMarkFromEdgeVertexIdx);
+             m_AnotherNewWindow.SetPseuSrcVertexIdx(m_VertexList, pNewWindow->dwPseuSrcVertexIdx);
+-            m_AnotherNewWindow.d1 = sqrt(SquredD2Dist(DVector2(m_AnotherNewWindow.b1, 0), m_AnotherNewWindow.dv2Src));
++            m_AnotherNewWindow.d1 = std::sqrt(SquredD2Dist(DVector2(m_AnotherNewWindow.b1, 0), m_AnotherNewWindow.dv2Src));
+             m_AnotherNewWindow.dPseuSrcToSrcDistance = pNewWindow->dPseuSrcToSrcDistance;
+ 
+             m_AnotherNewWindow.ksi = pNewWindow->ksi;
+             m_AnotherNewWindow.pEdgePropagatedFrom = pNewWindow->pEdgePropagatedFrom;
+ 
+             pNewWindow->b0 = pExistingWindow->b0;
+-            pNewWindow->d0 = sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
++            pNewWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
+ 
+             *pNewWindowChanged = true;
+         }
+         else
+         {
+             pNewWindow->b0 = pExistingWindow->b0;
+-            pNewWindow->d0 = sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
++            pNewWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
+ 
+             *pNewWindowChanged = true;
+         }
+@@ -962,7 +962,7 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+         if (bStartFromNewWindowB0)
+         {
+             pNewWindow->b0 += IntersectionLength;
+-            pNewWindow->d0 = sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
++            pNewWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
+ 
+             if (pNewWindow->b0 >= pNewWindow->b1)
+             {
+@@ -975,7 +975,7 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+         else
+         {
+             pNewWindow->b1 -= IntersectionLength;
+-            pNewWindow->d1 = sqrt(SquredD2Dist(DVector2(pNewWindow->b1, 0), NewWindowSrc));
++            pNewWindow->d1 = std::sqrt(SquredD2Dist(DVector2(pNewWindow->b1, 0), NewWindowSrc));
+ 
+             if (pNewWindow->b0 >= pNewWindow->b1)
+             {
+@@ -994,8 +994,8 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+     if (bNoSolution)
+     {
+         // whether the distance function of the new window is larger than that of the existing window everywhere in the intersection        
+-        if ((sqrt(SquredD2Dist(DVector2(IntersectionStart + IntersectionLength / 2, 0), NewWindowSrc)) + pNewWindow->dPseuSrcToSrcDistance) >
+-            (sqrt(SquredD2Dist(DVector2(IntersectionStart + IntersectionLength / 2, 0), ExistingWindowSrc)) + pExistingWindow->dPseuSrcToSrcDistance))
++        if ((std::sqrt(SquredD2Dist(DVector2(IntersectionStart + IntersectionLength / 2, 0), NewWindowSrc)) + pNewWindow->dPseuSrcToSrcDistance) >
++            (std::sqrt(SquredD2Dist(DVector2(IntersectionStart + IntersectionLength / 2, 0), ExistingWindowSrc)) + pExistingWindow->dPseuSrcToSrcDistance))
+         {
+             if (pNewWindow->b0 == pExistingWindow->b0 && pNewWindow->b1 == pExistingWindow->b1)
+             {
+@@ -1018,7 +1018,7 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+                 }
+                 else
+                 {
+-                    pNewWindow->d1 = sqrt(SquredD2Dist(DVector2(pNewWindow->b1, 0), NewWindowSrc));
++                    pNewWindow->d1 = std::sqrt(SquredD2Dist(DVector2(pNewWindow->b1, 0), NewWindowSrc));
+                 }
+             }
+             else
+@@ -1034,7 +1034,7 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+                 }
+                 else
+                 {
+-                    pNewWindow->d0 = sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
++                    pNewWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pNewWindow->b0, 0), NewWindowSrc));
+                 }
+             }
+             *pNewWindowChanged = true;
+@@ -1061,7 +1061,7 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+                 }
+                 else
+                 {
+-                    pExistingWindow->d1 = sqrt(SquredD2Dist(DVector2(pExistingWindow->b1, 0), ExistingWindowSrc));
++                    pExistingWindow->d1 = std::sqrt(SquredD2Dist(DVector2(pExistingWindow->b1, 0), ExistingWindowSrc));
+                 }
+             }
+             else
+@@ -1075,7 +1075,7 @@ void CExactOneToAll::IntersectWindow(EdgeWindow* pExistingWindow,
+                 }
+                 else
+                 {
+-                    pExistingWindow->d0 = sqrt(SquredD2Dist(DVector2(pExistingWindow->b0, 0), ExistingWindowSrc));
++                    pExistingWindow->d0 = std::sqrt(SquredD2Dist(DVector2(pExistingWindow->b0, 0), ExistingWindowSrc));
+                 }
+             }
+             *pExistingWindowChanged = true;
+@@ -1099,8 +1099,8 @@ void CExactOneToAll::GenerateWindowsAroundSaddleOrBoundaryVertex(const EdgeWindo
+         tmpWindow.SetPseuSrcVertexIdx(m_VertexList, dwSaddleOrBoundaryVertexId);
+         tmpWindow.b0 = 0;
+         tmpWindow.b1 = tmpWindow.pEdge->dEdgeLength;
+-        tmpWindow.d0 = sqrt(SquredD3Dist(*tmpWindow.pEdge->pVertex0, m_VertexList[dwSaddleOrBoundaryVertexId]));
+-        tmpWindow.d1 = sqrt(SquredD3Dist(*tmpWindow.pEdge->pVertex1, m_VertexList[dwSaddleOrBoundaryVertexId]));
++        tmpWindow.d0 = std::sqrt(SquredD3Dist(*tmpWindow.pEdge->pVertex0, m_VertexList[dwSaddleOrBoundaryVertexId]));
++        tmpWindow.d1 = std::sqrt(SquredD3Dist(*tmpWindow.pEdge->pVertex1, m_VertexList[dwSaddleOrBoundaryVertexId]));
+         tmpWindow.dPseuSrcToSrcDistance = (iwindow.dwMarkFromEdgeVertexIdx == dwSaddleOrBoundaryVertexId ? iwindow.d0 : iwindow.d1)
+             + iwindow.dPseuSrcToSrcDistance;
+         ParameterizePt3ToPt2(*tmpWindow.pEdge->pVertex0, *tmpWindow.pEdge->pVertex1, m_VertexList[dwSaddleOrBoundaryVertexId], tmpWindow.dv2Src);
+diff --git a/UVAtlas/geodesics/datatypes.h b/UVAtlas/geodesics/datatypes.h
+index 947004c..5395481 100644
+--- a/UVAtlas/geodesics/datatypes.h
++++ b/UVAtlas/geodesics/datatypes.h
+@@ -70,7 +70,7 @@ namespace GeodesicDist
+ 
+     inline double DVector2CrossModulus(const DVector2& L, const DVector2& R)
+     {
+-        return fabs(L.x * R.y - L.y * R.x);
++        return std::fabs(L.x * R.y - L.y * R.x);
+     }
+ 
+     inline double DVector2Dot(const DVector2& L, const DVector2& R)
+diff --git a/UVAtlas/geodesics/mathutils.cpp b/UVAtlas/geodesics/mathutils.cpp
+index 9994f19..0859d0f 100644
+--- a/UVAtlas/geodesics/mathutils.cpp
++++ b/UVAtlas/geodesics/mathutils.cpp
+@@ -15,12 +15,12 @@ using namespace GeodesicDist;
+ double GeodesicDist::SqrtWithAssert(const double& x)
+ {
+     assert(x >= 0);
+-    return sqrt(x);
++    return std::sqrt(x);
+ }
+ 
+ double GeodesicDist::SqrtMin0(const double& x)
+ {
+-    return sqrt(std::max<double>(x, 0));
++    return std::sqrt(std::max<double>(x, 0));
+ }
+ 
+ double GeodesicDist::ComputeVertexAngleOnFace(const Face& face, const uint32_t dwVertexIdx)
+@@ -84,7 +84,7 @@ void GeodesicDist::GetCommonPointOf2Lines(const DVector2& pt1Line1,
+     double d = (pt1Line1.y - pt2Line1.y) * (pt1Line2.x - pt2Line2.x) - (pt1Line1.x - pt2Line1.x) * (pt1Line2.y - pt2Line2.y);
+ 
+     // test if these two lines are parallel
+-    if (fabs(d) < double(FLT_EPSILON))
++    if (std::fabs(d) < double(FLT_EPSILON))
+     {
+         ptResult.x = DBL_MAX;
+         ptResult.y = DBL_MAX;
+diff --git a/UVAtlas/isochart/SymmetricMatrix.hpp b/UVAtlas/isochart/SymmetricMatrix.hpp
+index 4e48b01..e81cbee 100644
+--- a/UVAtlas/isochart/SymmetricMatrix.hpp
++++ b/UVAtlas/isochart/SymmetricMatrix.hpp
+@@ -285,7 +285,7 @@ namespace Isochart
+                         for (size_t k = j; k < i; k++)
+                         {
+                             pRowHeader[k][j] -= (pP[k] * pU[j] + pP[j] * pU[k]);
+-                            if (fabs(pRowHeader[k][j]) < epsilon)
++                            if (std::fabs(pRowHeader[k][j]) < epsilon)
+                             {
+                                 pRowHeader[k][j] = 0;
+                             }
+@@ -321,7 +321,7 @@ namespace Isochart
+ 
+                 size_t currentDim = i + 1;
+ 
+-                if (fabs(pU[currentDim]) > epsilon)
++                if (std::fabs(pU[currentDim]) > epsilon)
+                 {
+                     //Q - (u/H) * (u' * Q); ( n*n +n multiplication )
+                     for (size_t j = 0; j < currentDim; j++)
+@@ -367,7 +367,7 @@ namespace Isochart
+             for (size_t j = 0; j < dwDimension; j++)
+             {
+                 // 2.2.1 Find a small subdiagonal element to split the matrix
+-                auto temp = value_type(fabs(pValues[j]) + fabs(pSubDiagVec[j]));
++                auto temp = value_type(std::fabs(pValues[j]) + std::fabs(pSubDiagVec[j]));
+                 if (maxv < temp)
+                 {
+                     maxv = temp;
+@@ -379,7 +379,7 @@ namespace Isochart
+                     size_t n;
+                     for (n = j; n < dwDimension; n++)
+                     {
+-                        if (fabs(pSubDiagVec[n]) <= epsilon * maxv)
++                        if (std::fabs(pSubDiagVec[n]) <= epsilon * maxv)
+                         {
+                             break;
+                         }
+@@ -410,8 +410,8 @@ namespace Isochart
+                         value_type ks = (-b + bc) / 2;
+                         value_type ks1 = (-b - bc) / 2;
+ 
+-                        if (fabs(pValues[j] - ks) >
+-                            fabs(pValues[j] - ks1))
++                        if (std::fabs(pValues[j] - ks) >
++                            std::fabs(pValues[j] - ks1))
+                         {
+                             ks = ks1;
+                         }
+@@ -443,16 +443,16 @@ namespace Isochart
+                         lastS = pSubDiagVec[n - 1] / tt;
+ 
+                         lastqq =
+-                            lastS * lastS * pValues[n - 1]
+-                            + (lastC * lastC * pValues[n]
+-                            + 2 * lastS * lastC * pSubDiagVec[n - 1]);
++                            ((lastS * lastS) * pValues[n - 1]
++                            + ((lastC * lastC )* pValues[n])
++                            + 2 * ((lastS * lastC )* pSubDiagVec[n - 1]));
+                         lastpp =
+-                            lastS * lastS * pValues[n]
+-                            + (lastC * lastC * pValues[n - 1]
+-                            - 2 * lastS * lastC * pSubDiagVec[n - 1]);
++                            ((lastS * lastS) * pValues[n]
++                            + ((lastC * lastC) * pValues[n - 1])
++                            - 2 * ((lastS * lastC) * pSubDiagVec[n - 1]));
+                         lastpq =
+                             (lastC * lastC - lastS * lastS) * pSubDiagVec[n - 1]
+-                            + lastS * lastC * (pValues[n - 1] - pValues[n]);
++                            + (lastS * lastC) * (pValues[n - 1] - pValues[n]);
+ 
+                         // Because d[n-1], e[n-1] will continue to be changed in next
+                         // step, only change d[n] here
+@@ -491,18 +491,18 @@ namespace Isochart
+                                 pSubDiagVec[next + 1] = value_type(lastC * lastpq + lastS * extra);
+ 
+                                 pValues[next + 1] = value_type(
+-                                    lastS * lastS * pValues[next]
+-                                    + (lastC * lastC * lastpp
+-                                    + 2 * lastS * lastC * pSubDiagVec[next]));
++                                    ((lastS * lastS) * pValues[next]
++                                    + ((lastC * lastC) * lastpp)
++                                    + 2 * ((lastS * lastC) * pSubDiagVec[next])));
+ 
+                                 lastpq =
+                                     (lastC * lastC - lastS * lastS) * pSubDiagVec[next]
+-                                    + lastS * lastC * (pValues[next] - lastpp);
++                                    + (lastS * lastC) * (pValues[next] - lastpp);
+ 
+                                 lastpp =
+-                                    lastS * lastS * lastpp
+-                                    + (lastC * lastC * pValues[next]
+-                                    - 2 * lastS * lastC * pSubDiagVec[next]);
++                                    ((lastS * lastS) * lastpp
++                                    + ((lastC * lastC) * pValues[next])
++                                    - 2 * ((lastS * lastC) * pSubDiagVec[next]));
+ 
+                                 if (next > 0)
+                                     extra = lastS * pSubDiagVec[next - 1];
+diff --git a/UVAtlas/isochart/imtcomputation.cpp b/UVAtlas/isochart/imtcomputation.cpp
+index c7dd0a0..ed1a596 100644
+--- a/UVAtlas/isochart/imtcomputation.cpp
++++ b/UVAtlas/isochart/imtcomputation.cpp
+@@ -402,9 +402,9 @@ Isochart::IMTFromTextureMap(
+     std::vector<SUBFACE*> finalSubFaceIdxList;
+     std::vector<XMFLOAT2> vertList;
+ 
+-    double d3dArea = fabs(double(Cal3DTriangleArea(
++    double d3dArea = std::fabs(double(Cal3DTriangleArea(
+         pV3d, pV3d + 1, pV3d + 2)));
+-    double d2dArea = fabs(double(Cal2DTriangleArea(
++    double d2dArea = std::fabs(double(Cal2DTriangleArea(
+         pUV, pUV + 1, pUV + 2)));
+ 
+     if (IsInZeroRangeDouble(d3dArea) ||
+diff --git a/UVAtlas/isochart/isochartutil.h b/UVAtlas/isochart/isochartutil.h
+index 5bbb956..e08823a 100644
+--- a/UVAtlas/isochart/isochartutil.h
++++ b/UVAtlas/isochart/isochartutil.h
+@@ -58,7 +58,7 @@ namespace Isochart
+         {
+             return 0;
+         }
+-        return sqrt(a);
++        return std::sqrt(a);
+     }
+ 
+ 
+diff --git a/UVAtlas/isochart/meshoptimizestretch.cpp b/UVAtlas/isochart/meshoptimizestretch.cpp
+index 675971e..b04117d 100644
+--- a/UVAtlas/isochart/meshoptimizestretch.cpp
++++ b/UVAtlas/isochart/meshoptimizestretch.cpp
+@@ -1822,9 +1822,9 @@ bool CIsochartMesh::OptimizeVertexStretchAroundCenter(
+         // 1. Get a new random position in the optimizing circle range
+         float fAngle = m_IsochartEngine.UniformRand(2.f * XM_PI);
+         vertInfo.end.x =
+-            vertInfo.center.x + vertInfo.fRadius * std::cos(fAngle);
++            vertInfo.center.x + vertInfo.fRadius * (float)std::cos((double)fAngle);
+         vertInfo.end.y =
+-            vertInfo.center.y + vertInfo.fRadius * std::sin(fAngle);
++            vertInfo.center.y + vertInfo.fRadius * (float)std::sin((double)fAngle);
+ 
+         // 2. When optimizing an boundary vertex during sigal-specified 
+         // parameterizing, must gurantee the vertex didn't move outside
+diff --git a/UVAtlas/isochart/progressivemesh.cpp b/UVAtlas/isochart/progressivemesh.cpp
+index 596b7a4..0147f16 100644
+--- a/UVAtlas/isochart/progressivemesh.cpp
++++ b/UVAtlas/isochart/progressivemesh.cpp
+@@ -213,7 +213,7 @@ HRESULT CProgressiveMesh::Simplify()
+         // 2.2 If deleting current edge makes distortion more than some limit, then stop
+         // deleting edges.
+ 
+-        if (static_cast<float>(fabs(pNeedCutEdgeItem->m_weight))
++        if (static_cast<float>(std::fabs(pNeedCutEdgeItem->m_weight))
+             > fMaxError* m_fBoxDiagLen)
+         {
+             break;
+@@ -1032,7 +1032,7 @@ void CProgressiveMesh::UpdateSufferedEdgesCost(
+             m_pEdgeArray + dwCurrentEdgeIndex;
+ 
+         CalculateEdgeQuadricError(pEdge1);
+-        auto fNewDeleteCost = -static_cast<float>(fabs(pEdge1->fDeleteCost));
++        auto fNewDeleteCost = -static_cast<float>(std::fabs(pEdge1->fDeleteCost));
+         if (fNewDeleteCost > -ISOCHART_ZERO_EPS)
+         {
+             fNewDeleteCost = -ISOCHART_ZERO_EPS;
+diff --git a/UVAtlas/isochart/sparsematrix.hpp b/UVAtlas/isochart/sparsematrix.hpp
+index 3b25ba3..762c60e 100644
+--- a/UVAtlas/isochart/sparsematrix.hpp
++++ b/UVAtlas/isochart/sparsematrix.hpp
+@@ -125,7 +125,7 @@ namespace Isochart
+             const CVector<T>& v1)
+         {
+             T result = dot<T>(v1, v1);
+-            return result < 0 ? 0 : static_cast<T>(sqrt(result));
++            return result < 0 ? 0 : static_cast<T>(std::sqrt(result));
+         }
+ 
+     };
+-- 
+2.35.1.windows.2
+

@@ -1,0 +1,108 @@
+---
+categories:
+  ai-ll:
+    cond-id: 0
+    # the list of tools to generate configurations for
+    tools: [ encoder, decoder, mmetric ]
+
+    # NB: common options are in cfg-tools.yaml
+    encoder:
+      - analyzeGof: 0
+      - subdivIsBase: 1
+      - baseIsSrc: 1
+      - encodeDisplacements: 0
+      - textureVideoBitDepth: 8
+      - ai_fitSubdiv: 0
+      - subdivisionIterationCount: 0
+      - textureTransferEnable: 0
+      - textureBGR444: 1 
+      - unifyVertices: 0
+      - dracoMeshLossless: 1
+      - lossless: 1
+      - useOccMapRDO: 0
+      - dequantizeUV: 0 # do not remove used to align checksum with decoder
+      - baseMeshDeduplication: 1
+      - reverseUnification: 1
+      
+      # configuration for HM
+      - textureVideoEncoderConfig: ${cfg-prefix}/${video-config-text-ai-ll}     
+      
+    decoder:
+      - dequantizeUV: 0
+      
+    # sequences to code in this condition, and their overridden options/vars
+    #  pp: sets per-rate decimation parameter
+    sequences:
+      longdress:
+        seq-id: 1
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 10
+          - baseMeshTexCoordBitDepth: 12     
+
+      soldier:
+        seq-id: 2
+        pp: 1
+        encoder:      
+          - baseMeshPositionBitDepth: 10
+          - baseMeshTexCoordBitDepth: 12 
+
+      basketball_player:
+        seq-id: 3
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 12 
+
+      dancer:
+        seq-id: 4
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 12 
+
+      mitch:
+        seq-id: 5
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 13 
+          - textureVideoWidth: 4096
+          - textureVideoHeight: 4096
+
+      thomas:
+        seq-id: 6
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 13 
+          - textureVideoWidth: 4096
+          - textureVideoHeight: 4096
+
+      football:
+        seq-id: 7
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 13 
+          - textureVideoWidth: 4096
+          - textureVideoHeight: 4096
+
+      levi:
+        seq-id: 8
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 13 
+          - textureVideoWidth: 4096
+          - textureVideoHeight: 4096
+
+      rwtt422:
+        seq-id: 9
+        pp: 1
+        encoder:
+          - baseMeshPositionBitDepth: 12
+          - baseMeshTexCoordBitDepth: 12 
+          - textureVideoWidth: 1024
+          - textureVideoHeight: 1024
+          - textureMapCount: 5

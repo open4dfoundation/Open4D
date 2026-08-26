@@ -1,0 +1,181 @@
+---
+sequences:
+  longdress:
+    seq-id: 1
+    trackedMode: 1
+    src-dir: longdress_voxelized
+    src-tex: longdress_fr%04d.png
+    src-mesh: longdress_fr%04d_qp10_qt12.obj
+    first-frame: 1051
+    num-frames: 300
+    src-geom-bits: 10
+    src-texcoord-bits: 12
+    src-min-pos: -0.475553989 -1.4576 -0.284981996
+    src-max-pos: 481.324005 1023.37 659.137024
+    src-min-uv: 0 0
+    src-max-uv: 1 1
+    src-min-nrm: -1 -1 -1
+    src-max-nrm: 1 1 1
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1024.8276
+
+  soldier:
+    seq-id: 2
+    trackedMode: 1
+    src-dir: soldier_voxelized
+    src-tex: soldier_fr%04d.png
+    src-mesh: soldier_fr%04d_qp10_qt12.obj
+    first-frame: 536
+    num-frames: 300
+    src-geom-bits: 10
+    src-texcoord-bits: 12
+    src-min-pos: -0.366236001 1.10722005 0.224947006
+    src-max-pos: 508.764008 1023.37 637.421997
+    src-min-uv: 9.99999997e-07 0
+    src-max-uv: 1 1
+    src-min-nrm: -1 -1 -1
+    src-max-nrm: 1 1 1
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1022.26277995
+
+  basketball_player:
+    seq-id: 3
+    trackedMode: 1
+    src-dir: basketball_player_voxelized
+    src-tex: basketball_player_fr%04d.png
+    src-mesh: basketball_player_fr%04d_qp12_qt12.obj
+    first-frame: 1
+    num-frames: 300
+    src-geom-bits: 12
+    src-texcoord-bits: 12
+    src-min-pos: -725.812988 -483.908997 -586.02002
+    src-max-pos: 1252.02002 1411.98999 1025.34998
+    src-min-uv: 0.000140999997 0.0140730003
+    src-max-uv: 0.999827981 0.99989903
+    src-min-nrm: 3.40282347e+38 3.40282347e+38 3.40282347e+38
+    src-max-nrm: 1.17549435e-38 1.17549435e-38 1.17549435e-38
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1977.833008
+
+  dancer:
+    seq-id: 4
+    trackedMode: 1
+    src-dir: dancer_voxelized
+    src-tex: dancer_fr%04d.png
+    src-mesh: dancer_fr%04d_qp12_qt12.obj
+    first-frame: 1
+    num-frames: 300
+    src-geom-bits: 12
+    src-texcoord-bits: 12
+    src-min-pos: -902.244995 -486.196991 -670.518005
+    src-max-pos: 621.093994 1576.04004 738.028992
+    src-min-uv: 0.0170809999 0.0172010008
+    src-max-uv: 0.982846975 0.982810974
+    src-min-nrm: 3.40282347e+38 3.40282347e+38 3.40282347e+38
+    src-max-nrm: 1.17549435e-38 1.17549435e-38 1.17549435e-38
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 2062.237031
+
+  mitch:
+    seq-id: 5
+    trackedMode: 1
+    src-dir: mitch_voxelized
+    src-tex: mitch_fr%04d.png
+    src-mesh: mitch_fr%04d_qp12_qt13.obj
+    first-frame: 1
+    num-frames: 300
+    src-geom-bits: 12
+    src-texcoord-bits: 13
+    src-min-pos: -588.255981 5.80515003 -469.799011
+    src-max-pos: 734.567993 1829.69995 697.179016
+    src-min-uv: 3.37790993e-06 5.96727023e-06
+    src-max-uv: 0.999724984 0.99365598
+    src-min-nrm: -1 -0.999998987 -1
+    src-max-nrm: 0.999998987 0.99999702 1
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1823.89479997
+
+  thomas:
+    seq-id: 6
+    trackedMode: 1
+    src-dir: thomas_voxelized
+    src-tex: thomas_fr%04d.png
+    src-mesh: thomas_fr%04d_qp12_qt13.obj
+    first-frame: 618
+    num-frames: 300
+    src-geom-bits: 12
+    src-texcoord-bits: 13
+    src-min-pos: -265.006989 -4.04448986 -248.710999
+    src-max-pos: 320.546997 1820.93005 400.225006
+    src-min-uv: 1.30198998e-06 6.61126978e-06
+    src-max-uv: 0.999729991 0.983645022
+    src-min-nrm: -0.999998987 -0.99999702 -1
+    src-max-nrm: 1 0.999988973 1
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1824.97453986
+    
+  football:
+    seq-id: 7
+    trackedMode: 0
+    src-dir: football_voxelized
+    src-tex: football_fr%04d.png
+    src-mesh: football_fr%04d_qp12_qt13.obj
+    first-frame: 445
+    num-frames: 300
+    src-geom-bits: 12
+    src-texcoord-bits: 13
+    src-min-pos: 0.00728459982 -0.00232295995 -0.0394272991
+    src-max-pos: 1023.96997 980.596008 966.742004
+    src-min-uv: 0 0
+    src-max-uv: 1 1
+    src-min-nrm: 3.40282347e+38 3.40282347e+38 3.40282347e+38
+    src-max-nrm: 1.17549435e-38 1.17549435e-38 1.17549435e-38
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1023.96268540018
+
+  levi:
+    seq-id: 8
+    trackedMode: 0
+    src-dir: levi_voxelized
+    src-tex: levi_fr%04d.png
+    src-mesh: levi_fr%04d_qp12_qt13.obj
+    first-frame: 0
+    num-frames: 150
+    src-geom-bits: 12
+    src-texcoord-bits: 13
+    src-min-pos: -0.780686975 -0.0424938016 -0.594317973
+    src-max-pos: 0.857237995 1.90897 0.687259018
+    src-min-uv: 0.000694999995 0.000694999995
+    src-max-uv: 0.99930501 0.99930501
+    src-min-nrm: 3.40282347e+38 3.40282347e+38 3.40282347e+38
+    src-max-nrm: 1.17549435e-38 1.17549435e-38 1.17549435e-38
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 1.9514638016
+
+  rwtt422:
+    seq-id: 9
+    trackedMode: 0
+    src-dir: rwtt422_voxelized
+    src-tex: 
+    src-mesh: rwtt422_fr%04d_qp12_qt12.obj
+    first-frame: 1
+    num-frames: 1
+    src-geom-bits: 12
+    src-texcoord-bits: 12
+    src-min-pos: -1.52836394 3.73245406 -4.91499901
+    src-max-pos: 1.15583801 7.34899282 1.843086
+    src-min-uv: 0 0
+    src-max-uv: 1 1
+    src-min-nrm: -1 -1 -1
+    src-max-nrm: 1 1 1
+    src-min-col: 255 255 255
+    src-max-col: 0 0 0
+    src-max-bb-len: 6.75808501

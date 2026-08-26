@@ -1,0 +1,66 @@
+.DS_Store
+
+# Suggested "out-of-tree" build directory
+/build/
+/build_*/
+
+# Some tools expect this build generated file to be in
+# the root of the source tree.
+compile_commands.json
+
+# Annoyances from in-tree builds
+CMakeFiles
+CMakeScripts
+CMakeCache.txt
+
+# Projects / metadata from various IDEs
+.idea
+.vscode
+
+# Xcode
+*.pbxuser
+xcuserdata
+DerivedData
+
+# configure files
+source/lib/vdmcUtil/config.h
+
+# Dependencies
+dependencies/directx-headers
+dependencies/directx-math
+dependencies/directx-mesh
+dependencies/draco
+dependencies/uvatlas
+dependencies/mmetric
+dependencies/tinyply
+dependencies/hdrtools
+dependencies/hm
+dependencies/vtm
+dependencies/vvenc
+dependencies/vvdec
+dependencies/x265
+
+# External tools
+/externaltools/
+
+# pipeline configuration files
+/generatedConfigFiles/
+/generatedConfigFilesHM/
+/generatedConfigFilesVTM/
+/scripts/.modules/
+
+# Temp files
+/*.yuv
+/*.bgr
+/*.h264
+
+# HDRTools 
+/test_1920x1080_24p_420.yuv
+/log.txt
+
+# Experiments
+experiments/
+/EE4.7_Test5_displAC_inter_fixedp_iquant_patch
+/source_mvdist2.zip
+cmake-build-debug/
+cmake-build-release/

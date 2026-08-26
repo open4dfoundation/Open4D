@@ -1,0 +1,7 @@
+#include "version.hpp"
+
+namespace vmesh {
+
+const char version[] = "vmesh+@VERSION@";
+
+}

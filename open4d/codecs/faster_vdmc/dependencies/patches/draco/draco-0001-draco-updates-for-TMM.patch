@@ -1,0 +1,1052 @@
+From d121cc98369d8df59aa152505ee085bc427af941 Mon Sep 17 00:00:00 2001
+From: Julien Ricard <julien.ricard@interdigital.com>
+Date: Thu, 26 Jan 2023 11:53:09 +0100
+Subject: [PATCH] Draco updates for TMM
+
+  - add draco use position mode (m60340).
+  - add draco use uv mode (m60293).
+  - add options to enable previous tools.
+
+---
+ ...cheme_constrained_multi_parallelogram_decoder.h |  71 ++-
+ ...cheme_constrained_multi_parallelogram_encoder.h |  69 +--
+ ...prediction_scheme_tex_coords_portable_decoder.h |   5 +-
+ ...prediction_scheme_tex_coords_portable_encoder.h |   5 +-
+ ...ediction_scheme_tex_coords_portable_predictor.h | 592 ++++++++++++++++++++-
+ .../prediction_scheme_decoder_factory.h            |  14 +-
+ .../prediction_scheme_encoder_factory.h            |   6 +-
+ .../prediction_schemes/prediction_scheme_factory.h |  11 +-
+ 8 files changed, 670 insertions(+), 103 deletions(-)
+
+diff --git a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_decoder.h b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_decoder.h
+index 994958a..d388749 100644
+--- a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_decoder.h
++++ b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_decoder.h
+@@ -45,10 +45,10 @@ class MeshPredictionSchemeConstrainedMultiParallelogramDecoder
+         selected_mode_(Mode::OPTIMAL_MULTI_PARALLELOGRAM) {}
+   MeshPredictionSchemeConstrainedMultiParallelogramDecoder(
+       const PointAttribute *attribute, const TransformT &transform,
+-      const MeshDataT &mesh_data)
++      const MeshDataT &mesh_data, const bool use_position)
+       : MeshPredictionSchemeDecoder<DataTypeT, TransformT, MeshDataT>(
+             attribute, transform, mesh_data),
+-        selected_mode_(Mode::OPTIMAL_MULTI_PARALLELOGRAM) {}
++        selected_mode_(Mode::OPTIMAL_MULTI_PARALLELOGRAM) { use_position_ = use_position; }
+ 
+   bool ComputeOriginalValues(const CorrType *in_corr, DataTypeT *out_data,
+                              int size, int num_components,
+@@ -74,7 +74,9 @@ class MeshPredictionSchemeConstrainedMultiParallelogramDecoder
+   // in separate contexts based on the number of available parallelograms at a
+   // given vertex.
+   std::vector<bool> is_crease_edge_[kMaxNumParallelograms];
++
+   Mode selected_mode_;
++  bool use_position_;
+ };
+ 
+ template <typename DataTypeT, class TransformT, class MeshDataT>
+@@ -150,20 +152,29 @@ bool MeshPredictionSchemeConstrainedMultiParallelogramDecoder<
+       for (int i = 0; i < num_components; ++i) {
+         multi_pred_vals[i] = 0;
+       }
+-      // Check which parallelograms are actually used.
+-      for (int i = 0; i < num_parallelograms; ++i) {
+-        const int context = num_parallelograms - 1;
+-        const int pos = is_crease_edge_pos[context]++;
+-        if (is_crease_edge_[context].size() <= pos) {
+-          return false;
++      if( use_position_ ){
++        num_used_parallelograms = num_parallelograms;
++        for (int i = 0; i < num_parallelograms; ++i) {
++              for (int j = 0; j < num_components; ++j) {
++                multi_pred_vals[j] += pred_vals[i][j];
++              }
+         }
+-        const bool is_crease = is_crease_edge_[context][pos];
+-        if (!is_crease) {
+-          ++num_used_parallelograms;
+-          for (int j = 0; j < num_components; ++j) {
+-            multi_pred_vals[j] += pred_vals[i][j];
++      } else {
++        // Check which parallelograms are actually used.
++        for (int i = 0; i < num_parallelograms; ++i) {
++          const int context = num_parallelograms - 1;
++          const int pos = is_crease_edge_pos[context]++;
++          if (is_crease_edge_[context].size() <= pos) {
++            return false;
+           }
+-        }
++          const bool is_crease = is_crease_edge_[context][pos];
++          if (!is_crease) {
++            ++num_used_parallelograms;
++            for (int j = 0; j < num_components; ++j) {
++              multi_pred_vals[j] += pred_vals[i][j];
++            }
++          }
++        }
+       }
+     }
+     const int dst_offset = p * num_components;
+@@ -205,24 +216,26 @@ bool MeshPredictionSchemeConstrainedMultiParallelogramDecoder<
+ #endif
+ 
+   // Encode selected edges using separate rans bit coder for each context.
+-  for (int i = 0; i < kMaxNumParallelograms; ++i) {
+-    uint32_t num_flags;
+-    if (!DecodeVarint<uint32_t>(&num_flags, buffer)) {
+-      return false;
+-    }
+-    if (num_flags > this->mesh_data().corner_table()->num_corners()) {
+-      return false;
+-    }
+-    if (num_flags > 0) {
+-      is_crease_edge_[i].resize(num_flags);
+-      RAnsBitDecoder decoder;
+-      if (!decoder.StartDecoding(buffer)) {
++  if( !use_position_ ){
++    for (int i = 0; i < kMaxNumParallelograms; ++i) {
++      uint32_t num_flags;
++      if (!DecodeVarint<uint32_t>(&num_flags, buffer)) {
++        return false;
++      }
++      if (num_flags > this->mesh_data().corner_table()->num_corners()) {
+         return false;
+       }
+-      for (uint32_t j = 0; j < num_flags; ++j) {
+-        is_crease_edge_[i][j] = decoder.DecodeNextBit();
++      if (num_flags > 0) {
++        is_crease_edge_[i].resize(num_flags);
++        RAnsBitDecoder decoder;
++        if (!decoder.StartDecoding(buffer)) {
++          return false;
++        }
++        for (uint32_t j = 0; j < num_flags; ++j) {
++          is_crease_edge_[i][j] = decoder.DecodeNextBit();
++        }
++        decoder.EndDecoding();
+       }
+-      decoder.EndDecoding();
+     }
+   }
+   return MeshPredictionSchemeDecoder<DataTypeT, TransformT,
+diff --git a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_encoder.h b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_encoder.h
+index 736598b..6a2b910 100644
+--- a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_encoder.h
++++ b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_constrained_multi_parallelogram_encoder.h
+@@ -53,10 +53,10 @@ class MeshPredictionSchemeConstrainedMultiParallelogramEncoder
+         selected_mode_(Mode::OPTIMAL_MULTI_PARALLELOGRAM) {}
+   MeshPredictionSchemeConstrainedMultiParallelogramEncoder(
+       const PointAttribute *attribute, const TransformT &transform,
+-      const MeshDataT &mesh_data)
++      const MeshDataT &mesh_data, bool use_position)
+       : MeshPredictionSchemeEncoder<DataTypeT, TransformT, MeshDataT>(
+             attribute, transform, mesh_data),
+-        selected_mode_(Mode::OPTIMAL_MULTI_PARALLELOGRAM) {}
++        selected_mode_(Mode::OPTIMAL_MULTI_PARALLELOGRAM) { use_position_ = use_position; }
+ 
+   bool ComputeCorrectionValues(
+       const DataTypeT *in_data, CorrType *out_corr, int size,
+@@ -162,6 +162,7 @@ class MeshPredictionSchemeConstrainedMultiParallelogramEncoder
+   // Temporary storage for symbols that are fed into the |entropy_stream|.
+   // Always contains only |num_components| entries.
+   std::vector<uint32_t> entropy_symbols_;
++  bool use_position_;
+ };
+ 
+ template <typename DataTypeT, class TransformT, class MeshDataT>
+@@ -285,9 +286,12 @@ bool MeshPredictionSchemeConstrainedMultiParallelogramEncoder<
+         in_data + src_offset, in_data + src_offset + num_components);
+     best_prediction.residuals.assign(current_residuals.begin(),
+                                      current_residuals.end());
++    int iStart = 1;
++    if (use_position_ && (num_parallelograms > 1))
++      iStart = num_parallelograms;
+ 
+     // Compute prediction error for different cases of used parallelograms.
+-    for (int num_used_parallelograms = 1;
++    for (int num_used_parallelograms = iStart;
+          num_used_parallelograms <= num_parallelograms;
+          ++num_used_parallelograms) {
+       // Mark all parallelograms as excluded.
+@@ -331,7 +335,8 @@ bool MeshPredictionSchemeConstrainedMultiParallelogramEncoder<
+           // Add overhead bits to the total error.
+           error.num_bits += new_overhead_bits;
+         }
+-        if (error < best_prediction.error) {
++        if ( ( use_position_ && ( (best_prediction.configuration == 0) || (error < best_prediction.error)) ) ||
++             ( !use_position_ && error < best_prediction.error) ){
+           best_prediction.error = error;
+           best_prediction.configuration = configuration;
+           best_prediction.num_used_parallelograms = num_used_parallelograms;
+@@ -356,14 +361,16 @@ bool MeshPredictionSchemeConstrainedMultiParallelogramEncoder<
+     }
+     entropy_tracker_.Push(entropy_symbols_.data(), num_components);
+ 
+-    for (int i = 0; i < num_parallelograms; ++i) {
+-      if ((best_prediction.configuration & (1 << i)) == 0) {
+-        // Parallelogram not used, mark the edge as crease.
+-        is_crease_edge_[num_parallelograms - 1].push_back(true);
+-      } else {
+-        // Parallelogram used. Add it to the predicted value and mark the
+-        // edge as not a crease.
+-        is_crease_edge_[num_parallelograms - 1].push_back(false);
++    if( !use_position_){
++      for (int i = 0; i < num_parallelograms; ++i) {
++        if ((best_prediction.configuration & (1 << i)) == 0) {
++          // Parallelogram not used, mark the edge as crease.
++          is_crease_edge_[num_parallelograms - 1].push_back(true);
++        } else {
++          // Parallelogram used. Add it to the predicted value and mark the
++          // edge as not a crease.
++          is_crease_edge_[num_parallelograms - 1].push_back(false);
++        }
+       }
+     }
+     this->transform().ComputeCorrection(in_data + dst_offset,
+@@ -383,26 +390,28 @@ bool MeshPredictionSchemeConstrainedMultiParallelogramEncoder<
+     DataTypeT, TransformT, MeshDataT>::EncodePredictionData(EncoderBuffer
+                                                                 *buffer) {
+   // Encode selected edges using separate rans bit coder for each context.
+-  for (int i = 0; i < kMaxNumParallelograms; ++i) {
+-    // |i| is the context based on the number of available parallelograms, which
+-    // is always equal to |i + 1|.
+-    const int num_used_parallelograms = i + 1;
+-    EncodeVarint<uint32_t>(is_crease_edge_[i].size(), buffer);
+-    if (is_crease_edge_[i].size()) {
+-      RAnsBitEncoder encoder;
+-      encoder.StartEncoding();
+-      // Encode the crease edge flags in the reverse vertex order that is needed
+-      // by the decoder. Note that for the currently supported mode, each vertex
+-      // has exactly |num_used_parallelograms| edges that need to be encoded.
+-      for (int j = static_cast<int>(is_crease_edge_[i].size()) -
+-                   num_used_parallelograms;
+-           j >= 0; j -= num_used_parallelograms) {
+-        // Go over all edges of the current vertex.
+-        for (int k = 0; k < num_used_parallelograms; ++k) {
+-          encoder.EncodeBit(is_crease_edge_[i][j + k]);
++  if( ! use_position_){
++    for (int i = 0; i < kMaxNumParallelograms; ++i) {
++      // |i| is the context based on the number of available parallelograms, which
++      // is always equal to |i + 1|.
++      const int num_used_parallelograms = i + 1;
++      EncodeVarint<uint32_t>(is_crease_edge_[i].size(), buffer);
++      if (is_crease_edge_[i].size()) {
++        RAnsBitEncoder encoder;
++        encoder.StartEncoding();
++        // Encode the crease edge flags in the reverse vertex order that is needed
++        // by the decoder. Note that for the currently supported mode, each vertex
++        // has exactly |num_used_parallelograms| edges that need to be encoded.
++        for (int j = static_cast<int>(is_crease_edge_[i].size()) -
++                    num_used_parallelograms;
++            j >= 0; j -= num_used_parallelograms) {
++          // Go over all edges of the current vertex.
++          for (int k = 0; k < num_used_parallelograms; ++k) {
++            encoder.EncodeBit(is_crease_edge_[i][j + k]);
++          }
+         }
++        encoder.EndEncoding(buffer);
+       }
+-      encoder.EndEncoding(buffer);
+     }
+   }
+   return MeshPredictionSchemeEncoder<DataTypeT, TransformT,
+diff --git a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_decoder.h b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_decoder.h
+index 83d4966..87a5df8 100644
+--- a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_decoder.h
++++ b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_decoder.h
+@@ -32,10 +32,11 @@ class MeshPredictionSchemeTexCoordsPortableDecoder
+                                                         MeshDataT>::CorrType;
+   MeshPredictionSchemeTexCoordsPortableDecoder(const PointAttribute *attribute,
+                                                const TransformT &transform,
+-                                               const MeshDataT &mesh_data)
++                                               const MeshDataT &mesh_data,
++                                               const bool use_uv)
+       : MeshPredictionSchemeDecoder<DataTypeT, TransformT, MeshDataT>(
+             attribute, transform, mesh_data),
+-        predictor_(mesh_data) {}
++        predictor_(mesh_data, use_uv ) {}
+ 
+   bool ComputeOriginalValues(const CorrType *in_corr, DataTypeT *out_data,
+                              int size, int num_components,
+diff --git a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_encoder.h b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_encoder.h
+index 44fcc7a..9924d48 100644
+--- a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_encoder.h
++++ b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_encoder.h
+@@ -35,10 +35,11 @@ class MeshPredictionSchemeTexCoordsPortableEncoder
+                                                         MeshDataT>::CorrType;
+   MeshPredictionSchemeTexCoordsPortableEncoder(const PointAttribute *attribute,
+                                                const TransformT &transform,
+-                                               const MeshDataT &mesh_data)
++                                               const MeshDataT &mesh_data,
++                                               const bool use_uv)
+       : MeshPredictionSchemeEncoder<DataTypeT, TransformT, MeshDataT>(
+             attribute, transform, mesh_data),
+-        predictor_(mesh_data) {}
++        predictor_(mesh_data, use_uv) {}
+ 
+   bool ComputeCorrectionValues(
+       const DataTypeT *in_data, CorrType *out_corr, int size,
+diff --git a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_predictor.h b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_predictor.h
+index f05e5dd..f929f3b 100644
+--- a/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_predictor.h
++++ b/src/draco/compression/attributes/prediction_schemes/mesh_prediction_scheme_tex_coords_portable_predictor.h
+@@ -22,6 +22,8 @@
+ #include "draco/core/vector_d.h"
+ #include "draco/mesh/corner_table.h"
+ 
++#define DBL_EPSILON 2.2204460492503131e-016
++
+ namespace draco {
+ 
+ // Predictor functionality used for portable UV prediction by both encoder and
+@@ -31,10 +33,11 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
+  public:
+   static constexpr int kNumComponents = 2;
+ 
+-  explicit MeshPredictionSchemeTexCoordsPortablePredictor(const MeshDataT &md)
++  explicit MeshPredictionSchemeTexCoordsPortablePredictor(const MeshDataT &md, const bool use_uv)
+       : pos_attribute_(nullptr),
+         entry_to_point_id_map_(nullptr),
+-        mesh_data_(md) {}
++        mesh_data_(md),
++        use_uv_(use_uv) {}
+   void SetPositionAttribute(const PointAttribute &position_attribute) {
+     pos_attribute_ = &position_attribute;
+   }
+@@ -80,6 +83,7 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
+   // and decoding to avoid unnecessary copy.
+   std::vector<bool> orientations_;
+   MeshDataT mesh_data_;
++  bool use_uv_;
+ };
+ 
+ template <typename DataTypeT, class MeshDataT>
+@@ -105,6 +109,41 @@ bool MeshPredictionSchemeTexCoordsPortablePredictor<
+   next_data_id = mesh_data_.vertex_to_data_map()->at(next_vert_id);
+   prev_data_id = mesh_data_.vertex_to_data_map()->at(prev_vert_id);
+ 
++  int opp_data_id, opp_vert_id;
++  int n_opp_data_id, n_opp_vert_id;
++  int p_opp_data_id, p_opp_vert_id;
++  if( use_uv_ ){
++    // opp
++    const CornerIndex opp_corner_id =
++        mesh_data_.corner_table()->Opposite(corner_id);
++    if (opp_corner_id != kInvalidCornerIndex) {
++      opp_vert_id = mesh_data_.corner_table()->Vertex(opp_corner_id).value();
++      opp_data_id = mesh_data_.vertex_to_data_map()->at(opp_vert_id);
++    } else {
++      opp_data_id = data_id;
++    }
++
++    // n.o
++    const CornerIndex n_opp_corner_id =
++        mesh_data_.corner_table()->Opposite(next_corner_id);
++    if (n_opp_corner_id != kInvalidCornerIndex) {
++      n_opp_vert_id = mesh_data_.corner_table()->Vertex(n_opp_corner_id).value();
++      n_opp_data_id = mesh_data_.vertex_to_data_map()->at(n_opp_vert_id);
++    } else {
++      n_opp_data_id = data_id;
++    }
++
++    // p.o
++    const CornerIndex p_opp_corner_id =
++        mesh_data_.corner_table()->Opposite(prev_corner_id);
++    if (p_opp_corner_id != kInvalidCornerIndex) {
++      p_opp_vert_id = mesh_data_.corner_table()->Vertex(p_opp_corner_id).value();
++      p_opp_data_id = mesh_data_.vertex_to_data_map()->at(p_opp_vert_id);
++    } else {
++      p_opp_data_id = data_id;
++    }
++  }
++
+   if (prev_data_id < data_id && next_data_id < data_id) {
+     // Both other corners have available UV coordinates for prediction.
+     const VectorD<int64_t, 2> n_uv = GetTexCoordForEntryId(next_data_id, data);
+@@ -192,35 +231,532 @@ bool MeshPredictionSchemeTexCoordsPortablePredictor<
+       // Predicted uv coordinate is then computed by either adding or
+       // subtracting CX_UV to/from X_UV.
+       VectorD<int64_t, 2> predicted_uv;
+-      if (is_encoder_t) {
+-        // When encoding, compute both possible vectors and determine which one
+-        // results in a better prediction.
+-        // Both vectors need to be transformed back from the scaled space to
+-        // the real UV coordinate space.
+-        const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
+-                                                 pn_norm2_squared);
+-        const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
+-                                                 pn_norm2_squared);
+-        const VectorD<int64_t, 2> c_uv = GetTexCoordForEntryId(data_id, data);
+-        if ((c_uv - predicted_uv_0).SquaredNorm() <
+-            (c_uv - predicted_uv_1).SquaredNorm()) {
+-          predicted_uv = predicted_uv_0;
+-          orientations_.push_back(true);
+-        } else {
+-          predicted_uv = predicted_uv_1;
+-          orientations_.push_back(false);
++      if( use_uv_ ){
++        if (opp_data_id < data_id) {
++          // If texture triangles are degenerate triangles, opposite corners are
++          // not used
++          const VectorD<int64_t, 2> o_uv =
++              GetTexCoordForEntryId(opp_data_id, data);
++          float triangleArea_o = abs(
++              0.5 * (n_uv[0] * p_uv[1] + p_uv[0] * o_uv[1] + o_uv[0] * n_uv[1] -
++                    n_uv[0] * o_uv[1] - p_uv[0] * n_uv[1] - o_uv[0] * p_uv[1]));
++          if (triangleArea_o < DBL_EPSILON) {
++            opp_data_id = data_id;
++          }
++        }
++        bool flag = false;
++        if (n_opp_data_id < data_id && p_opp_data_id < data_id) {
++          // n.o and p.o exist
++          flag = true;
++          // compute n.o
++          const VectorD<int64_t, 2> no_uv =
++              GetTexCoordForEntryId(n_opp_data_id, data);
++
++          const VectorD<int64_t, 3> no_pos = GetPositionForEntryId(n_opp_data_id);
++
++          const VectorD<int64_t, 3> nop = no_pos - prev_pos;
++          const uint64_t nop_norm2_squared = nop.SquaredNorm();
++
++          if (p_uv == no_uv || nop_norm2_squared == 0) {  // we can't use n.o.
++            flag = false;
++          }
++
++          if (nop_norm2_squared != 0) {
++            const VectorD<int64_t, 3> cp = tip_pos - prev_pos;
++            const int64_t cp_dot_nop = nop.Dot(cp);
++            const VectorD<int64_t, 2> nop_uv = no_uv - p_uv;
++            const VectorD<int64_t, 2> x1_uv =
++                p_uv * nop_norm2_squared + (cp_dot_nop * nop_uv);
++            const int64_t nop_absmax_element = std::max(
++                std::max(std::abs(nop[0]), std::abs(nop[1])), std::abs(nop[2]));
++            if (cp_dot_nop >
++                std::numeric_limits<int64_t>::max() / nop_absmax_element) {
++              // if squared length calculation would overflow.
++              flag = false;
++            }
++
++            // Compute squared length of vector CX in position coordinate system:
++            const VectorD<int64_t, 3> x1_pos =
++                prev_pos + (cp_dot_nop * nop) / nop_norm2_squared;
++            const uint64_t cx1_norm2_squared = (tip_pos - x1_pos).SquaredNorm();
++
++            VectorD<int64_t, 2> cx1_uv(nop_uv[1], -nop_uv[0]);  // Rotated NOP_UV.
++            // Compute CX.Norm2() * PN.Norm2()
++            const uint64_t norm0_squared =
++                IntSqrt(cx1_norm2_squared * nop_norm2_squared);
++            // Final cx_uv in the scaled coordinate space.
++            cx1_uv = cx1_uv * norm0_squared;
++
++            // compute p.o
++            const VectorD<int64_t, 2> po_uv =
++                GetTexCoordForEntryId(p_opp_data_id, data);
++
++            const VectorD<int64_t, 3> po_pos =
++                GetPositionForEntryId(p_opp_data_id);
++
++            const VectorD<int64_t, 3> npo = next_pos - po_pos;
++            const uint64_t npo_norm2_squared = npo.SquaredNorm();
++
++            if (po_uv == n_uv || npo_norm2_squared == 0) {  // we can't use p.o.
++              flag = false;
++            }
++
++            if (npo_norm2_squared != 0) {
++              const VectorD<int64_t, 3> cpo = tip_pos - po_pos;
++              const int64_t cpo_dot_npo = npo.Dot(cpo);
++              const VectorD<int64_t, 2> npo_uv = n_uv - po_uv;
++              const VectorD<int64_t, 2> x2_uv =
++                  po_uv * npo_norm2_squared + (cpo_dot_npo * npo_uv);
++              const int64_t npo_absmax_element = std::max(
++                  std::max(std::abs(npo[0]), std::abs(npo[1])), std::abs(npo[2]));
++              if (cpo_dot_npo >
++                  std::numeric_limits<int64_t>::max() / npo_absmax_element) {
++                // if squared length calculation would overflow.
++                flag = false;
++              }
++
++              // Compute squared length of vector CX in position coordinate
++              // system:
++              const VectorD<int64_t, 3> x2_pos =
++                  po_pos + (cpo_dot_npo * npo) / npo_norm2_squared;
++              const uint64_t cx2_norm2_squared = (tip_pos - x2_pos).SquaredNorm();
++
++              VectorD<int64_t, 2> cx2_uv(
++                  npo_uv[1],
++                  -npo_uv[0]);  // Rotated NPO_UV. Compute CX.Norm2() * PN.Norm2()
++              const uint64_t norm1_squared =
++                  IntSqrt(cx2_norm2_squared * npo_norm2_squared);
++              // Final cx_uv in the scaled coordinate space.
++              cx2_uv = cx2_uv * norm1_squared;
++
++              if (is_encoder_t) {
++                const VectorD<int64_t, 2> c_uv =
++                    GetTexCoordForEntryId(data_id, data);
++                const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                        pn_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                        pn_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_no0((x1_uv + cx1_uv) /
++                                                          nop_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_no1((x1_uv - cx1_uv) /
++                                                          nop_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_po0((x2_uv + cx2_uv) /
++                                                          npo_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_po1((x2_uv - cx2_uv) /
++                                                          npo_norm2_squared);
++                // Judge whether the opposite corner exists
++                if (opp_data_id < data_id) {
++                  const VectorD<int64_t, 2> o_uv =
++                      GetTexCoordForEntryId(opp_data_id, data);
++                  // existent
++                  if ((o_uv - predicted_uv_0).SquaredNorm() >
++                      (o_uv - predicted_uv_1).SquaredNorm()) {
++                    predicted_uv =
++                        (predicted_uv_0 + predicted_uv_no0 + predicted_uv_po0) /
++                        3;
++                  } else {
++                    predicted_uv =
++                        (predicted_uv_1 + predicted_uv_no1 + predicted_uv_po1) /
++                        3;
++                  }
++                } else {
++                  // non-existent
++                  if ((c_uv - predicted_uv_0).SquaredNorm() <
++                      (c_uv - predicted_uv_1).SquaredNorm()) {
++                    predicted_uv =
++                        (predicted_uv_0 + predicted_uv_no0 + predicted_uv_po0) /
++                        3;
++                    orientations_.push_back(true);
++                  } else {
++                    predicted_uv =
++                        (predicted_uv_1 + predicted_uv_no1 + predicted_uv_po1) /
++                        3;
++                    orientations_.push_back(false);
++                  }
++                }
++
++              } else {
++                // decode
++                if (opp_data_id < data_id) {
++                  const VectorD<int64_t, 2> o_uv =
++                      GetTexCoordForEntryId(opp_data_id, data);
++                  const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                          pn_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                          pn_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_no0((x1_uv + cx1_uv) /
++                                                            nop_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_no1((x1_uv - cx1_uv) /
++                                                            nop_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_po0((x2_uv + cx2_uv) /
++                                                            npo_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_po1((x2_uv - cx2_uv) /
++                                                            npo_norm2_squared);
++                  if ((o_uv - predicted_uv_0).SquaredNorm() >
++                      (o_uv - predicted_uv_1).SquaredNorm()) {
++                    predicted_uv =
++                        (predicted_uv_0 + predicted_uv_no0 + predicted_uv_po0) /
++                        3;
++                  } else {
++                    predicted_uv =
++                        (predicted_uv_1 + predicted_uv_no1 + predicted_uv_po1) /
++                        3;
++                  }
++                } else {
++                  if (orientations_.empty()) {
++                    return false;
++                  }
++                  const bool orientation = orientations_.back();
++                  orientations_.pop_back();
++                  if (orientation) {
++                    const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                            pn_norm2_squared);
++                    const VectorD<int64_t, 2> predicted_uv_no((x1_uv + cx1_uv) /
++                                                              nop_norm2_squared);
++                    const VectorD<int64_t, 2> predicted_uv_po((x2_uv + cx2_uv) /
++                                                              npo_norm2_squared);
++                    predicted_uv =
++                        (predicted_uv_0 + predicted_uv_no + predicted_uv_po) / 3;
++                  } else {
++                    const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                            pn_norm2_squared);
++                    const VectorD<int64_t, 2> predicted_uv_no((x1_uv - cx1_uv) /
++                                                              nop_norm2_squared);
++                    const VectorD<int64_t, 2> predicted_uv_po((x2_uv - cx2_uv) /
++                                                              npo_norm2_squared);
++                    predicted_uv =
++                        (predicted_uv_1 + predicted_uv_no + predicted_uv_po) / 3;
++                  }
++                }
++              }
++            }
++          }
++        }
++        if (n_opp_data_id < data_id && flag == false) {
++          flag = true;
++          // n.o exists
++          const VectorD<int64_t, 2> no_uv =
++              GetTexCoordForEntryId(n_opp_data_id, data);
++
++          const VectorD<int64_t, 3> no_pos = GetPositionForEntryId(n_opp_data_id);
++
++          const VectorD<int64_t, 3> nop = no_pos - prev_pos;
++          const uint64_t nop_norm2_squared = nop.SquaredNorm();
++
++          if (p_uv == no_uv || nop_norm2_squared == 0) {  // we can't use n.o.
++            flag = false;
++          }
++
++          if (nop_norm2_squared != 0) {
++            const VectorD<int64_t, 3> cp = tip_pos - prev_pos;
++            const int64_t cp_dot_nop = nop.Dot(cp);
++            const VectorD<int64_t, 2> nop_uv = no_uv - p_uv;
++            const VectorD<int64_t, 2> x1_uv =
++                p_uv * nop_norm2_squared + (cp_dot_nop * nop_uv);
++            const int64_t nop_absmax_element = std::max(
++                std::max(std::abs(nop[0]), std::abs(nop[1])), std::abs(nop[2]));
++            if (cp_dot_nop >
++                std::numeric_limits<int64_t>::max() / nop_absmax_element) {
++              // if squared length calculation would overflow.
++              flag = false;
++            }
++
++            // Compute squared length of vector CX in position coordinate system:
++            const VectorD<int64_t, 3> x1_pos =
++                prev_pos + (cp_dot_nop * nop) / nop_norm2_squared;
++            const uint64_t cx1_norm2_squared = (tip_pos - x1_pos).SquaredNorm();
++
++            VectorD<int64_t, 2> cx1_uv(
++                nop_uv[1],
++                -nop_uv[0]);  // Rotated NOP_UV. Compute CX.Norm2() * PN.Norm2()
++            const uint64_t norm0_squared =
++                IntSqrt(cx1_norm2_squared * nop_norm2_squared);
++            // Final cx_uv in the scaled coordinate space.
++            cx1_uv = cx1_uv * norm0_squared;
++
++            if (is_encoder_t) {
++              // encoder
++              const VectorD<int64_t, 2> c_uv =
++                  GetTexCoordForEntryId(data_id, data);
++              const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                      pn_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                      pn_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_no0((x1_uv + cx1_uv) /
++                                                        nop_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_no1((x1_uv - cx1_uv) /
++                                                        nop_norm2_squared);
++
++              if (opp_data_id < data_id) {
++                const VectorD<int64_t, 2> o_uv =
++                    GetTexCoordForEntryId(opp_data_id, data);
++                if ((o_uv - predicted_uv_0).SquaredNorm() >
++                    (o_uv - predicted_uv_1).SquaredNorm()) {
++                  predicted_uv = (predicted_uv_0 + predicted_uv_no0) / 2;
++                } else {
++                  predicted_uv = (predicted_uv_1 + predicted_uv_no1) / 2;
++                }
++              } else {
++                if ((c_uv - predicted_uv_0).SquaredNorm() <
++                    (c_uv - predicted_uv_1).SquaredNorm()) {
++                  predicted_uv = (predicted_uv_0 + predicted_uv_no0) / 2;
++                  orientations_.push_back(true);
++                } else {
++                  predicted_uv = (predicted_uv_1 + predicted_uv_no1) / 2;
++                  orientations_.push_back(false);
++                }
++              }
++
++            } else {
++              // decoder
++              if (opp_data_id < data_id) {
++                const VectorD<int64_t, 2> o_uv =
++                    GetTexCoordForEntryId(opp_data_id, data);
++                const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                        pn_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                        pn_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_no0((x1_uv + cx1_uv) /
++                                                          nop_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_no1((x1_uv - cx1_uv) /
++                                                          nop_norm2_squared);
++                if ((o_uv - predicted_uv_0).SquaredNorm() >
++                    (o_uv - predicted_uv_1).SquaredNorm()) {
++                  predicted_uv = (predicted_uv_0 + predicted_uv_no0) / 2;
++                } else {
++                  predicted_uv = (predicted_uv_1 + predicted_uv_no1) / 2;
++                }
++              } else {
++                if (orientations_.empty()) {
++                  return false;
++                }
++                const bool orientation = orientations_.back();
++                orientations_.pop_back();
++                if (orientation) {
++                  const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                          pn_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_no((x1_uv + cx1_uv) /
++                                                            nop_norm2_squared);
++                  predicted_uv = (predicted_uv_0 + predicted_uv_no) / 2;
++                } else {
++                  const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                          pn_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_no((x1_uv - cx1_uv) /
++                                                            nop_norm2_squared);
++                  predicted_uv = (predicted_uv_1 + predicted_uv_no) / 2;
++                }
++              }
++            }
++          }
++        }
++        if (p_opp_data_id < data_id && flag == false) {
++          flag = true;
++          // p.o exists
++          const VectorD<int64_t, 2> po_uv =
++              GetTexCoordForEntryId(p_opp_data_id, data);
++
++          const VectorD<int64_t, 3> po_pos = GetPositionForEntryId(p_opp_data_id);
++
++          const VectorD<int64_t, 3> npo = next_pos - po_pos;
++          const uint64_t npo_norm2_squared = npo.SquaredNorm();
++
++          if (po_uv == n_uv || npo_norm2_squared == 0) {  // we can't use p.o.
++            flag = false;
++          }
++
++          if (npo_norm2_squared != 0) {
++            const VectorD<int64_t, 3> cpo = tip_pos - po_pos;
++            const int64_t cpo_dot_npo = npo.Dot(cpo);
++            const VectorD<int64_t, 2> npo_uv = n_uv - po_uv;
++            const VectorD<int64_t, 2> x1_uv =
++                po_uv * npo_norm2_squared + (cpo_dot_npo * npo_uv);
++            const int64_t npo_absmax_element = std::max(
++                std::max(std::abs(npo[0]), std::abs(npo[1])), std::abs(npo[2]));
++            if (cpo_dot_npo >
++                std::numeric_limits<int64_t>::max() / npo_absmax_element) {
++              // if squared length calculation would overflow.
++              flag = false;
++            }
++
++            // Compute squared length of vector CX in position coordinate system:
++            const VectorD<int64_t, 3> x1_pos =
++                po_pos + (cpo_dot_npo * npo) / npo_norm2_squared;
++            const uint64_t cx1_norm2_squared = (tip_pos - x1_pos).SquaredNorm();
++
++            VectorD<int64_t, 2> cx1_uv(npo_uv[1], -npo_uv[0]);  // Rotated NPO_UV.
++            // Compute CX.Norm2() * PN.Norm2()
++            const uint64_t norm0_squared =
++                IntSqrt(cx1_norm2_squared * npo_norm2_squared);
++            // Final cx_uv in the scaled coordinate space.
++            cx1_uv = cx1_uv * norm0_squared;
++
++            if (is_encoder_t) {
++              // encoder
++              const VectorD<int64_t, 2> c_uv =
++                  GetTexCoordForEntryId(data_id, data);
++              const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                      pn_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                      pn_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_po0((x1_uv + cx1_uv) /
++                                                        npo_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_po1((x1_uv - cx1_uv) /
++                                                        npo_norm2_squared);
++              if (opp_data_id < data_id) {
++                const VectorD<int64_t, 2> o_uv =
++                    GetTexCoordForEntryId(opp_data_id, data);
++                if ((o_uv - predicted_uv_0).SquaredNorm() >
++                    (o_uv - predicted_uv_1).SquaredNorm()) {
++                  predicted_uv = (predicted_uv_0 + predicted_uv_po0) / 2;
++                } else {
++                  predicted_uv = (predicted_uv_1 + predicted_uv_po1) / 2;
++                }
++              } else {
++                if ((c_uv - predicted_uv_0).SquaredNorm() <
++                    (c_uv - predicted_uv_1).SquaredNorm()) {
++                  predicted_uv = (predicted_uv_0 + predicted_uv_po0) / 2;
++                  orientations_.push_back(true);
++                } else {
++                  predicted_uv = (predicted_uv_1 + predicted_uv_po1) / 2;
++                  orientations_.push_back(false);
++                }
++              }
++
++            } else {
++              // decoder
++              if (opp_data_id < data_id) {
++                const VectorD<int64_t, 2> o_uv =
++                    GetTexCoordForEntryId(opp_data_id, data);
++                const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                        pn_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                        pn_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_po0((x1_uv + cx1_uv) /
++                                                          npo_norm2_squared);
++                const VectorD<int64_t, 2> predicted_uv_po1((x1_uv - cx1_uv) /
++                                                          npo_norm2_squared);
++                if ((o_uv - predicted_uv_0).SquaredNorm() >
++                    (o_uv - predicted_uv_1).SquaredNorm()) {
++                  predicted_uv = (predicted_uv_0 + predicted_uv_po0) / 2;
++                } else {
++                  predicted_uv = (predicted_uv_1 + predicted_uv_po1) / 2;
++                }
++              } else {
++                if (orientations_.empty()) {
++                  return false;
++                }
++                const bool orientation = orientations_.back();
++                orientations_.pop_back();
++                if (orientation) {
++                  const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                          pn_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_po((x1_uv + cx1_uv) /
++                                                            npo_norm2_squared);
++                  predicted_uv = (predicted_uv_0 + predicted_uv_po) / 2;
++                } else {
++                  const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                          pn_norm2_squared);
++                  const VectorD<int64_t, 2> predicted_uv_po((x1_uv - cx1_uv) /
++                                                            npo_norm2_squared);
++                  predicted_uv = (predicted_uv_1 + predicted_uv_po) / 2;
++                }
++              }
++            }
++          }
+         }
+-      } else {
+-        // When decoding the data, we already know which orientation to use.
+-        if (orientations_.empty()) {
+-          return false;
++        if (flag == false) {
++          // This indicates that there is no n.o or p.o corner, so only the
++          // current triangle is used for prediction.
++          if (is_encoder_t) {
++            // When encoding, compute both possible vectors and determine which
++            // one results in a better prediction. Both vectors need to be
++            // transformed back from the scaled space to the real UV coordinate
++            // space.
++            const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                    pn_norm2_squared);
++            const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                    pn_norm2_squared);
++            if (opp_data_id < data_id) {
++              const VectorD<int64_t, 2> o_uv =
++                  GetTexCoordForEntryId(opp_data_id, data);
++              if ((o_uv - predicted_uv_0).SquaredNorm() >
++                  (o_uv - predicted_uv_1).SquaredNorm()) {
++                predicted_uv = predicted_uv_0;
++              } else {
++                predicted_uv = predicted_uv_1;
++              }
++            } else {
++              const VectorD<int64_t, 2> c_uv =
++                  GetTexCoordForEntryId(data_id, data);
++              if ((c_uv - predicted_uv_0).SquaredNorm() <
++                  (c_uv - predicted_uv_1).SquaredNorm()) {
++                predicted_uv = predicted_uv_0;
++                orientations_.push_back(true);
++              } else {
++                predicted_uv = predicted_uv_1;
++                orientations_.push_back(false);
++              }
++            }
++          } else {
++            // When decoding the data, we already know which orientation to use.
++            if (opp_data_id < data_id) {
++              const VectorD<int64_t, 2> o_uv =
++                  GetTexCoordForEntryId(opp_data_id, data);
++              const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                      pn_norm2_squared);
++              const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                      pn_norm2_squared);
++              if ((o_uv - predicted_uv_0).SquaredNorm() >
++                  (o_uv - predicted_uv_1).SquaredNorm()) {
++                predicted_uv = predicted_uv_0;
++              } else {
++                predicted_uv = predicted_uv_1;
++              }
++            } else {
++              if (orientations_.empty()) {
++                return false;
++              }
++              const bool orientation = orientations_.back();
++              orientations_.pop_back();
++              if (orientation) {
++                predicted_uv = (x_uv + cx_uv) / pn_norm2_squared;
++              } else {
++                predicted_uv = (x_uv - cx_uv) / pn_norm2_squared;
++              }
++            }
++          }
+         }
+-        const bool orientation = orientations_.back();
+-        orientations_.pop_back();
+-        if (orientation) {
+-          predicted_uv = (x_uv + cx_uv) / pn_norm2_squared;
++      }else{
++        if (is_encoder_t) {
++          // When encoding, compute both possible vectors and determine which one
++          // results in a better prediction.
++          // Both vectors need to be transformed back from the scaled space to
++          // the real UV coordinate space.
++          const VectorD<int64_t, 2> predicted_uv_0((x_uv + cx_uv) /
++                                                  pn_norm2_squared);
++          const VectorD<int64_t, 2> predicted_uv_1((x_uv - cx_uv) /
++                                                  pn_norm2_squared);
++          const VectorD<int64_t, 2> c_uv = GetTexCoordForEntryId(data_id, data);
++          if ((c_uv - predicted_uv_0).SquaredNorm() <
++              (c_uv - predicted_uv_1).SquaredNorm()) {
++            predicted_uv = predicted_uv_0;
++            orientations_.push_back(true);
++          } else {
++            predicted_uv = predicted_uv_1;
++            orientations_.push_back(false);
++          }
+         } else {
+-          predicted_uv = (x_uv - cx_uv) / pn_norm2_squared;
++          // When decoding the data, we already know which orientation to use.
++          if (orientations_.empty()) {
++            return false;
++          }
++          const bool orientation = orientations_.back();
++          orientations_.pop_back();
++          if (orientation) {
++            predicted_uv = (x_uv + cx_uv) / pn_norm2_squared;
++          } else {
++            predicted_uv = (x_uv - cx_uv) / pn_norm2_squared;
++          }
+         }
+       }
+       predicted_value_[0] = static_cast<int>(predicted_uv[0]);
+diff --git a/src/draco/compression/attributes/prediction_schemes/prediction_scheme_decoder_factory.h b/src/draco/compression/attributes/prediction_schemes/prediction_scheme_decoder_factory.h
+index cf2a6ba..f30213f 100644
+--- a/src/draco/compression/attributes/prediction_schemes/prediction_scheme_decoder_factory.h
++++ b/src/draco/compression/attributes/prediction_schemes/prediction_scheme_decoder_factory.h
+@@ -49,7 +49,7 @@ struct MeshPredictionSchemeDecoderFactory {
+     std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>> operator()(
+         PredictionSchemeMethod method, const PointAttribute *attribute,
+         const TransformT &transform, const MeshDataT &mesh_data,
+-        uint16_t bitstream_version) {
++        uint16_t bitstream_version, bool use_position, bool use_uv) {
+       if (method == MESH_PREDICTION_PARALLELOGRAM) {
+         return std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>>(
+             new MeshPredictionSchemeParallelogramDecoder<DataTypeT, TransformT,
+@@ -68,7 +68,7 @@ struct MeshPredictionSchemeDecoderFactory {
+         return std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>>(
+             new MeshPredictionSchemeConstrainedMultiParallelogramDecoder<
+                 DataTypeT, TransformT, MeshDataT>(attribute, transform,
+-                                                  mesh_data));
++                                                  mesh_data, use_position));
+       }
+ #ifdef DRACO_BACKWARDS_COMPATIBILITY_SUPPORTED
+       else if (method == MESH_PREDICTION_TEX_COORDS_DEPRECATED) {
+@@ -82,7 +82,7 @@ struct MeshPredictionSchemeDecoderFactory {
+         return std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>>(
+             new MeshPredictionSchemeTexCoordsPortableDecoder<
+                 DataTypeT, TransformT, MeshDataT>(attribute, transform,
+-                                                  mesh_data));
++                                                  mesh_data, use_uv));
+       }
+ #ifdef DRACO_NORMAL_ENCODING_SUPPORTED
+       else if (method == MESH_PREDICTION_GEOMETRIC_NORMAL) {
+@@ -107,7 +107,7 @@ struct MeshPredictionSchemeDecoderFactory {
+     std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>> operator()(
+         PredictionSchemeMethod method, const PointAttribute *attribute,
+         const TransformT &transform, const MeshDataT &mesh_data,
+-        uint16_t bitstream_version) {
++        uint16_t bitstream_version, bool use_position, bool use_uv) {
+       if (method == MESH_PREDICTION_GEOMETRIC_NORMAL) {
+         return std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>>(
+             new MeshPredictionSchemeGeometricNormalDecoder<
+@@ -123,7 +123,7 @@ struct MeshPredictionSchemeDecoderFactory {
+     std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>> operator()(
+         PredictionSchemeMethod method, const PointAttribute *attribute,
+         const TransformT &transform, const MeshDataT &mesh_data,
+-        uint16_t bitstream_version) {
++        uint16_t bitstream_version, bool use_position, bool use_uv) {
+       if (method == MESH_PREDICTION_GEOMETRIC_NORMAL) {
+         return std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>>(
+             new MeshPredictionSchemeGeometricNormalDecoder<
+@@ -139,9 +139,9 @@ struct MeshPredictionSchemeDecoderFactory {
+   std::unique_ptr<PredictionSchemeDecoder<DataTypeT, TransformT>> operator()(
+       PredictionSchemeMethod method, const PointAttribute *attribute,
+       const TransformT &transform, const MeshDataT &mesh_data,
+-      uint16_t bitstream_version) {
++      uint16_t bitstream_version, bool use_position, bool use_uv) {
+     return DispatchFunctor<TransformT, MeshDataT, TransformT::GetType()>()(
+-        method, attribute, transform, mesh_data, bitstream_version);
++        method, attribute, transform, mesh_data, bitstream_version, use_position, use_uv);
+   }
+ };
+ 
+diff --git a/src/draco/compression/attributes/prediction_schemes/prediction_scheme_encoder_factory.h b/src/draco/compression/attributes/prediction_schemes/prediction_scheme_encoder_factory.h
+index b7e2122..ffe9784 100644
+--- a/src/draco/compression/attributes/prediction_schemes/prediction_scheme_encoder_factory.h
++++ b/src/draco/compression/attributes/prediction_schemes/prediction_scheme_encoder_factory.h
+@@ -49,7 +49,7 @@ struct MeshPredictionSchemeEncoderFactory {
+   std::unique_ptr<PredictionSchemeEncoder<DataTypeT, TransformT>> operator()(
+       PredictionSchemeMethod method, const PointAttribute *attribute,
+       const TransformT &transform, const MeshDataT &mesh_data,
+-      uint16_t bitstream_version) {
++      uint16_t bitstream_version, bool use_position, bool use_uv) {
+     if (method == MESH_PREDICTION_PARALLELOGRAM) {
+       return std::unique_ptr<PredictionSchemeEncoder<DataTypeT, TransformT>>(
+           new MeshPredictionSchemeParallelogramEncoder<DataTypeT, TransformT,
+@@ -59,12 +59,12 @@ struct MeshPredictionSchemeEncoderFactory {
+       return std::unique_ptr<PredictionSchemeEncoder<DataTypeT, TransformT>>(
+           new MeshPredictionSchemeConstrainedMultiParallelogramEncoder<
+               DataTypeT, TransformT, MeshDataT>(attribute, transform,
+-                                                mesh_data));
++                                                mesh_data, use_position ));
+     } else if (method == MESH_PREDICTION_TEX_COORDS_PORTABLE) {
+       return std::unique_ptr<PredictionSchemeEncoder<DataTypeT, TransformT>>(
+           new MeshPredictionSchemeTexCoordsPortableEncoder<
+               DataTypeT, TransformT, MeshDataT>(attribute, transform,
+-                                                mesh_data));
++                                                mesh_data, use_uv));
+     }
+ #ifdef DRACO_NORMAL_ENCODING_SUPPORTED
+     else if (method == MESH_PREDICTION_GEOMETRIC_NORMAL) {
+diff --git a/src/draco/compression/attributes/prediction_schemes/prediction_scheme_factory.h b/src/draco/compression/attributes/prediction_schemes/prediction_scheme_factory.h
+index b36c4c8..b8a8c39 100644
+--- a/src/draco/compression/attributes/prediction_schemes/prediction_scheme_factory.h
++++ b/src/draco/compression/attributes/prediction_schemes/prediction_scheme_factory.h
+@@ -53,6 +53,13 @@ std::unique_ptr<PredictionSchemeT> CreateMeshPredictionScheme(
+     // Connectivity data exists.
+     const MeshAttributeCornerTable *const att_ct =
+         source->GetAttributeCornerTable(att_id);
++
++    const auto *options = source->options();
++    auto use_position = options->GetGlobalBool("use_position", false);
++    auto use_uv = options->GetGlobalBool("use_uv", false);
++    printf("get from option use_position = %d use_uv  = %d \n", use_position,
++           use_uv);
++
+     if (att_ct != nullptr) {
+       typedef MeshPredictionSchemeData<MeshAttributeCornerTable> MeshData;
+       MeshData md;
+@@ -60,7 +67,7 @@ std::unique_ptr<PredictionSchemeT> CreateMeshPredictionScheme(
+              &encoding_data->encoded_attribute_value_index_to_corner_map,
+              &encoding_data->vertex_to_encoded_attribute_value_index_map);
+       MeshPredictionSchemeFactoryT factory;
+-      auto ret = factory(method, att, transform, md, bitstream_version);
++      auto ret = factory(method, att, transform, md, bitstream_version, use_position, use_uv);
+       if (ret) {
+         return ret;
+       }
+@@ -71,7 +78,7 @@ std::unique_ptr<PredictionSchemeT> CreateMeshPredictionScheme(
+              &encoding_data->encoded_attribute_value_index_to_corner_map,
+              &encoding_data->vertex_to_encoded_attribute_value_index_map);
+       MeshPredictionSchemeFactoryT factory;
+-      auto ret = factory(method, att, transform, md, bitstream_version);
++      auto ret = factory(method, att, transform, md, bitstream_version, use_position, use_uv);
+       if (ret) {
+         return ret;
+       }
+-- 
+1.8.3.1
+

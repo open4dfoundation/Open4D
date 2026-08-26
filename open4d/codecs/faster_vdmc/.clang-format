@@ -1,0 +1,111 @@
+##
+# clang-format-6.0 format rules
+#  -- commented out options are supported in 7.0
+#
+BasedOnStyle: LLVM
+IndentWidth: 2
+# While a wider limit would be nice, 79 works with diffs in a terminal
+ColumnLimit: 79
+---
+Language: Cpp
+Standard: Cpp11
+##
+# Indentation width related options
+#
+AccessModifierOffset: -2
+ConstructorInitializerIndentWidth: 2
+ContinuationIndentWidth: 2
+MaxEmptyLinesToKeep: 1
+SpacesBeforeTrailingComments: 2
+TabWidth: 2
+UseTab: Never
+
+##
+# Breaking lines
+#
+AlignAfterOpenBracket: Align
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: true
+AllowShortEnumsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+AlwaysBreakBeforeMultilineStrings: false
+
+
+# NB: change to MultiLine in 7.0
+AlwaysBreakTemplateDeclarations: true
+
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeComma
+BreakBeforeInheritanceComma: true
+#BreakInheritanceList: BeforeComma
+BreakStringLiterals: true
+
+CompactNamespaces: false
+PackConstructorInitializers: NextLine 
+
+#ExperimentalAutoDetectBinPacking: true
+
+##
+# Whitespace placement
+#
+# Don't align assignments, it can create lots of noise in diffs.
+#  -- but do align comments for readability
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignEscapedNewlines: DontAlign
+AlignOperands: true
+AlignTrailingComments: true
+
+Cpp11BracedListStyle: true
+IndentCaseLabels: false
+IndentPPDirectives: AfterHash
+IndentWrappedFunctionNames: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+NamespaceIndentation: Inner
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: false
+SpaceBeforeAssignmentOperators: true
+#SpaceBeforeCpp11BracedList: true
+#SpaceBeforeCtorInitializerColon: true
+#SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+#SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+##
+# Misc
+#
+DerivePointerAlignment: false
+FixNamespaceComments: true
+IncludeBlocks: Preserve
+PointerAlignment: Left
+ReflowComments: false
+SortIncludes: false
+SortUsingDeclarations: true

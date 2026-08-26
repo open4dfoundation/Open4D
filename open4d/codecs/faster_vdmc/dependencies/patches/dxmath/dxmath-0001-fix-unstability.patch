@@ -1,0 +1,1104 @@
+From 0ed7184c8d760e15747e4dd69164d7906e5550e1 Mon Sep 17 00:00:00 2001
+From: Olivier Mocquard <olivier.mocquard@interdigital.com>
+Date: Wed, 20 Jul 2022 00:00:50 +0200
+Subject: [PATCH] dxmath: fix unstability replace c math functions with std
+ equivalents
+
+This patch is licensed as follows:
+
+The copyright in this software is being made available under the BSD
+Licence, included below.  This software may be subject to other third
+party and contributor rights, including patent rights, and no such
+rights are granted under this licence.
+
+Copyright (c) 2022, ISO/IEC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the ISO/IEC nor the names of its contributors
+  may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+---
+ Inc/DirectXMathMatrix.inl         |  30 +--
+ Inc/DirectXMathMisc.inl           |  54 ++---
+ Inc/DirectXMathVector.inl         | 336 +++++++++++++++---------------
+ SHMath/DirectXSH.cpp              |  34 +--
+ Stereo3D/Stereo3DMatrixHelper.cpp |  20 +-
+ 5 files changed, 237 insertions(+), 237 deletions(-)
+
+diff --git a/Inc/DirectXMathMatrix.inl b/Inc/DirectXMathMatrix.inl
+index 5b07ad2..71f2855 100644
+--- a/Inc/DirectXMathMatrix.inl
++++ b/Inc/DirectXMathMatrix.inl
+@@ -1161,9 +1161,9 @@ inline bool XM_CALLCONV XMMatrixDecompose
+         size_t aa, bb, cc;
+         float fAbsX, fAbsY, fAbsZ;
+ 
+-        fAbsX = fabsf(XMVectorGetX(ppvBasis[a][0]));
+-        fAbsY = fabsf(XMVectorGetY(ppvBasis[a][0]));
+-        fAbsZ = fabsf(XMVectorGetZ(ppvBasis[a][0]));
++        fAbsX = std::fabs(XMVectorGetX(ppvBasis[a][0]));
++        fAbsY = std::fabs(XMVectorGetY(ppvBasis[a][0]));
++        fAbsZ = std::fabs(XMVectorGetZ(ppvBasis[a][0]));
+ 
+         XM3RANKDECOMPOSE(aa, bb, cc, fAbsX, fAbsY, fAbsZ)
+ 
+@@ -1656,14 +1656,14 @@ inline XMMATRIX XM_CALLCONV XMMatrixRotationRollPitchYaw
+ ) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+-    float cp = cosf(Pitch);
+-    float sp = sinf(Pitch);
++    float cp = std::cos(Pitch);
++    float sp = std::sin(Pitch);
+ 
+-    float cy = cosf(Yaw);
+-    float sy = sinf(Yaw);
++    float cy = std::cos(Yaw);
++    float sy = std::sin(Yaw);
+ 
+-    float cr = cosf(Roll);
+-    float sr = sinf(Roll);
++    float cr = std::cos(Roll);
++    float sr = std::sin(Roll);
+ 
+     XMMATRIX M;
+     M.m[0][0] = cr * cy + sr * sp * sy;
+@@ -1700,14 +1700,14 @@ inline XMMATRIX XM_CALLCONV XMMatrixRotationRollPitchYawFromVector
+ ) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+-    float cp = cosf(Angles.vector4_f32[0]);
+-    float sp = sinf(Angles.vector4_f32[0]);
++    float cp = std::cos(Angles.vector4_f32[0]);
++    float sp = std::sin(Angles.vector4_f32[0]);
+ 
+-    float cy = cosf(Angles.vector4_f32[1]);
+-    float sy = sinf(Angles.vector4_f32[1]);
++    float cy = std::cos(Angles.vector4_f32[1]);
++    float sy = std::sin(Angles.vector4_f32[1]);
+ 
+-    float cr = cosf(Angles.vector4_f32[2]);
+-    float sr = sinf(Angles.vector4_f32[2]);
++    float cr = std::cos(Angles.vector4_f32[2]);
++    float sr = std::sin(Angles.vector4_f32[2]);
+ 
+     XMMATRIX M;
+     M.m[0][0] = cr * cy + sr * sp * sy;
+diff --git a/Inc/DirectXMathMisc.inl b/Inc/DirectXMathMisc.inl
+index 5f88da6..c9e23f6 100644
+--- a/Inc/DirectXMathMisc.inl
++++ b/Inc/DirectXMathMisc.inl
+@@ -582,16 +582,16 @@ inline XMVECTOR XM_CALLCONV XMQuaternionRotationRollPitchYaw
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     const float halfpitch = Pitch * 0.5f;
+-    float cp = cosf(halfpitch);
+-    float sp = sinf(halfpitch);
++    float cp = std::cos(halfpitch);
++    float sp = std::sin(halfpitch);
+ 
+     const float halfyaw = Yaw * 0.5f;
+-    float cy = cosf(halfyaw);
+-    float sy = sinf(halfyaw);
++    float cy = std::cos(halfyaw);
++    float sy = std::sin(halfyaw);
+ 
+     const float halfroll = Roll * 0.5f;
+-    float cr = cosf(halfroll);
+-    float sr = sinf(halfroll);
++    float cr = std::cos(halfroll);
++    float sr = std::sin(halfroll);
+ 
+     XMVECTORF32 vResult = { { {
+             cr * sp * cy + sr * cp * sy,
+@@ -615,16 +615,16 @@ inline XMVECTOR XM_CALLCONV XMQuaternionRotationRollPitchYawFromVector
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     const float halfpitch = Angles.vector4_f32[0] * 0.5f;
+-    float cp = cosf(halfpitch);
+-    float sp = sinf(halfpitch);
++    float cp = std::cos(halfpitch);
++    float sp = std::sin(halfpitch);
+ 
+     const float halfyaw = Angles.vector4_f32[1] * 0.5f;
+-    float cy = cosf(halfyaw);
+-    float sy = sinf(halfyaw);
++    float cy = std::cos(halfyaw);
++    float sy = std::sin(halfyaw);
+ 
+     const float halfroll = Angles.vector4_f32[2] * 0.5f;
+-    float cr = cosf(halfroll);
+-    float sr = sinf(halfroll);
++    float cr = std::cos(halfroll);
++    float sr = std::sin(halfroll);
+ 
+     XMVECTORF32 vResult = { { {
+             cr * sp * cy + sr * cp * sy,
+@@ -721,7 +721,7 @@ inline XMVECTOR XM_CALLCONV XMQuaternionRotationMatrix(FXMMATRIX M) noexcept
+         if (dif10 <= 0.f)  // x^2 >= y^2
+         {
+             float fourXSqr = omr22 - dif10;
+-            float inv4x = 0.5f / sqrtf(fourXSqr);
++            float inv4x = 0.5f / std::sqrt(fourXSqr);
+             q.f[0] = fourXSqr * inv4x;
+             q.f[1] = (M.m[0][1] + M.m[1][0]) * inv4x;
+             q.f[2] = (M.m[0][2] + M.m[2][0]) * inv4x;
+@@ -730,7 +730,7 @@ inline XMVECTOR XM_CALLCONV XMQuaternionRotationMatrix(FXMMATRIX M) noexcept
+         else  // y^2 >= x^2
+         {
+             float fourYSqr = omr22 + dif10;
+-            float inv4y = 0.5f / sqrtf(fourYSqr);
++            float inv4y = 0.5f / std::sqrt(fourYSqr);
+             q.f[0] = (M.m[0][1] + M.m[1][0]) * inv4y;
+             q.f[1] = fourYSqr * inv4y;
+             q.f[2] = (M.m[1][2] + M.m[2][1]) * inv4y;
+@@ -744,7 +744,7 @@ inline XMVECTOR XM_CALLCONV XMQuaternionRotationMatrix(FXMMATRIX M) noexcept
+         if (sum10 <= 0.f)  // z^2 >= w^2
+         {
+             float fourZSqr = opr22 - sum10;
+-            float inv4z = 0.5f / sqrtf(fourZSqr);
++            float inv4z = 0.5f / std::sqrt(fourZSqr);
+             q.f[0] = (M.m[0][2] + M.m[2][0]) * inv4z;
+             q.f[1] = (M.m[1][2] + M.m[2][1]) * inv4z;
+             q.f[2] = fourZSqr * inv4z;
+@@ -753,7 +753,7 @@ inline XMVECTOR XM_CALLCONV XMQuaternionRotationMatrix(FXMMATRIX M) noexcept
+         else  // w^2 >= z^2
+         {
+             float fourWSqr = opr22 + sum10;
+-            float inv4w = 0.5f / sqrtf(fourWSqr);
++            float inv4w = 0.5f / std::sqrt(fourWSqr);
+             q.f[0] = (M.m[1][2] - M.m[2][1]) * inv4w;
+             q.f[1] = (M.m[2][0] - M.m[0][2]) * inv4w;
+             q.f[2] = (M.m[0][1] - M.m[1][0]) * inv4w;
+@@ -1102,7 +1102,7 @@ inline XMVECTOR XM_CALLCONV XMPlaneNormalizeEst(FXMVECTOR P) noexcept
+ inline XMVECTOR XM_CALLCONV XMPlaneNormalize(FXMVECTOR P) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+-    float fLengthSq = sqrtf((P.vector4_f32[0] * P.vector4_f32[0]) + (P.vector4_f32[1] * P.vector4_f32[1]) + (P.vector4_f32[2] * P.vector4_f32[2]));
++    float fLengthSq = std::sqrt((P.vector4_f32[0] * P.vector4_f32[0]) + (P.vector4_f32[1] * P.vector4_f32[1]) + (P.vector4_f32[2] * P.vector4_f32[2]));
+     // Prevent divide by zero
+     if (fLengthSq > 0)
+     {
+@@ -2134,7 +2134,7 @@ inline bool XMScalarNearEqual
+ ) noexcept
+ {
+     float Delta = S1 - S2;
+-    return (fabsf(Delta) <= Epsilon);
++    return (std::fabs(Delta) <= Epsilon);
+ }
+ 
+ //------------------------------------------------------------------------------
+@@ -2147,7 +2147,7 @@ inline float XMScalarModAngle(float Angle) noexcept
+     // Normalize the range from 0.0f to XM_2PI
+     Angle = Angle + XM_PI;
+     // Perform the modulo, unsigned
+-    float fTemp = fabsf(Angle);
++    float fTemp = std::fabs(Angle);
+     fTemp = fTemp - (XM_2PI * static_cast<float>(static_cast<int32_t>(fTemp / XM_2PI)));
+     // Restore the number to the range of -XM_PI to XM_PI-epsilon
+     fTemp = fTemp - XM_PI;
+@@ -2409,13 +2409,13 @@ inline float XMScalarASin(float Value) noexcept
+ {
+     // Clamp input to [-1,1].
+     bool nonnegative = (Value >= 0.0f);
+-    float x = fabsf(Value);
++    float x = std::fabs(Value);
+     float omx = 1.0f - x;
+     if (omx < 0.0f)
+     {
+         omx = 0.0f;
+     }
+-    float root = sqrtf(omx);
++    float root = std::sqrt(omx);
+ 
+     // 7-degree minimax approximation
+     float result = ((((((-0.0012624911f * x + 0.0066700901f) * x - 0.0170881256f) * x + 0.0308918810f) * x - 0.0501743046f) * x + 0.0889789874f) * x - 0.2145988016f) * x + 1.5707963050f;
+@@ -2431,13 +2431,13 @@ inline float XMScalarASinEst(float Value) noexcept
+ {
+     // Clamp input to [-1,1].
+     bool nonnegative = (Value >= 0.0f);
+-    float x = fabsf(Value);
++    float x = std::fabs(Value);
+     float omx = 1.0f - x;
+     if (omx < 0.0f)
+     {
+         omx = 0.0f;
+     }
+-    float root = sqrtf(omx);
++    float root = std::sqrt(omx);
+ 
+     // 3-degree minimax approximation
+     float result = ((-0.0187293f * x + 0.0742610f) * x - 0.2121144f) * x + 1.5707288f;
+@@ -2453,13 +2453,13 @@ inline float XMScalarACos(float Value) noexcept
+ {
+     // Clamp input to [-1,1].
+     bool nonnegative = (Value >= 0.0f);
+-    float x = fabsf(Value);
++    float x = std::fabs(Value);
+     float omx = 1.0f - x;
+     if (omx < 0.0f)
+     {
+         omx = 0.0f;
+     }
+-    float root = sqrtf(omx);
++    float root = std::sqrt(omx);
+ 
+     // 7-degree minimax approximation
+     float result = ((((((-0.0012624911f * x + 0.0066700901f) * x - 0.0170881256f) * x + 0.0308918810f) * x - 0.0501743046f) * x + 0.0889789874f) * x - 0.2145988016f) * x + 1.5707963050f;
+@@ -2475,13 +2475,13 @@ inline float XMScalarACosEst(float Value) noexcept
+ {
+     // Clamp input to [-1,1].
+     bool nonnegative = (Value >= 0.0f);
+-    float x = fabsf(Value);
++    float x = std::fabs(Value);
+     float omx = 1.0f - x;
+     if (omx < 0.0f)
+     {
+         omx = 0.0f;
+     }
+-    float root = sqrtf(omx);
++    float root = std::sqrt(omx);
+ 
+     // 3-degree minimax approximation
+     float result = ((-0.0187293f * x + 0.0742610f) * x - 0.2121144f) * x + 1.5707288f;
+diff --git a/Inc/DirectXMathVector.inl b/Inc/DirectXMathVector.inl
+index 32789ae..bd401cb 100644
+--- a/Inc/DirectXMathVector.inl
++++ b/Inc/DirectXMathVector.inl
+@@ -10,8 +10,8 @@
+ #pragma once
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+-#define XMISNAN(x)  isnan(x)
+-#define XMISINF(x)  isinf(x)
++#define XMISNAN(x)  std::isnan(x)
++#define XMISINF(x)  std::isinf(x)
+ #endif
+ 
+ #if defined(_XM_SSE_INTRINSICS_)
+@@ -1719,10 +1719,10 @@ inline XMVECTOR XM_CALLCONV XMVectorNearEqual
+     float fDeltaz = V1.vector4_f32[2] - V2.vector4_f32[2];
+     float fDeltaw = V1.vector4_f32[3] - V2.vector4_f32[3];
+ 
+-    fDeltax = fabsf(fDeltax);
+-    fDeltay = fabsf(fDeltay);
+-    fDeltaz = fabsf(fDeltaz);
+-    fDeltaw = fabsf(fDeltaw);
++    fDeltax = std::fabs(fDeltax);
++    fDeltay = std::fabs(fDeltay);
++    fDeltaz = std::fabs(fDeltaz);
++    fDeltaw = std::fabs(fDeltaw);
+ 
+     XMVECTORU32 Control = { { {
+             (fDeltax <= Epsilon.vector4_f32[0]) ? 0xFFFFFFFFU : 0,
+@@ -2278,7 +2278,7 @@ namespace Internal
+     // Round to nearest (even) a.k.a. banker's rounding
+     inline float round_to_nearest(float x) noexcept
+     {
+-        float i = floorf(x);
++        float i = std::floor(x);
+         x -= i;
+         if (x < 0.5f)
+             return i;
+@@ -2286,7 +2286,7 @@ namespace Internal
+             return i + 1.f;
+ 
+         float int_part;
+-        (void)modff(i / 2.f, &int_part);
++        (void)std::modf(i / 2.f, &int_part);
+         if ((2.f * int_part) == i)
+         {
+             return i;
+@@ -2362,7 +2362,7 @@ inline XMVECTOR XM_CALLCONV XMVectorTruncate(FXMVECTOR V) noexcept
+         {
+             Result.vector4_u32[i] = 0x7FC00000;
+         }
+-        else if (fabsf(V.vector4_f32[i]) < 8388608.0f)
++        else if (std::fabs(V.vector4_f32[i]) < 8388608.0f)
+         {
+             Result.vector4_f32[i] = static_cast<float>(static_cast<int32_t>(V.vector4_f32[i]));
+         }
+@@ -2414,10 +2414,10 @@ inline XMVECTOR XM_CALLCONV XMVectorFloor(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            floorf(V.vector4_f32[0]),
+-            floorf(V.vector4_f32[1]),
+-            floorf(V.vector4_f32[2]),
+-            floorf(V.vector4_f32[3])
++            std::floor(V.vector4_f32[0]),
++            std::floor(V.vector4_f32[1]),
++            std::floor(V.vector4_f32[2]),
++            std::floor(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -2465,10 +2465,10 @@ inline XMVECTOR XM_CALLCONV XMVectorCeiling(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            ceilf(V.vector4_f32[0]),
+-            ceilf(V.vector4_f32[1]),
+-            ceilf(V.vector4_f32[2]),
+-            ceilf(V.vector4_f32[3])
++            std::ceil(V.vector4_f32[0]),
++            std::ceil(V.vector4_f32[1]),
++            std::ceil(V.vector4_f32[2]),
++            std::ceil(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3119,10 +3119,10 @@ inline XMVECTOR XM_CALLCONV XMVectorSqrtEst(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            sqrtf(V.vector4_f32[0]),
+-            sqrtf(V.vector4_f32[1]),
+-            sqrtf(V.vector4_f32[2]),
+-            sqrtf(V.vector4_f32[3])
++            std::sqrt(V.vector4_f32[0]),
++            std::sqrt(V.vector4_f32[1]),
++            std::sqrt(V.vector4_f32[2]),
++            std::sqrt(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3148,10 +3148,10 @@ inline XMVECTOR XM_CALLCONV XMVectorSqrt(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            sqrtf(V.vector4_f32[0]),
+-            sqrtf(V.vector4_f32[1]),
+-            sqrtf(V.vector4_f32[2]),
+-            sqrtf(V.vector4_f32[3])
++            std::sqrt(V.vector4_f32[0]),
++            std::sqrt(V.vector4_f32[1]),
++            std::sqrt(V.vector4_f32[2]),
++            std::sqrt(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3183,10 +3183,10 @@ inline XMVECTOR XM_CALLCONV XMVectorReciprocalSqrtEst(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            1.f / sqrtf(V.vector4_f32[0]),
+-            1.f / sqrtf(V.vector4_f32[1]),
+-            1.f / sqrtf(V.vector4_f32[2]),
+-            1.f / sqrtf(V.vector4_f32[3])
++            1.f / std::sqrt(V.vector4_f32[0]),
++            1.f / std::sqrt(V.vector4_f32[1]),
++            1.f / std::sqrt(V.vector4_f32[2]),
++            1.f / std::sqrt(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3202,10 +3202,10 @@ inline XMVECTOR XM_CALLCONV XMVectorReciprocalSqrt(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            1.f / sqrtf(V.vector4_f32[0]),
+-            1.f / sqrtf(V.vector4_f32[1]),
+-            1.f / sqrtf(V.vector4_f32[2]),
+-            1.f / sqrtf(V.vector4_f32[3])
++            1.f / std::sqrt(V.vector4_f32[0]),
++            1.f / std::sqrt(V.vector4_f32[1]),
++            1.f / std::sqrt(V.vector4_f32[2]),
++            1.f / std::sqrt(V.vector4_f32[3])
+         } } };
+     return Result;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3233,10 +3233,10 @@ inline XMVECTOR XM_CALLCONV XMVectorExp2(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            exp2f(V.vector4_f32[0]),
+-            exp2f(V.vector4_f32[1]),
+-            exp2f(V.vector4_f32[2]),
+-            exp2f(V.vector4_f32[3])
++            std::exp2(V.vector4_f32[0]),
++            std::exp2(V.vector4_f32[1]),
++            std::exp2(V.vector4_f32[2]),
++            std::exp2(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3371,10 +3371,10 @@ inline XMVECTOR XM_CALLCONV XMVectorExp10(FXMVECTOR V) noexcept
+ #if defined(_XM_NO_INTRINSICS_)
+ 
+     XMVECTORF32 Result = { { {
+-            powf(10.0f, V.vector4_f32[0]),
+-            powf(10.0f, V.vector4_f32[1]),
+-            powf(10.0f, V.vector4_f32[2]),
+-            powf(10.0f, V.vector4_f32[3])
++            std::pow(10.0f, V.vector4_f32[0]),
++            std::pow(10.0f, V.vector4_f32[1]),
++            std::pow(10.0f, V.vector4_f32[2]),
++            std::pow(10.0f, V.vector4_f32[3])
+         } } };
+     return Result.v;
+ 
+@@ -3395,10 +3395,10 @@ inline XMVECTOR XM_CALLCONV XMVectorExpE(FXMVECTOR V) noexcept
+ #if defined(_XM_NO_INTRINSICS_)
+ 
+     XMVECTORF32 Result = { { {
+-            expf(V.vector4_f32[0]),
+-            expf(V.vector4_f32[1]),
+-            expf(V.vector4_f32[2]),
+-            expf(V.vector4_f32[3])
++            std::exp(V.vector4_f32[0]),
++            std::exp(V.vector4_f32[1]),
++            std::exp(V.vector4_f32[2]),
++            std::exp(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ 
+@@ -3580,10 +3580,10 @@ inline XMVECTOR XM_CALLCONV XMVectorLog2(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            log2f(V.vector4_f32[0]),
+-            log2f(V.vector4_f32[1]),
+-            log2f(V.vector4_f32[2]),
+-            log2f(V.vector4_f32[3])
++            std::log2(V.vector4_f32[0]),
++            std::log2(V.vector4_f32[1]),
++            std::log2(V.vector4_f32[2]),
++            std::log2(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -3739,10 +3739,10 @@ inline XMVECTOR XM_CALLCONV XMVectorLog10(FXMVECTOR V) noexcept
+ #if defined(_XM_NO_INTRINSICS_)
+ 
+     XMVECTORF32 Result = { { {
+-            log10f(V.vector4_f32[0]),
+-            log10f(V.vector4_f32[1]),
+-            log10f(V.vector4_f32[2]),
+-            log10f(V.vector4_f32[3])
++            std::log10(V.vector4_f32[0]),
++            std::log10(V.vector4_f32[1]),
++            std::log10(V.vector4_f32[2]),
++            std::log10(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ 
+@@ -3903,10 +3903,10 @@ inline XMVECTOR XM_CALLCONV XMVectorLogE(FXMVECTOR V) noexcept
+ #if defined(_XM_NO_INTRINSICS_)
+ 
+     XMVECTORF32 Result = { { {
+-            logf(V.vector4_f32[0]),
+-            logf(V.vector4_f32[1]),
+-            logf(V.vector4_f32[2]),
+-            logf(V.vector4_f32[3])
++            std::log(V.vector4_f32[0]),
++            std::log(V.vector4_f32[1]),
++            std::log(V.vector4_f32[2]),
++            std::log(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ 
+@@ -4078,19 +4078,19 @@ inline XMVECTOR XM_CALLCONV XMVectorPow
+ #if defined(_XM_NO_INTRINSICS_)
+ 
+     XMVECTORF32 Result = { { {
+-            powf(V1.vector4_f32[0], V2.vector4_f32[0]),
+-            powf(V1.vector4_f32[1], V2.vector4_f32[1]),
+-            powf(V1.vector4_f32[2], V2.vector4_f32[2]),
+-            powf(V1.vector4_f32[3], V2.vector4_f32[3])
++            std::pow(V1.vector4_f32[0], V2.vector4_f32[0]),
++            std::pow(V1.vector4_f32[1], V2.vector4_f32[1]),
++            std::pow(V1.vector4_f32[2], V2.vector4_f32[2]),
++            std::pow(V1.vector4_f32[3], V2.vector4_f32[3])
+         } } };
+     return Result.v;
+ 
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+     XMVECTORF32 vResult = { { {
+-            powf(vgetq_lane_f32(V1, 0), vgetq_lane_f32(V2, 0)),
+-            powf(vgetq_lane_f32(V1, 1), vgetq_lane_f32(V2, 1)),
+-            powf(vgetq_lane_f32(V1, 2), vgetq_lane_f32(V2, 2)),
+-            powf(vgetq_lane_f32(V1, 3), vgetq_lane_f32(V2, 3))
++            std::pow(vgetq_lane_f32(V1, 0), vgetq_lane_f32(V2, 0)),
++            std::pow(vgetq_lane_f32(V1, 1), vgetq_lane_f32(V2, 1)),
++            std::pow(vgetq_lane_f32(V1, 2), vgetq_lane_f32(V2, 2)),
++            std::pow(vgetq_lane_f32(V1, 3), vgetq_lane_f32(V2, 3))
+         } } };
+     return vResult.v;
+ #elif defined(_XM_SVML_INTRINSICS_)
+@@ -4102,10 +4102,10 @@ inline XMVECTOR XM_CALLCONV XMVectorPow
+     _mm_store_ps(a, V1);
+     _mm_store_ps(b, V2);
+     XMVECTOR vResult = _mm_setr_ps(
+-        powf(a[0], b[0]),
+-        powf(a[1], b[1]),
+-        powf(a[2], b[2]),
+-        powf(a[3], b[3]));
++        std::pow(a[0], b[0]),
++        std::pow(a[1], b[1]),
++        std::pow(a[2], b[2]),
++        std::pow(a[3], b[3]));
+     return vResult;
+ #endif
+ }
+@@ -4116,10 +4116,10 @@ inline XMVECTOR XM_CALLCONV XMVectorAbs(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 vResult = { { {
+-            fabsf(V.vector4_f32[0]),
+-            fabsf(V.vector4_f32[1]),
+-            fabsf(V.vector4_f32[2]),
+-            fabsf(V.vector4_f32[3])
++            std::fabs(V.vector4_f32[0]),
++            std::fabs(V.vector4_f32[1]),
++            std::fabs(V.vector4_f32[2]),
++            std::fabs(V.vector4_f32[3])
+         } } };
+     return vResult.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4198,10 +4198,10 @@ inline XMVECTOR XM_CALLCONV XMVectorSin(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            sinf(V.vector4_f32[0]),
+-            sinf(V.vector4_f32[1]),
+-            sinf(V.vector4_f32[2]),
+-            sinf(V.vector4_f32[3])
++            std::sin(V.vector4_f32[0]),
++            std::sin(V.vector4_f32[1]),
++            std::sin(V.vector4_f32[2]),
++            std::sin(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4285,10 +4285,10 @@ inline XMVECTOR XM_CALLCONV XMVectorCos(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            cosf(V.vector4_f32[0]),
+-            cosf(V.vector4_f32[1]),
+-            cosf(V.vector4_f32[2]),
+-            cosf(V.vector4_f32[3])
++            std::cos(V.vector4_f32[0]),
++            std::cos(V.vector4_f32[1]),
++            std::cos(V.vector4_f32[2]),
++            std::cos(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4385,17 +4385,17 @@ inline void XM_CALLCONV XMVectorSinCos
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Sin = { { {
+-            sinf(V.vector4_f32[0]),
+-            sinf(V.vector4_f32[1]),
+-            sinf(V.vector4_f32[2]),
+-            sinf(V.vector4_f32[3])
++            std::sin(V.vector4_f32[0]),
++            std::sin(V.vector4_f32[1]),
++            std::sin(V.vector4_f32[2]),
++            std::sin(V.vector4_f32[3])
+         } } };
+ 
+     XMVECTORF32 Cos = { { {
+-            cosf(V.vector4_f32[0]),
+-            cosf(V.vector4_f32[1]),
+-            cosf(V.vector4_f32[2]),
+-            cosf(V.vector4_f32[3])
++            std::cos(V.vector4_f32[0]),
++            std::cos(V.vector4_f32[1]),
++            std::cos(V.vector4_f32[2]),
++            std::cos(V.vector4_f32[3])
+         } } };
+ 
+     *pSin = Sin.v;
+@@ -4521,10 +4521,10 @@ inline XMVECTOR XM_CALLCONV XMVectorTan(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            tanf(V.vector4_f32[0]),
+-            tanf(V.vector4_f32[1]),
+-            tanf(V.vector4_f32[2]),
+-            tanf(V.vector4_f32[3])
++            std::tan(V.vector4_f32[0]),
++            std::tan(V.vector4_f32[1]),
++            std::tan(V.vector4_f32[2]),
++            std::tan(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_SVML_INTRINSICS_)
+@@ -4614,10 +4614,10 @@ inline XMVECTOR XM_CALLCONV XMVectorSinH(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            sinhf(V.vector4_f32[0]),
+-            sinhf(V.vector4_f32[1]),
+-            sinhf(V.vector4_f32[2]),
+-            sinhf(V.vector4_f32[3])
++            std::sinh(V.vector4_f32[0]),
++            std::sinh(V.vector4_f32[1]),
++            std::sinh(V.vector4_f32[2]),
++            std::sinh(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4650,10 +4650,10 @@ inline XMVECTOR XM_CALLCONV XMVectorCosH(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            coshf(V.vector4_f32[0]),
+-            coshf(V.vector4_f32[1]),
+-            coshf(V.vector4_f32[2]),
+-            coshf(V.vector4_f32[3])
++            std::cosh(V.vector4_f32[0]),
++            std::cosh(V.vector4_f32[1]),
++            std::cosh(V.vector4_f32[2]),
++            std::cosh(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4684,10 +4684,10 @@ inline XMVECTOR XM_CALLCONV XMVectorTanH(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            tanhf(V.vector4_f32[0]),
+-            tanhf(V.vector4_f32[1]),
+-            tanhf(V.vector4_f32[2]),
+-            tanhf(V.vector4_f32[3])
++            std::tanh(V.vector4_f32[0]),
++            std::tanh(V.vector4_f32[1]),
++            std::tanh(V.vector4_f32[2]),
++            std::tanh(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4720,10 +4720,10 @@ inline XMVECTOR XM_CALLCONV XMVectorASin(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            asinf(V.vector4_f32[0]),
+-            asinf(V.vector4_f32[1]),
+-            asinf(V.vector4_f32[2]),
+-            asinf(V.vector4_f32[3])
++            std::sin(V.vector4_f32[0]),
++            std::sin(V.vector4_f32[1]),
++            std::sin(V.vector4_f32[2]),
++            std::sin(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4820,10 +4820,10 @@ inline XMVECTOR XM_CALLCONV XMVectorACos(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            acosf(V.vector4_f32[0]),
+-            acosf(V.vector4_f32[1]),
+-            acosf(V.vector4_f32[2]),
+-            acosf(V.vector4_f32[3])
++            std::cos(V.vector4_f32[0]),
++            std::cos(V.vector4_f32[1]),
++            std::cos(V.vector4_f32[2]),
++            std::cos(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -4918,10 +4918,10 @@ inline XMVECTOR XM_CALLCONV XMVectorATan(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            atanf(V.vector4_f32[0]),
+-            atanf(V.vector4_f32[1]),
+-            atanf(V.vector4_f32[2]),
+-            atanf(V.vector4_f32[3])
++            std::tan(V.vector4_f32[0]),
++            std::tan(V.vector4_f32[1]),
++            std::tan(V.vector4_f32[2]),
++            std::tan(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -5037,10 +5037,10 @@ inline XMVECTOR XM_CALLCONV XMVectorATan2
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            atan2f(Y.vector4_f32[0], X.vector4_f32[0]),
+-            atan2f(Y.vector4_f32[1], X.vector4_f32[1]),
+-            atan2f(Y.vector4_f32[2], X.vector4_f32[2]),
+-            atan2f(Y.vector4_f32[3], X.vector4_f32[3])
++            std::atan2(Y.vector4_f32[0], X.vector4_f32[0]),
++            std::atan2(Y.vector4_f32[1], X.vector4_f32[1]),
++            std::atan2(Y.vector4_f32[2], X.vector4_f32[2]),
++            std::atan2(Y.vector4_f32[3], X.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_SVML_INTRINSICS_)
+@@ -5111,10 +5111,10 @@ inline XMVECTOR XM_CALLCONV XMVectorSinEst(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            sinf(V.vector4_f32[0]),
+-            sinf(V.vector4_f32[1]),
+-            sinf(V.vector4_f32[2]),
+-            sinf(V.vector4_f32[3])
++            std::sin(V.vector4_f32[0]),
++            std::sin(V.vector4_f32[1]),
++            std::sin(V.vector4_f32[2]),
++            std::sin(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -5183,10 +5183,10 @@ inline XMVECTOR XM_CALLCONV XMVectorCosEst(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            cosf(V.vector4_f32[0]),
+-            cosf(V.vector4_f32[1]),
+-            cosf(V.vector4_f32[2]),
+-            cosf(V.vector4_f32[3])
++            std::cos(V.vector4_f32[0]),
++            std::cos(V.vector4_f32[1]),
++            std::cos(V.vector4_f32[2]),
++            std::cos(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -5268,17 +5268,17 @@ inline void XM_CALLCONV XMVectorSinCosEst
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Sin = { { {
+-            sinf(V.vector4_f32[0]),
+-            sinf(V.vector4_f32[1]),
+-            sinf(V.vector4_f32[2]),
+-            sinf(V.vector4_f32[3])
++            std::sin(V.vector4_f32[0]),
++            std::sin(V.vector4_f32[1]),
++            std::sin(V.vector4_f32[2]),
++            std::sin(V.vector4_f32[3])
+         } } };
+ 
+     XMVECTORF32 Cos = { { {
+-            cosf(V.vector4_f32[0]),
+-            cosf(V.vector4_f32[1]),
+-            cosf(V.vector4_f32[2]),
+-            cosf(V.vector4_f32[3])
++            std::cos(V.vector4_f32[0]),
++            std::cos(V.vector4_f32[1]),
++            std::cos(V.vector4_f32[2]),
++            std::cos(V.vector4_f32[3])
+         } } };
+ 
+     *pSin = Sin.v;
+@@ -5370,10 +5370,10 @@ inline XMVECTOR XM_CALLCONV XMVectorTanEst(FXMVECTOR V) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            tanf(V.vector4_f32[0]),
+-            tanf(V.vector4_f32[1]),
+-            tanf(V.vector4_f32[2]),
+-            tanf(V.vector4_f32[3])
++            std::tan(V.vector4_f32[0]),
++            std::tan(V.vector4_f32[1]),
++            std::tan(V.vector4_f32[2]),
++            std::tan(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_SVML_INTRINSICS_)
+@@ -5413,10 +5413,10 @@ inline XMVECTOR XM_CALLCONV XMVectorASinEst(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result;
+-    Result.f[0] = asinf(V.vector4_f32[0]);
+-    Result.f[1] = asinf(V.vector4_f32[1]);
+-    Result.f[2] = asinf(V.vector4_f32[2]);
+-    Result.f[3] = asinf(V.vector4_f32[3]);
++    Result.f[0] = std::asin(V.vector4_f32[0]);
++    Result.f[1] = std::asin(V.vector4_f32[1]);
++    Result.f[2] = std::asin(V.vector4_f32[2]);
++    Result.f[3] = std::asin(V.vector4_f32[3]);
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+     uint32x4_t nonnegative = vcgeq_f32(V, g_XMZero);
+@@ -5486,10 +5486,10 @@ inline XMVECTOR XM_CALLCONV XMVectorACosEst(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            acosf(V.vector4_f32[0]),
+-            acosf(V.vector4_f32[1]),
+-            acosf(V.vector4_f32[2]),
+-            acosf(V.vector4_f32[3])
++            std::acos(V.vector4_f32[0]),
++            std::acos(V.vector4_f32[1]),
++            std::acos(V.vector4_f32[2]),
++            std::acos(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -5558,10 +5558,10 @@ inline XMVECTOR XM_CALLCONV XMVectorATanEst(FXMVECTOR V) noexcept
+ 
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            atanf(V.vector4_f32[0]),
+-            atanf(V.vector4_f32[1]),
+-            atanf(V.vector4_f32[2]),
+-            atanf(V.vector4_f32[3])
++            std::atan(V.vector4_f32[0]),
++            std::atan(V.vector4_f32[1]),
++            std::atan(V.vector4_f32[2]),
++            std::atan(V.vector4_f32[3])
+         } } };
+     return Result.v;
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -5651,10 +5651,10 @@ inline XMVECTOR XM_CALLCONV XMVectorATan2Est
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+     XMVECTORF32 Result = { { {
+-            atan2f(Y.vector4_f32[0], X.vector4_f32[0]),
+-            atan2f(Y.vector4_f32[1], X.vector4_f32[1]),
+-            atan2f(Y.vector4_f32[2], X.vector4_f32[2]),
+-            atan2f(Y.vector4_f32[3], X.vector4_f32[3]),
++            std::atan2(Y.vector4_f32[0], X.vector4_f32[0]),
++            std::atan2(Y.vector4_f32[1], X.vector4_f32[1]),
++            std::atan2(Y.vector4_f32[2], X.vector4_f32[2]),
++            std::atan2(Y.vector4_f32[3], X.vector4_f32[3]),
+         } } };
+     return Result.v;
+ #elif defined(_XM_SVML_INTRINSICS_)
+@@ -6322,8 +6322,8 @@ inline bool XM_CALLCONV XMVector2NearEqual
+ ) noexcept
+ {
+ #if defined(_XM_NO_INTRINSICS_)
+-    float dx = fabsf(V1.vector4_f32[0] - V2.vector4_f32[0]);
+-    float dy = fabsf(V1.vector4_f32[1] - V2.vector4_f32[1]);
++    float dx = std::fabs(V1.vector4_f32[0] - V2.vector4_f32[0]);
++    float dy = std::fabs(V1.vector4_f32[1] - V2.vector4_f32[1]);
+     return ((dx <= Epsilon.vector4_f32[0]) &&
+         (dy <= Epsilon.vector4_f32[1]));
+ #elif defined(_XM_ARM_NEON_INTRINSICS_)
+@@ -7212,7 +7212,7 @@ inline XMVECTOR XM_CALLCONV XMVector2RefractV
+     RY = 1.0f - (RY * RefractionIndex.vector4_f32[1] * RefractionIndex.vector4_f32[1]);
+     if (RX >= 0.0f)
+     {
+-        RX = (RefractionIndex.vector4_f32[0] * Incident.vector4_f32[0]) - (Normal.vector4_f32[0] * ((RefractionIndex.vector4_f32[0] * IDotN) + sqrtf(RX)));
++        RX = (RefractionIndex.vector4_f32[0] * Incident.vector4_f32[0]) - (Normal.vector4_f32[0] * ((RefractionIndex.vector4_f32[0] * IDotN) + std::sqrt(RX)));
+     }
+     else
+     {
+@@ -7220,7 +7220,7 @@ inline XMVECTOR XM_CALLCONV XMVector2RefractV
+     }
+     if (RY >= 0.0f)
+     {
+-        RY = (RefractionIndex.vector4_f32[1] * Incident.vector4_f32[1]) - (Normal.vector4_f32[1] * ((RefractionIndex.vector4_f32[1] * IDotN) + sqrtf(RY)));
++        RY = (RefractionIndex.vector4_f32[1] * Incident.vector4_f32[1]) - (Normal.vector4_f32[1] * ((RefractionIndex.vector4_f32[1] * IDotN) + std::sqrt(RY)));
+     }
+     else
+     {
+@@ -9049,9 +9049,9 @@ inline bool XM_CALLCONV XMVector3NearEqual
+ #if defined(_XM_NO_INTRINSICS_)
+     float dx, dy, dz;
+ 
+-    dx = fabsf(V1.vector4_f32[0] - V2.vector4_f32[0]);
+-    dy = fabsf(V1.vector4_f32[1] - V2.vector4_f32[1]);
+-    dz = fabsf(V1.vector4_f32[2] - V2.vector4_f32[2]);
++    dx = std::fabs(V1.vector4_f32[0] - V2.vector4_f32[0]);
++    dy = std::fabs(V1.vector4_f32[1] - V2.vector4_f32[1]);
++    dz = std::fabs(V1.vector4_f32[2] - V2.vector4_f32[2]);
+     return (((dx <= Epsilon.vector4_f32[0]) &&
+         (dy <= Epsilon.vector4_f32[1]) &&
+         (dz <= Epsilon.vector4_f32[2])) != 0);
+@@ -12914,10 +12914,10 @@ inline bool XM_CALLCONV XMVector4NearEqual
+ #if defined(_XM_NO_INTRINSICS_)
+     float dx, dy, dz, dw;
+ 
+-    dx = fabsf(V1.vector4_f32[0] - V2.vector4_f32[0]);
+-    dy = fabsf(V1.vector4_f32[1] - V2.vector4_f32[1]);
+-    dz = fabsf(V1.vector4_f32[2] - V2.vector4_f32[2]);
+-    dw = fabsf(V1.vector4_f32[3] - V2.vector4_f32[3]);
++    dx = std::fabs(V1.vector4_f32[0] - V2.vector4_f32[0]);
++    dy = std::fabs(V1.vector4_f32[1] - V2.vector4_f32[1]);
++    dz = std::fabs(V1.vector4_f32[2] - V2.vector4_f32[2]);
++    dw = std::fabs(V1.vector4_f32[3] - V2.vector4_f32[3]);
+     return (((dx <= Epsilon.vector4_f32[0]) &&
+         (dy <= Epsilon.vector4_f32[1]) &&
+         (dz <= Epsilon.vector4_f32[2]) &&
+diff --git a/SHMath/DirectXSH.cpp b/SHMath/DirectXSH.cpp
+index b98358a..1164a68 100644
+--- a/SHMath/DirectXSH.cpp
++++ b/SHMath/DirectXSH.cpp
+@@ -31,23 +31,23 @@ namespace
+ #pragma prefast(disable:246, "generated code by maple (nested const variable definitions)")
+ #endif
+ 
+-    const float fExtraNormFac[XM_SH_MAXORDER] = { 2.0f*sqrtf(XM_PI), 2.0f / 3.0f*sqrtf(3.0f*XM_PI), 2.0f / 5.0f*sqrtf(5.0f*XM_PI), 2.0f / 7.0f*sqrtf(7.0f*XM_PI), 2.0f / 3.0f*sqrtf(XM_PI), 2.0f / 11.0f*sqrtf(11.0f*XM_PI) };
++    const float fExtraNormFac[XM_SH_MAXORDER] = { 2.0f*std::sqrt(XM_PI), 2.0f / 3.0f*std::sqrt(3.0f*XM_PI), 2.0f / 5.0f*std::sqrt(5.0f*XM_PI), 2.0f / 7.0f*std::sqrt(7.0f*XM_PI), 2.0f / 3.0f*std::sqrt(XM_PI), 2.0f / 11.0f*std::sqrt(11.0f*XM_PI) };
+ 
+     // computes the integral of a constant function over a solid angular
+     // extent.  No error checking - only used internaly.  This function
+     // only returns the Yl0 coefficients, since the rest are zero for
+     // circularly symmetric functions.
+-    const float ComputeCapInt_t1 = sqrtf(0.3141593E1f);
+-    const float ComputeCapInt_t5 = sqrtf(3.0f);
+-    const float ComputeCapInt_t11 = sqrtf(5.0f);
+-    const float ComputeCapInt_t18 = sqrtf(7.0f);
+-    const float ComputeCapInt_t32 = sqrtf(11.0f);
++    const float ComputeCapInt_t1 = std::sqrt(0.3141593E1f);
++    const float ComputeCapInt_t5 = std::sqrt(3.0f);
++    const float ComputeCapInt_t11 = std::sqrt(5.0f);
++    const float ComputeCapInt_t18 = std::sqrt(7.0f);
++    const float ComputeCapInt_t32 = std::sqrt(11.0f);
+ 
+     inline void ComputeCapInt(const size_t order, float angle, float *pR)
+     {
+-        const float t2 = cosf(angle);
++        const float t2 = std::cos(angle);
+         const float t3 = ComputeCapInt_t1*t2;
+-        const float t7 = sinf(angle);
++        const float t7 = std::sin(angle);
+         const float t8 = t7*t7;
+ 
+ 
+@@ -103,8 +103,8 @@ namespace
+         return fRet;
+     }
+ 
+-    const float SHEvalHemisphereLight_fSqrtPi = sqrtf(XM_PI);
+-    const float SHEvalHemisphereLight_fSqrtPi3 = sqrtf(XM_PI / 3.0f);
++    const float SHEvalHemisphereLight_fSqrtPi = std::sqrt(XM_PI);
++    const float SHEvalHemisphereLight_fSqrtPi3 = std::sqrt(XM_PI / 3.0f);
+ 
+     using REAL = float;
+ #define CONSTANT(x) (x ## f)
+@@ -833,16 +833,16 @@ namespace
+         REAL cz = m[8];
+ 
+         // rotate so that (cx,cy,0) aligns to (1,0,0)
+-        REAL cxylen = (REAL)sqrtf(1.0f - cz*cz);
++        REAL cxylen = (REAL)std::sqrt(1.0f - cz*cz);
+         if (cxylen >= ROT_TOL)
+         {
+             // if above is a NaN, will do the correct thing
+             yc = cz;
+             ys = cxylen;
+-            REAL len67inv = 1.0f / sqrtf(m[6] * m[6] + m[7] * m[7]);
++            REAL len67inv = 1.0f / std::sqrt(m[6] * m[6] + m[7] * m[7]);
+             zc1 = -m[6] * len67inv;
+             zs1 = m[7] * len67inv;
+-            REAL len25inv = 1.0f / sqrtf(m[2] * m[2] + m[5] * m[5]);
++            REAL len25inv = 1.0f / std::sqrt(m[2] * m[2] + m[5] * m[5]);
+             zc2 = m[2] * len25inv;
+             zs2 = m[5] * len25inv;
+         }
+@@ -1190,8 +1190,8 @@ float* DirectX::XMSHRotateZ(
+ 
+     // these are actually very sparse matrices, most of the entries are zero's...
+ 
+-    const float ca = cosf(angle);
+-    const float sa = sinf(angle);
++    const float ca = std::cos(angle);
++    const float sa = std::sin(angle);
+ 
+     const float t1 = ca;
+     const float t2 = sa;
+@@ -4562,7 +4562,7 @@ bool XM_CALLCONV DirectX::XMSHEvalSphericalLight(
+     // WARNING: fDist should not be < radius - otherwise light contains origin
+ 
+     //const float fSinConeAngle = (fDist <= radius) ? 0.99999f : radius/fDist;
+-    const float fConeAngle = (fDist <= radius) ? (XM_PIDIV2) : asinf(radius / fDist);
++    const float fConeAngle = (fDist <= radius) ? (XM_PIDIV2) : astd::sin(radius / fDist);
+ 
+     XMVECTOR dir = XMVector3Normalize(pos);
+ 
+@@ -4700,7 +4700,7 @@ bool XM_CALLCONV DirectX::XMSHEvalConeLight(
+         const float fConeAngle = radius;
+         const float fAngCheck = (fConeAngle > XM_PIDIV2) ? (XM_PIDIV2) : fConeAngle;
+ 
+-        const float fNewNorm = 1.0f / (sinf(fAngCheck)*sinf(fAngCheck));
++        const float fNewNorm = 1.0f / (std::sin(fAngCheck)*std::sin(fAngCheck));
+ 
+         ComputeCapInt(order, fConeAngle, fTmpL0);
+ 
+diff --git a/Stereo3D/Stereo3DMatrixHelper.cpp b/Stereo3D/Stereo3DMatrixHelper.cpp
+index 6e49b6c..ed6e7b3 100644
+--- a/Stereo3D/Stereo3DMatrixHelper.cpp
++++ b/Stereo3D/Stereo3DMatrixHelper.cpp
+@@ -47,15 +47,15 @@ namespace
+         static const float fMaxVisualAcuityAngle = 1.6f * (XM_PI / 180.0f);  // radians
+         static const float fInterocularDistance = 1.25f; // inches
+ 
+-        float fDisplayHeight = stereoParameters.fDisplaySizeInches / sqrtf(AspectRatio * AspectRatio + 1.0f);
++        float fDisplayHeight = stereoParameters.fDisplaySizeInches / std::sqrt(AspectRatio * AspectRatio + 1.0f);
+         float fDisplayWidth = fDisplayHeight * AspectRatio;
+         float fHalfInterocular = 0.5f * fInterocularDistance * stereoParameters.fStereoExaggerationFactor;
+         float fHalfPixelWidth = fDisplayWidth / stereoParameters.fPixelResolutionWidth * 0.5f;
+         float fHalfMaximumAcuityAngle = fMaxVisualAcuityAngle * 0.5f * stereoParameters.fStereoExaggerationFactor;
+         // float fHalfWidth = fDisplayWidth * 0.5f;
+ 
+-        float fMaxSeparationAcuityAngle = atanf(fHalfInterocular / fMaxStereoDistance);
+-        float fMaxSeparationDistance = fHalfPixelWidth / tanf(fMaxSeparationAcuityAngle);
++        float fMaxSeparationAcuityAngle = std::atan(fHalfInterocular / fMaxStereoDistance);
++        float fMaxSeparationDistance = fHalfPixelWidth / std::tan(fMaxSeparationAcuityAngle);
+         float fRefinedMaxStereoDistance = fMaxStereoDistance - fMaxSeparationDistance;
+         float fFovHalfAngle = FovAngleY / 2.0f;
+ 
+@@ -66,14 +66,14 @@ namespace
+             ComfortableResult = false;
+         }
+ 
+-        float fRefinedMaxSeparationAcuityAngle = atanf(fHalfInterocular / (fRefinedMaxStereoDistance));
+-        float fPhysicalZNearDistance = fHalfInterocular / tanf(fHalfMaximumAcuityAngle);
+-        // float fScalingFactor = fHalfMaximumAcuityAngle / atanf(fHalfInterocular / stereoParameters.fViewerDistanceInches);
++        float fRefinedMaxSeparationAcuityAngle = std::atan(fHalfInterocular / (fRefinedMaxStereoDistance));
++        float fPhysicalZNearDistance = fHalfInterocular / std::tan(fHalfMaximumAcuityAngle);
++        // float fScalingFactor = fHalfMaximumAcuityAngle / std::atan(fHalfInterocular / stereoParameters.fViewerDistanceInches);
+ 
+-        float fNearZSeparation = tanf(fRefinedMaxSeparationAcuityAngle) * (fRefinedMaxStereoDistance - fPhysicalZNearDistance);
++        float fNearZSeparation = std::tan(fRefinedMaxSeparationAcuityAngle) * (fRefinedMaxStereoDistance - fPhysicalZNearDistance);
+         // float fNearZSeparation2 = fHalfInterocular * (fRefinedMaxStereoDistance - fPhysicalZNearDistance) / fRefinedMaxStereoDistance;
+ 
+-        (*zNearHeight) = cosf(fFovHalfAngle) / sinf(fFovHalfAngle);
++        (*zNearHeight) = std::cos(fFovHalfAngle) / std::sin(fFovHalfAngle);
+         (*zNearWidth) = (*zNearHeight) / AspectRatio;
+         (*fVirtualProjection) = (fNearZSeparation * NearZ * (*zNearWidth * 4.0f)) / (2.0f * NearZ);
+ 
+@@ -138,7 +138,7 @@ XMMATRIX DirectX::StereoProjectionFovLH
+     // By applying a translation, we are forcing our cameras to be parallel 
+     //
+ 
+-    float fInvertedAngle = atanf(fVirtualProjection / (2.0f * NearZ));
++    float fInvertedAngle = std::atan(fVirtualProjection / (2.0f * NearZ));
+ 
+     XMMATRIX proj = XMMatrixPerspectiveFovLH(FovAngleY, AspectRatio, NearZ, FarZ);
+ 
+@@ -215,7 +215,7 @@ XMMATRIX DirectX::StereoProjectionFovRH
+     // By applying a translation, we are forcing our cameras to be parallel 
+     //
+ 
+-    float fInvertedAngle = atanf(fVirtualProjection / (2.0f * NearZ));
++    float fInvertedAngle = std::atan(fVirtualProjection / (2.0f * NearZ));
+ 
+     XMMATRIX proj = XMMatrixPerspectiveFovRH(FovAngleY, AspectRatio, NearZ, FarZ);
+ 
+-- 
+2.35.1.windows.2
+

@@ -1,0 +1,22 @@
+# Default site-specific configuration
+# - Copy this file as cfg-site.yaml
+# - Update the definitions with the paths to the binaries if
+#   they are not on $PATH
+---
+
+vars:
+  # this is the directory containing all the source sequences
+  # NB: it must end with a directory separator
+  seq-prefix: /path/to/cfp/content/root/
+
+  # this is the directory containing the hm/hdrtools config
+  # NB: it must end with a directory separator
+  cfg-prefix: /path/to/mpeg-vmesh-tm/cfg/
+
+  # video configuration files
+  video-config-disp-ai: disp-ai.cfg
+  video-config-disp-ld: disp-ld.cfg
+  video-config-text-ai: text-ai.cfg
+  video-config-text-ld: text-ld.cfg
+  video-config-text-ai-ll: text-ai-ll.cfg
+  video-config-text-ai-ll: text-ai-ll.cfg

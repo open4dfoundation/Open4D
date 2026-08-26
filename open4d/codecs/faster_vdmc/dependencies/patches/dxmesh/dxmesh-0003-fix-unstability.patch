@@ -1,0 +1,109 @@
+From 62d35ac578e4139aae7f27b683d8772ef4ae2f7d Mon Sep 17 00:00:00 2001
+From: Olivier Mocquard <olivier.mocquard@interdigital.com>
+Date: Wed, 20 Jul 2022 00:01:50 +0200
+Subject: [PATCH] dxmesh: fix unstability -replace unorded_(map/set) with
+ (map/set)
+
+This patch is licensed as follows:
+
+The copyright in this software is being made available under the BSD
+Licence, included below.  This software may be subject to other third
+party and contributor rights, including patent rights, and no such
+rights are granted under this licence.
+
+Copyright (c) 2022, ISO/IEC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the ISO/IEC nor the names of its contributors
+  may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+---
+ CMakeLists.txt                          | 4 ++--
+ DirectXMesh/DirectXMeshClean.cpp        | 2 +-
+ DirectXMesh/DirectXMeshP.h              | 4 ++--
+ DirectXMesh/DirectXMeshletGenerator.cpp | 2 +-
+ 4 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 192feed..b99f055 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -176,10 +176,10 @@ if(BUILD_TOOLS AND WIN32 AND (NOT WINDOWS_STORE))
+ endif()
+ 
+ if(MSVC)
+-    target_compile_options(${PROJECT_NAME} PRIVATE /fp:fast "$<$<NOT:$<CONFIG:DEBUG>>:/guard:cf>")
++    target_compile_options(${PROJECT_NAME} PRIVATE /fp:strict "$<$<NOT:$<CONFIG:DEBUG>>:/guard:cf>")
+ 
+     if(BUILD_TOOLS AND WIN32 AND (NOT WINDOWS_STORE))
+-      target_compile_options(meshconvert PRIVATE /fp:fast "$<$<NOT:$<CONFIG:DEBUG>>:/guard:cf>")
++      target_compile_options(meshconvert PRIVATE /fp:strict "$<$<NOT:$<CONFIG:DEBUG>>:/guard:cf>")
+       target_link_options(meshconvert PRIVATE /DYNAMICBASE /NXCOMPAT)
+     endif()
+ 
+diff --git a/DirectXMesh/DirectXMeshClean.cpp b/DirectXMesh/DirectXMeshClean.cpp
+index 80e16ea..4917100 100644
+--- a/DirectXMesh/DirectXMeshClean.cpp
++++ b/DirectXMesh/DirectXMeshClean.cpp
+@@ -319,7 +319,7 @@ namespace
+                 dupAttr.push_back(UNUSED32);
+             }
+ 
+-            std::unordered_multimap<uint32_t, size_t> dups;
++            std::multimap<uint32_t, size_t> dups;
+ 
+             for (size_t face = 0; face < nFaces; ++face)
+             {
+diff --git a/DirectXMesh/DirectXMeshP.h b/DirectXMesh/DirectXMeshP.h
+index 7ebe0a2..0f370a7 100644
+--- a/DirectXMesh/DirectXMeshP.h
++++ b/DirectXMesh/DirectXMeshP.h
+@@ -121,8 +121,8 @@
+ #include <new>
+ #include <string>
+ #include <tuple>
+-#include <unordered_map>
+-#include <unordered_set>
++#include <map>
++#include <set>
+ 
+ #ifndef WIN32
+ #include <mutex>
+diff --git a/DirectXMesh/DirectXMeshletGenerator.cpp b/DirectXMesh/DirectXMeshletGenerator.cpp
+index df2f7bb..970a2c1 100644
+--- a/DirectXMesh/DirectXMeshletGenerator.cpp
++++ b/DirectXMesh/DirectXMeshletGenerator.cpp
+@@ -262,7 +262,7 @@ namespace
+ 
+         // Cache to maintain scores for each candidate triangle
+         std::vector<std::pair<uint32_t, float>> candidates;
+-        std::unordered_set<uint32_t> candidateCheck;
++        std::set<uint32_t> candidateCheck;
+ 
+         // Positions and normals of the current primitive
+         std::vector<XMFLOAT3> vertices;
+-- 
+2.35.1.windows.2
+
