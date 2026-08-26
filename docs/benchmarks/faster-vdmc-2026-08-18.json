@@ -3,8 +3,11 @@
   "captured_at": "2026-08-18",
   "environment_verified_at": "2026-08-25",
   "codec": {
+    "source_layout": "vendored",
     "reference_revision": "ecffe4212e5e956761c4fa14a17c453ae916b0b1",
     "optimized_revision": "93cdd5e1367b0f9f81c251ef89255bcb2f0d2d3f",
+    "optimized_tree_sha1": "4670032d9d497cdf78e51304475c90ee98325b93",
+    "optimized_archive_sha256": "208ea4b68e9191ee75948c5c379d132ae0565d4c15a61c37c59bbb5aa52b500d",
     "encoder_revision": "9d9b229b0d199ac809690bb22661015d3d81e337",
     "build_type": "Release",
     "bitstream_trace": false

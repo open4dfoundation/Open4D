@@ -1,0 +1,172 @@
+diff --git a/source/Lib/TLibCommon/TComRdCost.cpp b/source/Lib/TLibCommon/TComRdCost.cpp
+index f2bc8dd..6f7cf58 100644
+--- a/source/Lib/TLibCommon/TComRdCost.cpp
++++ b/source/Lib/TLibCommon/TComRdCost.cpp
+@@ -205,22 +205,28 @@ Void TComRdCost::setDistParam( UInt uiBlkWidth, UInt uiBlkHeight, DFunc eDFunc,
+ #if PCC_RDO_EXT
+   int iDistFunc        = eDFunc + g_aucConvertToBit[ rcDistParam.iCols ] + 1;
+   if(m_usePCCRDO){
+-    switch (iDistFunc){
+-      case DF_SSE ... DF_SSE16N:
+-        rcDistParam.useRDO = true;
+-        break;
+-      case DF_SAD ... DF_SADS16N:
+-      case DF_SAD12 ... DF_SAD48:
++    if (iDistFunc >= DF_SSE && iDistFunc <= DF_SSE16N) {
++      rcDistParam.useRDO = true;
++    }
++    else if (iDistFunc >= DF_SAD && iDistFunc <= DF_SADS16N) {
+ #if PCC_RDO_EXT_SAD
+-        rcDistParam.useRDO = true;
++      rcDistParam.useRDO = true;
+ #else
+-        rcDistParam.useRDO = false;
++      rcDistParam.useRDO = false;
+ #endif
+-        break;
+-      case DF_HADS ... DF_HADS16N:
+-      default:
+-        rcDistParam.useRDO = false;
+-        break;
++    }
++    else if (iDistFunc >= DF_SAD12 && iDistFunc <= DF_SAD48) {
++#if PCC_RDO_EXT_SAD
++      rcDistParam.useRDO = true;
++#else
++      rcDistParam.useRDO = false;
++#endif
++    }
++    else if (iDistFunc >= DF_HADS && iDistFunc <= DF_HADS16N) {
++      rcDistParam.useRDO = false;
++    }
++    else {
++      rcDistParam.useRDO = false;
+     }
+   }else{
+     rcDistParam.useRDO = false;
+@@ -278,22 +284,28 @@ Void TComRdCost::setDistParam( const TComPattern* const pcPatternKey, const Pel*
+   
+ #if PCC_RDO_EXT
+   if(m_usePCCRDO){
+-    switch (iDistFunc){
+-      case DF_SSE ... DF_SSE16N:
+-        rcDistParam.useRDO = true;
+-        break;
+-      case DF_SAD ... DF_SADS16N:
+-      case DF_SAD12 ... DF_SAD48:
++    if (iDistFunc >= DF_SSE && iDistFunc <= DF_SSE16N) {
++      rcDistParam.useRDO = true;
++    }
++    else if (iDistFunc >= DF_SAD && iDistFunc <= DF_SADS16N) {
+ #if PCC_RDO_EXT_SAD
+-        rcDistParam.useRDO = true;
++      rcDistParam.useRDO = true;
+ #else
+-        rcDistParam.useRDO = false;
++      rcDistParam.useRDO = false;
+ #endif
+-        break;
+-      case DF_HADS ... DF_HADS16N:
+-      default:
+-        rcDistParam.useRDO = false;
+-        break;
++    }
++    else if (iDistFunc >= DF_SAD12 && iDistFunc <= DF_SAD48) {
++#if PCC_RDO_EXT_SAD
++      rcDistParam.useRDO = true;
++#else
++      rcDistParam.useRDO = false;
++#endif
++    }
++    else if (iDistFunc >= DF_HADS && iDistFunc <= DF_HADS16N) {
++      rcDistParam.useRDO = false;
++    }
++    else {
++      rcDistParam.useRDO = false;
+     }
+   }else{
+     rcDistParam.useRDO = false;
+@@ -362,22 +374,28 @@ Void TComRdCost::setDistParam( const TComPattern* const pcPatternKey, const Pel*
+     
+ #if PCC_RDO_EXT
+   if(m_usePCCRDO){
+-    switch (iDistFct){
+-      case DF_SSE ... DF_SSE16N:
+-        rcDistParam.useRDO = true;
+-        break;
+-      case DF_SAD ... DF_SADS16N:
+-      case DF_SAD12 ... DF_SAD48:
++    if (iDistFct >= DF_SSE && iDistFct <= DF_SSE16N) {
++      rcDistParam.useRDO = true;
++    }
++    else if (iDistFct >= DF_SAD && iDistFct <= DF_SADS16N) {
+ #if PCC_RDO_EXT_SAD
+-        rcDistParam.useRDO = true;
++      rcDistParam.useRDO = true;
+ #else
+-        rcDistParam.useRDO = false;
++      rcDistParam.useRDO = false;
+ #endif
+-        break;
+-      case DF_HADS ... DF_HADS16N:
+-      default:
+-        rcDistParam.useRDO = false;
+-        break;
++    }
++    else if (iDistFct >= DF_SAD12 && iDistFct <= DF_SAD48) {
++#if PCC_RDO_EXT_SAD
++      rcDistParam.useRDO = true;
++#else
++      rcDistParam.useRDO = false;
++#endif
++    }
++    else if (iDistFct >= DF_HADS && iDistFct <= DF_HADS16N) {
++      rcDistParam.useRDO = false;
++    }
++    else {
++      rcDistParam.useRDO = false;
+     }
+   }else{
+     rcDistParam.useRDO = false;
+@@ -408,22 +426,28 @@ Void TComRdCost::setDistParam( DistParam& rcDP, Int bitDepth, const Pel* p1, Int
+   rcDP.pOccupancy   = pOcc;
+   rcDP.iStrideOccupancy = iStrideOcc;
+   if(m_usePCCRDO){
+-    switch (iDistFct){
+-      case DF_SSE ... DF_SSE16N:
+-        rcDP.useRDO = true;
+-        break;
+-      case DF_SAD ... DF_SADS16N:
+-      case DF_SAD12 ... DF_SAD48:
++    if (iDistFct >= DF_SSE && iDistFct <= DF_SSE16N) {
++      rcDP.useRDO = true;
++    }
++    else if (iDistFct >= DF_SAD && iDistFct <= DF_SADS16N) {
+ #if PCC_RDO_EXT_SAD
+-        rcDP.useRDO = true;
++      rcDP.useRDO = true;
+ #else
+-        rcDP.useRDO = false;
++      rcDP.useRDO = false;
+ #endif
+-        break;
+-      case DF_HADS ... DF_HADS16N:
+-      default:
+-        rcDP.useRDO = false;
+-        break;
++    }
++    else if (iDistFct >= DF_SAD12 && iDistFct <= DF_SAD48) {
++#if PCC_RDO_EXT_SAD
++      rcDP.useRDO = true;
++#else
++      rcDP.useRDO = false;
++#endif
++    }
++    else if (iDistFct >= DF_HADS && iDistFct <= DF_HADS16N) {
++      rcDP.useRDO = false;
++    }
++    else {
++      rcDP.useRDO = false;
+     }
+   }else{
+     rcDP.useRDO = false;

@@ -1,0 +1,36 @@
+Checks: '
+-*,
+bugprone-*,
+cppcoreguidelines-*,
+misc-unused-parameters,
+modernize-*,
+performance-*,
+readability-*,
+portability-*,
+clang-analyzer-*,
+google-readability-braces-around-statements,
+google-build-using-namespace,
+-bugprone-easily-swappable-parameters,
+-bugprone-implicit-widening-of-multiplication-result,
+-cppcoreguidelines-avoid-magic-numbers,
+-cppcoreguidelines-prefer-member-initializer,
+-readability-identifier-length,
+-readability-magic-numbers,
+-cppcoreguidelines-avoid-c-arrays
+-cppcoreguidelines-pro-bounds-array-to-pointer-decay
+-cppcoreguidelines-pro-bounds-pointer-arithmetic,
+-cppcoreguidelines-pro-type-vararg
+-cppcoreguidelines-special-member-functions
+-cppcoreguidelines-avoid-non-const-global-variables,
+-modernize-avoid-c-arrays
+-modernize-use-trailing-return-type
+-clang-diagnostic-error
+-readability-named-parameter
+'
+
+HeaderFilterRegex: 'source/.*'
+
+WarningsAsErrors: '*'
+
+FormatStyle: file
+

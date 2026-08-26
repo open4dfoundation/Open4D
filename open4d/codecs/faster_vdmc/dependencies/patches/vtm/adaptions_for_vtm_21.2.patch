@@ -1,0 +1,1125 @@
+From d0222ca5df0d2c12de6753a3dea8c60bf659fae7 Mon Sep 17 00:00:00 2001
+From: kwonnaseong <kwonnasung98@gmail.com>
+Date: Mon, 20 Nov 2023 17:36:15 +0900
+Subject: [PATCH] vtm21.2
+
+---
+ source/Lib/CommonLib/CommonDef.h             |  2 +-
+ source/Lib/CommonLib/DepQuant.cpp            |  8 +-
+ source/Lib/CommonLib/MCTS.cpp                |  4 +-
+ source/Lib/CommonLib/ParameterSetManager.cpp |  8 +-
+ source/Lib/CommonLib/Picture.cpp             |  2 +-
+ source/Lib/CommonLib/Rom.cpp                 |  2 +-
+ source/Lib/CommonLib/Slice.cpp               | 48 +++++------
+ source/Lib/CommonLib/TypeDef.h               | 24 +++---
+ source/Lib/DecoderLib/DecLib.cpp             | 48 +++++------
+ source/Lib/DecoderLib/DecLib.h               |  2 +-
+ source/Lib/DecoderLib/NALread.cpp            |  2 +-
+ source/Lib/DecoderLib/SEIread.cpp            | 14 ++--
+ source/Lib/DecoderLib/VLCReader.cpp          |  4 +-
+ source/Lib/EncoderLib/EncGOP.cpp             | 88 ++++++++++----------
+ source/Lib/EncoderLib/RateCtrl.cpp           |  6 +-
+ source/Lib/EncoderLib/SEIwrite.cpp           |  2 +-
+ source/Lib/Utilities/VideoIOYuv.cpp          |  6 +-
+ 17 files changed, 135 insertions(+), 135 deletions(-)
+
+diff --git a/source/Lib/CommonLib/CommonDef.h b/source/Lib/CommonLib/CommonDef.h
+index 7d01ee5c2..565c57c3d 100644
+--- a/source/Lib/CommonLib/CommonDef.h
++++ b/source/Lib/CommonLib/CommonDef.h
+@@ -627,7 +627,7 @@ inline void msg( MsgLevel level, const char* fmt, ... )
+   {
+     va_list args;
+     va_start( args, fmt );
+-    vfprintf( level == ERROR ? stderr : stdout, fmt, args );
++    vfprintf( level == VTM_ERROR ? stderr : stdout, fmt, args );
+     va_end( args );
+   }
+ }
+diff --git a/source/Lib/CommonLib/DepQuant.cpp b/source/Lib/CommonLib/DepQuant.cpp
+index 244608e0c..bc5eeddf3 100644
+--- a/source/Lib/CommonLib/DepQuant.cpp
++++ b/source/Lib/CommonLib/DepQuant.cpp
+@@ -149,10 +149,10 @@ namespace DQIntern
+ 
+   void Rom::xInitScanArrays()
+   {
+-    if( m_scansInitialized )
+-    {
+-      return;
+-    }
++    // if( m_scansInitialized )
++    // {
++    //   return;
++    // }
+     ::memset( m_scanId2NbInfoSbbArray, 0, sizeof(m_scanId2NbInfoSbbArray) );
+     ::memset( m_scanId2NbInfoOutArray, 0, sizeof(m_scanId2NbInfoOutArray) );
+     ::memset( m_tuParameters,          0, sizeof(m_tuParameters) );
+diff --git a/source/Lib/CommonLib/MCTS.cpp b/source/Lib/CommonLib/MCTS.cpp
+index 676d9948b..bc8e2022a 100644
+--- a/source/Lib/CommonLib/MCTS.cpp
++++ b/source/Lib/CommonLib/MCTS.cpp
+@@ -181,7 +181,7 @@ static bool checkMVRange( const Mv& mv, const Area& tileArea, int predXLeft, int
+   {
+     if( msgFlag )
+     {
+-      msg( WARNING, "%s: pu motion vector across tile boundaries MV(%d,%d) RangeLR(%d,%d) PredLR(%d,%d)\n", (isLuma ? "LUMA": "CHROMA"), mv.getHor(), mv.getVer(), rangeXLeft, rangeXRight, predXLeft, predXRight );
++      msg( VTM_WARNING, "%s: pu motion vector across tile boundaries MV(%d,%d) RangeLR(%d,%d) PredLR(%d,%d)\n", (isLuma ? "LUMA": "CHROMA"), mv.getHor(), mv.getVer(), rangeXLeft, rangeXRight, predXLeft, predXRight );
+     }
+     return false;
+   }
+@@ -189,7 +189,7 @@ static bool checkMVRange( const Mv& mv, const Area& tileArea, int predXLeft, int
+   {
+     if( msgFlag )
+     {
+-      msg( WARNING, "%s: pu motion vector across tile boundaries MV(%d,%d) RangeTB(%d,%d) PredTB(%d,%d)\n", (isLuma ? "LUMA" : "CHROMA"), mv.getHor(), mv.getVer(), rangeYTop, rangeYBottom, predYTop, predYBottom );
++      msg( VTM_WARNING, "%s: pu motion vector across tile boundaries MV(%d,%d) RangeTB(%d,%d) PredTB(%d,%d)\n", (isLuma ? "LUMA" : "CHROMA"), mv.getHor(), mv.getVer(), rangeYTop, rangeYBottom, predYTop, predYBottom );
+     }
+     return false;
+   }
+diff --git a/source/Lib/CommonLib/ParameterSetManager.cpp b/source/Lib/CommonLib/ParameterSetManager.cpp
+index 12b88724b..f905b66b9 100644
+--- a/source/Lib/CommonLib/ParameterSetManager.cpp
++++ b/source/Lib/CommonLib/ParameterSetManager.cpp
+@@ -91,7 +91,7 @@ bool ParameterSetManager::activatePPS(int ppsId, bool isIRAP)
+         }
+         else
+         {
+-          msg( WARNING, "Warning: tried to activate a PPS that refers to a non-existing VPS." );
++          msg( VTM_WARNING, "Warning: tried to activate a PPS that refers to a non-existing VPS." );
+         }
+ 
+         m_spsMap.clearActive();
+@@ -103,13 +103,13 @@ bool ParameterSetManager::activatePPS(int ppsId, bool isIRAP)
+       }
+       else
+       {
+-        msg( WARNING, "Warning: tried to activate a PPS that refers to a non-existing SPS.");
++        msg( VTM_WARNING, "Warning: tried to activate a PPS that refers to a non-existing SPS.");
+       }
+     }
+   }
+   else
+   {
+-    msg( WARNING, "Warning: tried to activate a non-existing PPS.");
++    msg( VTM_WARNING, "Warning: tried to activate a non-existing PPS.");
+   }
+ 
+   // Failed to activate if reach here.
+@@ -127,7 +127,7 @@ bool ParameterSetManager::activateAPS(uint8_t apsId, ApsType apsType)
+   }
+   else
+   {
+-    msg(WARNING, "Warning: tried to activate a non-existing APS.");
++    msg(VTM_WARNING, "Warning: tried to activate a non-existing APS.");
+   }
+   return false;
+ }
+diff --git a/source/Lib/CommonLib/Picture.cpp b/source/Lib/CommonLib/Picture.cpp
+index b6dfb695b..75f29810c 100644
+--- a/source/Lib/CommonLib/Picture.cpp
++++ b/source/Lib/CommonLib/Picture.cpp
+@@ -1438,7 +1438,7 @@ PelUnitBuf Picture::getDisplayBufFG(bool wrap)
+   {
+     if (payloadType == SEI::PayloadType::FILM_GRAIN_CHARACTERISTICS)
+     {
+-      msg(WARNING, "Film Grain synthesis is not performed. Error code: 0x%x \n", m_grainCharacteristic->m_errorCode);
++      msg(VTM_WARNING, "Film Grain synthesis is not performed. Error code: 0x%x \n", m_grainCharacteristic->m_errorCode);
+     }
+     return M_BUFS(scheduler.getSplitPicId(), wrap ? PIC_RECON_WRAP : PIC_RECONSTRUCTION);
+   }
+diff --git a/source/Lib/CommonLib/Rom.cpp b/source/Lib/CommonLib/Rom.cpp
+index 31b6d1a59..a95a50ae8 100644
+--- a/source/Lib/CommonLib/Rom.cpp
++++ b/source/Lib/CommonLib/Rom.cpp
+@@ -59,7 +59,7 @@ bool g_mctsDecCheckEnabled = false;
+ //! \ingroup CommonLib
+ //! \{
+ 
+-MsgLevel g_verbosity = VERBOSE;
++MsgLevel g_verbosity = VTM_VERBOSE;
+ 
+ const char* nalUnitTypeToString(NalUnitType type)
+ {
+diff --git a/source/Lib/CommonLib/Slice.cpp b/source/Lib/CommonLib/Slice.cpp
+index f6e901567..12d64acc0 100644
+--- a/source/Lib/CommonLib/Slice.cpp
++++ b/source/Lib/CommonLib/Slice.cpp
+@@ -1700,7 +1700,7 @@ int Slice::checkThatAllRefPicsAreAvailable(PicList& rcListPic, const ReferencePi
+     {
+       if (printErrors)
+       {
+-        msg(ERROR, "Error: Current picture: %d Long-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
++        msg(VTM_ERROR, "Error: Current picture: %d Long-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
+       }
+       return notPresentPoc;
+     }
+@@ -1733,7 +1733,7 @@ int Slice::checkThatAllRefPicsAreAvailable(PicList& rcListPic, const ReferencePi
+     {
+       if (printErrors)
+       {
+-        msg(ERROR, "Error: Current picture: %d Short-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
++        msg(VTM_ERROR, "Error: Current picture: %d Short-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
+       }
+       return notPresentPoc;
+     }
+@@ -1812,7 +1812,7 @@ int Slice::checkThatAllRefPicsAreAvailable(PicList& rcListPic, const ReferencePi
+     {
+       if (printErrors)
+       {
+-        msg(ERROR, "Error: Current picture: %d Long-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
++        msg(VTM_ERROR, "Error: Current picture: %d Long-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
+       }
+       *refPicIndex = ii;
+       return notPresentPoc;
+@@ -1846,7 +1846,7 @@ int Slice::checkThatAllRefPicsAreAvailable(PicList& rcListPic, const ReferencePi
+     {
+       if (printErrors)
+       {
+-        msg(ERROR, "Error: Current picture: %d Short-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
++        msg(VTM_ERROR, "Error: Current picture: %d Short-term reference picture with POC = %3d seems to have been removed or not correctly decoded.\n", this->getPOC(), notPresentPoc);
+       }
+       *refPicIndex = ii;
+       return notPresentPoc;
+@@ -1918,17 +1918,17 @@ void Slice::checkConformanceForDRAP( uint32_t temporalId )
+     if (!(getNalUnitType() == NalUnitType::NAL_UNIT_CODED_SLICE_TRAIL ||
+           getNalUnitType() == NalUnitType::NAL_UNIT_CODED_SLICE_STSA))
+     {
+-      msg( WARNING, "Warning, non-conforming bitstream. The DRAP picture should be a trailing picture.\n");
++      msg( VTM_WARNING, "Warning, non-conforming bitstream. The DRAP picture should be a trailing picture.\n");
+     }
+     if ( temporalId != 0)
+     {
+-      msg( WARNING, "Warning, non-conforming bitstream. The DRAP picture shall have a temporal sublayer identifier equal to 0.\n");
++      msg( VTM_WARNING, "Warning, non-conforming bitstream. The DRAP picture shall have a temporal sublayer identifier equal to 0.\n");
+     }
+     for (int i = 0; i < getNumRefIdx(REF_PIC_LIST_0); i++)
+     {
+       if (getRefPic(REF_PIC_LIST_0,i)->getPOC() != getAssociatedIRAPPOC())
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. The DRAP picture shall not include any pictures in the active "
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. The DRAP picture shall not include any pictures in the active "
+                       "entries of its reference picture lists except the preceding IRAP picture in decoding order.\n");
+       }
+     }
+@@ -1936,7 +1936,7 @@ void Slice::checkConformanceForDRAP( uint32_t temporalId )
+     {
+       if (getRefPic(REF_PIC_LIST_1,i)->getPOC() != getAssociatedIRAPPOC())
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. The DRAP picture shall not include any pictures in the active "
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. The DRAP picture shall not include any pictures in the active "
+                       "entries of its reference picture lists except the preceding IRAP picture in decoding order.\n");
+       }
+     }
+@@ -1948,7 +1948,7 @@ void Slice::checkConformanceForDRAP( uint32_t temporalId )
+     {
+       if (getRefPic(REF_PIC_LIST_0,i)->getPOC() < getLatestDRAPPOC() && getRefPic(REF_PIC_LIST_0,i)->getPOC() != getAssociatedIRAPPOC())
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. Any picture that follows the DRAP picture in both decoding order "
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. Any picture that follows the DRAP picture in both decoding order "
+                     "and output order shall not include, in the active entries of its reference picture lists, any picture "
+                     "that precedes the DRAP picture in decoding order or output order, with the exception of the preceding "
+                     "IRAP picture in decoding order. Problem is POC %d in RPL0.\n", getRefPic(REF_PIC_LIST_0,i)->getPOC());
+@@ -1958,7 +1958,7 @@ void Slice::checkConformanceForDRAP( uint32_t temporalId )
+     {
+       if (getRefPic(REF_PIC_LIST_1,i)->getPOC() < getLatestDRAPPOC() && getRefPic(REF_PIC_LIST_1,i)->getPOC() != getAssociatedIRAPPOC())
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. Any picture that follows the DRAP picture in both decoding order "
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. Any picture that follows the DRAP picture in both decoding order "
+                     "and output order shall not include, in the active entries of its reference picture lists, any picture "
+                     "that precedes the DRAP picture in decoding order or output order, with the exception of the preceding "
+                     "IRAP picture in decoding order. Problem is POC %d in RPL1", getRefPic(REF_PIC_LIST_1,i)->getPOC());
+@@ -1979,24 +1979,24 @@ void Slice::checkConformanceForEDRAP( uint32_t temporalId )
+     if (!(getNalUnitType() == NalUnitType::NAL_UNIT_CODED_SLICE_TRAIL ||
+           getNalUnitType() == NalUnitType::NAL_UNIT_CODED_SLICE_STSA))
+     {
+-      msg( WARNING, "Warning, non-conforming bitstream. The EDRAP picture should be a trailing picture.\n");
++      msg( VTM_WARNING, "Warning, non-conforming bitstream. The EDRAP picture should be a trailing picture.\n");
+     }
+     if ( temporalId != 0)
+     {
+-      msg( WARNING, "Warning, non-conforming bitstream. The EDRAP picture shall have a temporal sublayer identifier equal to 0.\n");
++      msg( VTM_WARNING, "Warning, non-conforming bitstream. The EDRAP picture shall have a temporal sublayer identifier equal to 0.\n");
+     }
+     for (int i = 0; i < getNumRefIdx(REF_PIC_LIST_0); i++)
+     {
+       if (getRefPic(REF_PIC_LIST_0,i)->getEdrapRapId() < 0)
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in both decoding order and output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order or output order, with the exception of the referenceablePictures.\n");
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in both decoding order and output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order or output order, with the exception of the referenceablePictures.\n");
+       }
+     }
+     for (int i = 0; i < getNumRefIdx(REF_PIC_LIST_1); i++)
+     {
+       if (getRefPic(REF_PIC_LIST_1,i)->getEdrapRapId() < 0)
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in both decoding order and output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order or output order, with the exception of the referenceablePictures.\n");
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in both decoding order and output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order or output order, with the exception of the referenceablePictures.\n");
+       }
+     }
+   }
+@@ -2007,14 +2007,14 @@ void Slice::checkConformanceForEDRAP( uint32_t temporalId )
+     {
+       if (getRefPic(REF_PIC_LIST_0,i)->getPOC() < getLatestEDRAPPOC() && getRefPic(REF_PIC_LIST_0,i)->getEdrapRapId() < 0)
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in decoding order and precedes the EDRAP picture in output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order, with the exception of the referenceablePictures. Problem is POC %d in RPL0.\n", getRefPic(REF_PIC_LIST_0,i)->getPOC());
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in decoding order and precedes the EDRAP picture in output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order, with the exception of the referenceablePictures. Problem is POC %d in RPL0.\n", getRefPic(REF_PIC_LIST_0,i)->getPOC());
+       }
+     }
+     for (int i = 0; i < getNumRefIdx(REF_PIC_LIST_1); i++)
+     {
+       if (getRefPic(REF_PIC_LIST_1,i)->getPOC() < getLatestEDRAPPOC() && getRefPic(REF_PIC_LIST_1,i)->getEdrapRapId() < 0)
+       {
+-        msg( WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in decoding order and precedes the EDRAP picture in output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order, with the exception of the referenceablePictures. Problem is POC %d in RPL1\n", getRefPic(REF_PIC_LIST_1,i)->getPOC());
++        msg( VTM_WARNING, "Warning, non-conforming bitstream. Any picture that is in the same layer and follows the EDRAP picture in decoding order and precedes the EDRAP picture in output order does not include, in the active entries of its reference picture lists, any picture that is in the same layer and precedes the EDRAP picture in decoding order, with the exception of the referenceablePictures. Problem is POC %d in RPL1\n", getRefPic(REF_PIC_LIST_1,i)->getPOC());
+       }
+     }
+   }
+@@ -2687,7 +2687,7 @@ bool ScalingList::xParseScalingList(const std::string &fileName)
+ 
+   if (fileName.empty())
+   {
+-    msg( ERROR, "Error: no scaling list file specified. Help on scaling lists being output\n");
++    msg( VTM_ERROR, "Error: no scaling list file specified. Help on scaling lists being output\n");
+     outputScalingListHelp(std::cout);
+     std::cout << "\n\nExample scaling list file using default values:\n\n";
+     outputScalingLists(std::cout);
+@@ -2695,7 +2695,7 @@ bool ScalingList::xParseScalingList(const std::string &fileName)
+   }
+   else if ((fp = fopen(fileName.c_str(), "r")) == nullptr)
+   {
+-    msg( ERROR, "Error: cannot open scaling list file %s for reading\n", fileName.c_str());
++    msg( VTM_ERROR, "Error: cannot open scaling list file %s for reading\n", fileName.c_str());
+     return true;
+   }
+ 
+@@ -2731,7 +2731,7 @@ bool ScalingList::xParseScalingList(const std::string &fileName)
+           }
+           if (!found)
+           {
+-            msg(ERROR, "Error: cannot find Matrix %s from scaling list file %s\n", matrixType[sizeIdc][listIdc],
++            msg(VTM_ERROR, "Error: cannot find Matrix %s from scaling list file %s\n", matrixType[sizeIdc][listIdc],
+                 fileName.c_str());
+             return true;
+ 
+@@ -2742,13 +2742,13 @@ bool ScalingList::xParseScalingList(const std::string &fileName)
+           int data;
+           if (fscanf(fp, "%d,", &data)!=1)
+           {
+-            msg(ERROR, "Error: cannot read value #%d for Matrix %s from scaling list file %s at file position %ld\n", i,
++            msg(VTM_ERROR, "Error: cannot read value #%d for Matrix %s from scaling list file %s at file position %ld\n", i,
+                 matrixType[sizeIdc][listIdc], fileName.c_str(), ftell(fp));
+             return true;
+           }
+           if (data<0 || data>255)
+           {
+-            msg(ERROR,
++            msg(VTM_ERROR,
+                 "Error: QMatrix entry #%d of value %d for Matrix %s from scaling list file %s at file position %ld is "
+                 "out of range (0 to 255)\n",
+                 i, data, matrixType[sizeIdc][listIdc], fileName.c_str(), ftell(fp));
+@@ -2777,7 +2777,7 @@ bool ScalingList::xParseScalingList(const std::string &fileName)
+             }
+             if (!found)
+             {
+-              msg(ERROR, "Error: cannot find DC Matrix %s from scaling list file %s\n", matrixTypeDc[sizeIdc][listIdc],
++              msg(VTM_ERROR, "Error: cannot find DC Matrix %s from scaling list file %s\n", matrixTypeDc[sizeIdc][listIdc],
+                   fileName.c_str());
+               return true;
+             }
+@@ -2785,13 +2785,13 @@ bool ScalingList::xParseScalingList(const std::string &fileName)
+           int data;
+           if (fscanf(fp, "%d,", &data)!=1)
+           {
+-            msg(ERROR, "Error: cannot read DC %s from scaling list file %s at file position %ld\n",
++            msg(VTM_ERROR, "Error: cannot read DC %s from scaling list file %s at file position %ld\n",
+                 matrixTypeDc[sizeIdc][listIdc], fileName.c_str(), ftell(fp));
+             return true;
+           }
+           if (data<0 || data>255)
+           {
+-            msg(ERROR,
++            msg(VTM_ERROR,
+                 "Error: DC value %d for Matrix %s from scaling list file %s at file position %ld is out of range (0 to "
+                 "255)\n",
+                 data, matrixType[sizeIdc][listIdc], fileName.c_str(), ftell(fp));
+diff --git a/source/Lib/CommonLib/TypeDef.h b/source/Lib/CommonLib/TypeDef.h
+index b38ac8018..26091a0e3 100644
+--- a/source/Lib/CommonLib/TypeDef.h
++++ b/source/Lib/CommonLib/TypeDef.h
+@@ -768,11 +768,11 @@ enum SAOEOClasses
+ 
+ enum NNPC_PaddingType
+ {
+-  ZERO_PADDING = 0,
+-  REPLICATION_PADDING = 1,
+-  REFLECTION_PADDING = 2,
+-  WRAP_AROUND_PADDING = 3,
+-  FIXED_PADDING = 4
++  NNPC_ZERO_PADDING = 0,
++  NNPC_REPLICATION_PADDING = 1,
++  NNPC_REFLECTION_PADDING = 2,
++  NNPC_WRAP_AROUND_PADDING = 3,
++  NNPC_FIXED_PADDING = 4
+ };
+ 
+ enum NNPC_PurposeType
+@@ -1236,13 +1236,13 @@ public:
+ 
+ enum MsgLevel
+ {
+-  SILENT  = 0,
+-  ERROR   = 1,
+-  WARNING = 2,
+-  INFO    = 3,
+-  NOTICE  = 4,
+-  VERBOSE = 5,
+-  DETAILS = 6
++  VTM_SILENT  = 0,
++  VTM_ERROR   = 1,
++  VTM_WARNING = 2,
++  VTM_INFO    = 3,
++  VTM_NOTICE  = 4,
++  VTM_VERBOSE = 5,
++  VTM_DETAILS = 6
+ };
+ enum RESHAPE_SIGNAL_TYPE
+ {
+diff --git a/source/Lib/DecoderLib/DecLib.cpp b/source/Lib/DecoderLib/DecLib.cpp
+index 9f9dfc50d..bd75ea04d 100644
+--- a/source/Lib/DecoderLib/DecLib.cpp
++++ b/source/Lib/DecoderLib/DecLib.cpp
+@@ -101,7 +101,7 @@ bool tryDecodePicture(Picture *pcEncPic, const int expectedPoc, const std::strin
+       pcDecLib->setAPSMapEnc( apsMap );
+ 
+       bFirstCall = false;
+-      msg( INFO, "start to decode %s \n", bitstreamFileName.c_str() );
++      msg( VTM_INFO, "start to decode %s \n", bitstreamFileName.c_str() );
+     }
+ 
+     bool goOn = true;
+@@ -130,7 +130,7 @@ bool tryDecodePicture(Picture *pcEncPic, const int expectedPoc, const std::strin
+            *  - two back-to-back start_code_prefixes
+            *  - start_code_prefix immediately followed by EOF
+            */
+-          msg(ERROR, "Warning: Attempt to decode an empty NAL unit\n");
++          msg(VTM_ERROR, "Warning: Attempt to decode an empty NAL unit\n");
+         }
+         else
+         {
+@@ -247,7 +247,7 @@ bool tryDecodePicture(Picture *pcEncPic, const int expectedPoc, const std::strin
+             pcDecLib->executeLoopFilters();
+           }
+ 
+-          pcDecLib->finishPicture( poc, pcListPic, DETAILS );
++          pcDecLib->finishPicture( poc, pcListPic, VTM_DETAILS );
+ 
+           // write output
+           if( ! pcListPic->empty())
+@@ -875,7 +875,7 @@ void DecLib::finishPicture(int &poc, PicList *&rpcListPic, MsgLevel msgl, bool a
+       (pictureHashes.size() > 0) ? (SEIDecodedPictureHash *) *(pictureHashes.begin()) : nullptr;
+     if (pictureHashes.size() > 1)
+     {
+-      msg( WARNING, "Warning: Got multiple decoded picture hash SEI messages. Using first.");
++      msg( VTM_WARNING, "Warning: Got multiple decoded picture hash SEI messages. Using first.");
+     }
+     m_numberOfChecksumErrorsDetected += calcAndPrintHashStatus(((const Picture*) m_pcPic)->getRecoBuf(), hash, pcSlice->getSPS()->getBitDepths(), msgl);
+ 
+@@ -1014,7 +1014,7 @@ void DecLib::xUpdateRasInit(Slice* slice)
+ 
+ void DecLib::xCreateLostPicture( int iLostPoc, const int layerId )
+ {
+-  msg( INFO, "\ninserting lost poc : %d\n",iLostPoc);
++  msg( VTM_INFO, "\ninserting lost poc : %d\n",iLostPoc);
+   Picture *cFillPic = xGetNewPicBuffer( *( m_parameterSetManager.getFirstSPS() ), *( m_parameterSetManager.getFirstPPS() ), 0, layerId );
+ 
+   CHECK( !cFillPic->slices.size(), "No slices in picture" );
+@@ -1037,7 +1037,7 @@ void DecLib::xCreateLostPicture( int iLostPoc, const int layerId )
+     Picture *rpcPic = *(iterPic++);
+     if(abs(rpcPic->getPOC() -iLostPoc)==closestPoc&&rpcPic->getPOC()!=m_apcSlicePilot->getPOC())
+     {
+-      msg( INFO, "copying picture %d to %d (%d)\n",rpcPic->getPOC() ,iLostPoc,m_apcSlicePilot->getPOC());
++      msg( VTM_INFO, "copying picture %d to %d (%d)\n",rpcPic->getPOC() ,iLostPoc,m_apcSlicePilot->getPOC());
+       cFillPic->getRecoBuf().copyFrom( rpcPic->getRecoBuf() );
+       break;
+     }
+@@ -1057,7 +1057,7 @@ void DecLib::xCreateLostPicture( int iLostPoc, const int layerId )
+ 
+ void  DecLib::xCreateUnavailablePicture( const PPS *pps, const int iUnavailablePoc, const bool longTermFlag, const int temporalId, const int layerId, const bool interLayerRefPicFlag )
+ {
+-  msg(INFO, "Note: Inserting unavailable POC : %d\n", iUnavailablePoc);
++  msg(VTM_INFO, "Note: Inserting unavailable POC : %d\n", iUnavailablePoc);
+   auto const sps = m_parameterSetManager.getSPS(pps->getSPSId());
+   Picture* cFillPic = xGetNewPicBuffer( *sps, *pps, 0, layerId );
+ 
+@@ -1139,7 +1139,7 @@ void DecLib::checkLayerIdIncludedInCvss()
+       bool layerIdFind;
+       if ( m_firstAccessUnitPicInfo.size() == 0 )
+       {
+-        msg( NOTICE, "Note: checkIncludedInFirstAu(), m_firstAccessUnitPicInfo.size() is 0.\n");
++        msg( VTM_NOTICE, "Note: checkIncludedInFirstAu(), m_firstAccessUnitPicInfo.size() is 0.\n");
+         continue;
+       }
+       for (auto picFirst = m_firstAccessUnitPicInfo.begin(); picFirst != m_firstAccessUnitPicInfo.end(); picFirst++)
+@@ -2488,7 +2488,7 @@ void DecLib::xCheckParameterSetConstraints(const int layerId)
+   else
+   {
+     CHECK(sps->getProfileTierLevel()->getProfileIdc() != Profile::NONE, "Unknown profile");
+-    msg(WARNING, "Warning: Profile set to none or unknown value\n");
++    msg(VTM_WARNING, "Warning: Profile set to none or unknown value\n");
+   }
+   const TierLevelFeatures *tierLevelFeatures = ptlFeatures.getTierLevelFeatures();
+   if (tierLevelFeatures != nullptr)
+@@ -2501,7 +2501,7 @@ void DecLib::xCheckParameterSetConstraints(const int layerId)
+   {
+     CHECK(sps->getProfileTierLevel()->getLevelIdc() == Level::LEVEL15_5, "Cannot use level 15.5 with given profile");
+     CHECK(sps->getProfileTierLevel()->getLevelIdc() != Level::NONE, "Unknown level");
+-    msg(WARNING, "Warning: Level set to none, invalid or unknown value\n");
++    msg(VTM_WARNING, "Warning: Level set to none, invalid or unknown value\n");
+   }
+ }
+ 
+@@ -2511,7 +2511,7 @@ void DecLib::xParsePrefixSEIsForUnknownVCLNal()
+   while (!m_prefixSEINALUs.empty())
+   {
+     // do nothing?
+-    msg( NOTICE, "Discarding Prefix SEI associated with unknown VCL NAL unit.\n");
++    msg( VTM_NOTICE, "Discarding Prefix SEI associated with unknown VCL NAL unit.\n");
+     delete m_prefixSEINALUs.front();
+     m_prefixSEINALUs.pop_front();
+   }
+@@ -2571,7 +2571,7 @@ void DecLib::xCheckPrefixSEIMessages( SEIMessages& prefixSEIs )
+     SEIFrameFieldInfo *ff = (SEIFrameFieldInfo*) frameFieldSEIs.front();
+     if( pt->m_ptDisplayElementalPeriodsMinus1 != ff->m_displayElementalPeriodsMinus1 )
+     {
+-      msg( WARNING, "Warning: ffi_display_elemental_periods_minus1 is different in picture timing and frame field information SEI messages!");
++      msg( VTM_WARNING, "Warning: ffi_display_elemental_periods_minus1 is different in picture timing and frame field information SEI messages!");
+     }
+   }
+   if ((getVPS()->getMaxLayers() == 1 || m_audIrapOrGdrAuFlag) && (m_isFirstAuInCvs || m_accessUnitPicInfo.begin()->m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_N_LP || m_accessUnitPicInfo.begin()->m_nalUnitType == NAL_UNIT_CODED_SLICE_IDR_W_RADL || ((m_accessUnitPicInfo.begin()->m_nalUnitType == NAL_UNIT_CODED_SLICE_CRA || m_accessUnitPicInfo.begin()->m_nalUnitType == NAL_UNIT_CODED_SLICE_GDR) && m_lastNoOutputBeforeRecoveryFlag[m_accessUnitPicInfo.begin()->m_nuhLayerId])) && m_accessUnitPicInfo.size() == 1)
+@@ -3022,7 +3022,7 @@ bool DecLib::xDecodeSlice(InputNALUnit &nalu, int &iSkipFrame, int iPOCLastDispl
+   //we should only get a different poc for a new picture (with CTU address==0)
+   if (m_apcSlicePilot->getPOC() != m_prevPOC && !m_firstSliceInSequence[nalu.m_nuhLayerId] && (m_apcSlicePilot->getFirstCtuRsAddrInSlice() != 0))
+   {
+-    msg( WARNING, "Warning, the first slice of a picture might have been lost!\n");
++    msg( VTM_WARNING, "Warning, the first slice of a picture might have been lost!\n");
+   }
+   m_prevLayerID = nalu.m_nuhLayerId;
+ 
+@@ -3340,7 +3340,7 @@ bool DecLib::xDecodeSlice(InputNALUnit &nalu, int &iSkipFrame, int iPOCLastDispl
+   SEIMessages drapSEIs = getSeisByType(m_pcPic->SEIs, SEI::PayloadType::DEPENDENT_RAP_INDICATION);
+   if (!drapSEIs.empty())
+   {
+-    msg(NOTICE, "Dependent RAP indication SEI decoded\n");
++    msg(VTM_NOTICE, "Dependent RAP indication SEI decoded\n");
+     m_latestDRAPPOC = pcSlice->getPOC();
+     pcSlice->setDRAP(true);
+   }
+@@ -3353,7 +3353,7 @@ bool DecLib::xDecodeSlice(InputNALUnit &nalu, int &iSkipFrame, int iPOCLastDispl
+   SEIMessages edrapSEIs = getSeisByType(m_pcPic->SEIs, SEI::PayloadType::EXTENDED_DRAP_INDICATION);
+   if (!edrapSEIs.empty())
+   {
+-    msg(NOTICE, "Extended DRAP indication SEI decoded\n");
++    msg(VTM_NOTICE, "Extended DRAP indication SEI decoded\n");
+     SEIExtendedDrapIndication *seiEdrap = (SEIExtendedDrapIndication *) edrapSEIs.front();
+     pcSlice->setEdrapRapId(seiEdrap->m_edrapIndicationRapIdMinus1 + 1);
+     pcSlice->getPic()->setEdrapRapId(seiEdrap->m_edrapIndicationRapIdMinus1 + 1);
+@@ -3750,7 +3750,7 @@ bool DecLib::decode(InputNALUnit& nalu, int& iSkipFrame, int& iPOCLastDisplay, i
+     {
+       if (m_prevSliceSkipped)
+       {
+-        msg(NOTICE, "Note: received suffix SEI but current picture is skipped.\n");
++        msg(VTM_NOTICE, "Note: received suffix SEI but current picture is skipped.\n");
+         return false;
+       }
+       m_pictureSeiNalus.push_back(new InputNALUnit(nalu));
+@@ -3771,7 +3771,7 @@ bool DecLib::decode(InputNALUnit& nalu, int& iSkipFrame, int& iPOCLastDisplay, i
+     }
+     else
+     {
+-      msg(NOTICE, "Note: received suffix SEI but no picture currently active.\n");
++      msg(VTM_NOTICE, "Note: received suffix SEI but no picture currently active.\n");
+     }
+     return false;
+ 
+@@ -3818,23 +3818,23 @@ bool DecLib::decode(InputNALUnit& nalu, int& iSkipFrame, int& iPOCLastDisplay, i
+     FDReader fdReader;
+     uint32_t fdSize;
+     fdReader.parseFillerData(&(nalu.getBitstream()), fdSize);
+-    msg(NOTICE, "Note: found NAL_UNIT_FD with %u bytes payload.\n", fdSize);
++    msg(VTM_NOTICE, "Note: found NAL_UNIT_FD with %u bytes payload.\n", fdSize);
+     return false;
+   }
+ 
+   case NAL_UNIT_RESERVED_IRAP_VCL_11:
+-    msg(NOTICE, "Note: found reserved VCL NAL unit.\n");
++    msg(VTM_NOTICE, "Note: found reserved VCL NAL unit.\n");
+     xParsePrefixSEIsForUnknownVCLNal();
+     return false;
+   case NAL_UNIT_RESERVED_VCL_4:
+   case NAL_UNIT_RESERVED_VCL_5:
+   case NAL_UNIT_RESERVED_VCL_6:
+   case NAL_UNIT_RESERVED_NVCL_26:
+-  case NAL_UNIT_RESERVED_NVCL_27: msg(NOTICE, "Note: found reserved NAL unit.\n"); return false;
++  case NAL_UNIT_RESERVED_NVCL_27: msg(VTM_NOTICE, "Note: found reserved NAL unit.\n"); return false;
+   case NAL_UNIT_UNSPECIFIED_28:
+   case NAL_UNIT_UNSPECIFIED_29:
+   case NAL_UNIT_UNSPECIFIED_30:
+-  case NAL_UNIT_UNSPECIFIED_31: msg(NOTICE, "Note: found unspecified NAL unit.\n"); return false;
++  case NAL_UNIT_UNSPECIFIED_31: msg(VTM_NOTICE, "Note: found unspecified NAL unit.\n"); return false;
+   default: THROW("Invalid NAL unit type"); break;
+   }
+ 
+@@ -3884,7 +3884,7 @@ bool DecLib::isRandomAccessSkipPicture( int& iSkipFrame, int& iPOCLastDisplay, b
+     {
+       if(!m_warningMessageSkipPicture)
+       {
+-        msg( WARNING, "Warning: This is not a valid random access point and the data is discarded until the first CRA or GDR picture\n");
++        msg( VTM_WARNING, "Warning: This is not a valid random access point and the data is discarded until the first CRA or GDR picture\n");
+         m_warningMessageSkipPicture = true;
+       }
+       iSkipFrame--;
+@@ -4023,7 +4023,7 @@ bool DecLib::isNewPicture(std::ifstream *bitstreamFile, class InputByteStream *b
+     byteStreamNALUnit(*bytestream, nalu.getBitstream().getFifo(), stats);
+     if (nalu.getBitstream().getFifo().empty())
+     {
+-      msg( ERROR, "Warning: Attempt to decode an empty NAL unit\n");
++      msg( VTM_ERROR, "Warning: Attempt to decode an empty NAL unit\n");
+     }
+     else
+     {
+@@ -4132,7 +4132,7 @@ bool DecLib::isNewAccessUnit( bool newPicture, std::ifstream *bitstreamFile, cla
+     byteStreamNALUnit(*bytestream, nalu.getBitstream().getFifo(), stats);
+     if (nalu.getBitstream().getFifo().empty())
+     {
+-      msg( ERROR, "Warning: Attempt to decode an empty NAL unit\n");
++      msg( VTM_ERROR, "Warning: Attempt to decode an empty NAL unit\n");
+     }
+     else
+     {
+diff --git a/source/Lib/DecoderLib/DecLib.h b/source/Lib/DecoderLib/DecLib.h
+index 44d0c43a1..4725134d5 100644
+--- a/source/Lib/DecoderLib/DecLib.h
++++ b/source/Lib/DecoderLib/DecLib.h
+@@ -259,7 +259,7 @@ public:
+   void  deletePicBuffer();
+ 
+   void  executeLoopFilters();
+-  void finishPicture(int &poc, PicList *&rpcListPic, MsgLevel msgl = INFO, bool associatedWithNewClvs = false);
++  void finishPicture(int &poc, PicList *&rpcListPic, MsgLevel msgl = VTM_INFO, bool associatedWithNewClvs = false);
+   void  finishPictureLight(int& poc, PicList*& rpcListPic );
+   void  checkNoOutputPriorPics (PicList* rpcListPic);
+   void  checkNalUnitConstraints( uint32_t naluType );
+diff --git a/source/Lib/DecoderLib/NALread.cpp b/source/Lib/DecoderLib/NALread.cpp
+index 7a39ed130..ef17c174c 100644
+--- a/source/Lib/DecoderLib/NALread.cpp
++++ b/source/Lib/DecoderLib/NALread.cpp
+@@ -97,7 +97,7 @@ static void convertPayloadToRBSP(std::vector<uint8_t> &nalUnitBuf, InputBitstrea
+ 
+     if (n > 0)
+     {
+-      msg( NOTICE, "\nDetected %d instances of cabac_zero_word\n", n/2);
++      msg( VTM_NOTICE, "\nDetected %d instances of cabac_zero_word\n", n/2);
+     }
+   }
+ 
+diff --git a/source/Lib/DecoderLib/SEIread.cpp b/source/Lib/DecoderLib/SEIread.cpp
+index ab384e7e2..0073fd198 100644
+--- a/source/Lib/DecoderLib/SEIread.cpp
++++ b/source/Lib/DecoderLib/SEIread.cpp
+@@ -305,7 +305,7 @@ bool SEIReader::xReadSEImessage(SEIMessages& seis, const NalUnitType nalUnitType
+       bp = hrd.getBufferingPeriodSEI();
+       if (!bp)
+       {
+-        msg( WARNING, "Warning: Found Decoding unit information SEI message, but no active buffering period is available. Ignoring.");
++        msg( VTM_WARNING, "Warning: Found Decoding unit information SEI message, but no active buffering period is available. Ignoring.");
+       }
+       else
+       {
+@@ -322,7 +322,7 @@ bool SEIReader::xReadSEImessage(SEIMessages& seis, const NalUnitType nalUnitType
+       bp = hrd.getBufferingPeriodSEI();
+       if (!bp)
+       {
+-        msg(WARNING,
++        msg(VTM_WARNING,
+             "Warning: Found Picture timing SEI message, but no active buffering period is available. Ignoring.");
+       }
+       else
+@@ -516,7 +516,7 @@ bool SEIReader::xReadSEImessage(SEIMessages& seis, const NalUnitType nalUnitType
+         uint32_t seiByte;
+         sei_read_code(nullptr, 8, seiByte, "unknown prefix SEI payload byte");
+       }
+-      msg(WARNING, "Unknown prefix SEI message (payloadType = %d) was found!\n", payloadType);
++      msg(VTM_WARNING, "Unknown prefix SEI message (payloadType = %d) was found!\n", payloadType);
+       if (pDecodedMessageOutputStream)
+       {
+         (*pDecodedMessageOutputStream) << "Unknown prefix SEI message (payloadType = " << payloadType
+@@ -578,7 +578,7 @@ bool SEIReader::xReadSEImessage(SEIMessages& seis, const NalUnitType nalUnitType
+         uint32_t seiByte;
+         sei_read_code(nullptr, 8, seiByte, "unknown suffix SEI payload byte");
+       }
+-      msg(WARNING, "Unknown suffix SEI message (payloadType = %d) was found!\n", payloadType);
++      msg(VTM_WARNING, "Unknown suffix SEI message (payloadType = %d) was found!\n", payloadType);
+       if (pDecodedMessageOutputStream)
+       {
+         (*pDecodedMessageOutputStream) << "Unknown suffix SEI message (payloadType = " << payloadType
+@@ -3090,7 +3090,7 @@ void SEIReader::xParseSEINNPostFilterCharacteristics(SEINeuralNetworkPostFilterC
+   }
+   CHECK(sei.m_paddingType > 15, "Values of nnpfc_padding_type greater than 15 shall not be present in bitstreams");
+ 
+-    if (sei.m_paddingType == NNPC_PaddingType::FIXED_PADDING)
++    if (sei.m_paddingType == NNPC_PaddingType::NNPC_FIXED_PADDING)
+     {
+       if (sei.m_inpOrderIdc != 1)
+       {
+@@ -3297,7 +3297,7 @@ void SeiCfgFileDump::xDumpSEIEquirectangularProjection     (SEIEquirectangularPr
+     }
+     else
+     {
+-      msg( ERROR, "File %s could not be opened.\n", decoded360MessageFileName.c_str() );
++      msg( VTM_ERROR, "File %s could not be opened.\n", decoded360MessageFileName.c_str() );
+     }
+   }
+ }
+@@ -3382,7 +3382,7 @@ void SeiCfgFileDump::xDumpSEIGeneralizedCubemapProjection  (SEIGeneralizedCubema
+       }
+       else
+       {
+-        msg( ERROR, "File %s could not be opened.\n", decoded360MessageFileName.c_str() );
++        msg( VTM_ERROR, "File %s could not be opened.\n", decoded360MessageFileName.c_str() );
+       }
+     }
+   }
+diff --git a/source/Lib/DecoderLib/VLCReader.cpp b/source/Lib/DecoderLib/VLCReader.cpp
+index 64ef8e003..d0210b4b0 100644
+--- a/source/Lib/DecoderLib/VLCReader.cpp
++++ b/source/Lib/DecoderLib/VLCReader.cpp
+@@ -4636,7 +4636,7 @@ void HLSyntaxReader::parseConstraintInfo(ConstraintInfo *cinfo, const ProfileTie
+     }
+     else if (numAdditionalBits > 0)
+     {
+-      msg(ERROR, "Invalid bitstream: gci_num_additional_bits set to value %d (must be 0 or >= 6)\n", numAdditionalBits);
++      msg(VTM_ERROR, "Invalid bitstream: gci_num_additional_bits set to value %d (must be 0 or >= 6)\n", numAdditionalBits);
+       numAdditionalBitsUsed = 0;
+     }
+     else
+@@ -4747,7 +4747,7 @@ void HLSyntaxReader::parseRemainingBytes( bool noTrailingBytesExpected )
+       uint32_t trailingNullByte=m_pcBitstream->readByte();
+       if (trailingNullByte!=0)
+       {
+-        msg( ERROR, "Trailing byte should be 0, but has value %02x\n", trailingNullByte);
++        msg( VTM_ERROR, "Trailing byte should be 0, but has value %02x\n", trailingNullByte);
+         THROW("Invalid trailing '0' byte");
+       }
+     }
+diff --git a/source/Lib/EncoderLib/EncGOP.cpp b/source/Lib/EncoderLib/EncGOP.cpp
+index 32694719b..2727fae87 100644
+--- a/source/Lib/EncoderLib/EncGOP.cpp
++++ b/source/Lib/EncoderLib/EncGOP.cpp
+@@ -1507,7 +1507,7 @@ validateMinCrRequirements(const ProfileTierLevelFeatures &plt, std::size_t numBy
+ 
+       if (numBytesInVclNalUnits > threshold)
+       {
+-        msg( WARNING, "WARNING: Encoded stream does not meet MinCr requirements numBytesInVclNalUnits (%.0f) must be <= %.0f. Try increasing Qp, tier or level\n",
++        msg( VTM_WARNING, "WARNING: Encoded stream does not meet MinCr requirements numBytesInVclNalUnits (%.0f) must be <= %.0f. Try increasing Qp, tier or level\n",
+                       (double) numBytesInVclNalUnits, threshold );
+       }
+     }
+@@ -1538,7 +1538,7 @@ validateMinCrRequirements(const ProfileTierLevelFeatures &plt, std::size_t numBy
+ 
+           if (numBytesInVclNalUnits > threshold)
+           {
+-            msg( WARNING, "WARNING: Encoded stream for sub-picture %d does not meet MinCr requirements numBytesInVclNalUnits (%.0f) must be <= %.0f. Try increasing Qp, tier or level\n",
++            msg( VTM_WARNING, "WARNING: Encoded stream for sub-picture %d does not meet MinCr requirements numBytesInVclNalUnits (%.0f) must be <= %.0f. Try increasing Qp, tier or level\n",
+                       subPicIdx, (double) numBytesInVclNalUnits, threshold );
+           }
+         }
+@@ -1590,11 +1590,11 @@ cabac_zero_word_padding(const Slice *const pcSlice,
+           zeroBytesPadding[i*3+2]=3;  // 00 00 03
+         }
+         nalUnitData.write(reinterpret_cast<const char*>(&(zeroBytesPadding[0])), numberOfAdditionalCabacZeroBytes);
+-        msg( NOTICE, "Adding %d bytes of padding\n", uint32_t( numberOfAdditionalCabacZeroWords * 3 ) );
++        msg( VTM_NOTICE, "Adding %d bytes of padding\n", uint32_t( numberOfAdditionalCabacZeroWords * 3 ) );
+       }
+       else
+       {
+-        msg( NOTICE, "Standard would normally require adding %d bytes of padding\n", uint32_t( numberOfAdditionalCabacZeroWords * 3 ) );
++        msg( VTM_NOTICE, "Standard would normally require adding %d bytes of padding\n", uint32_t( numberOfAdditionalCabacZeroWords * 3 ) );
+       }
+       return numberOfAdditionalCabacZeroWords;
+     }
+@@ -1751,11 +1751,11 @@ printHash(const HashType hashType, const std::string &digestStr)
+   {
+     if (digestStr.empty())
+     {
+-      msg( NOTICE, " [%s:%s]", decodedPictureHashModeName, "?");
++      msg( VTM_NOTICE, " [%s:%s]", decodedPictureHashModeName, "?");
+     }
+     else
+     {
+-      msg( NOTICE, " [%s:%s]", decodedPictureHashModeName, digestStr.c_str());
++      msg( VTM_NOTICE, " [%s:%s]", decodedPictureHashModeName, digestStr.c_str());
+     }
+   }
+ }
+@@ -2654,7 +2654,7 @@ void EncGOP::compressGOP(int pocLast, int numPicRcvd, PicList &rcListPic, std::l
+         m_latestEDRAPPOC = pocCurr;
+         m_latestEdrapLeadingPicDecodableFlag = false;
+         pcSlice->setTLayer(0); // Force Extended DRAP picture to have temporal layer 0
+-        msg( NOTICE, "Force the temporal sublayer identifier of the EDRAP picture equal to 0.\n");
++        msg( VTM_NOTICE, "Force the temporal sublayer identifier of the EDRAP picture equal to 0.\n");
+       }
+       pcSlice->setLatestEDRAPPOC(m_latestEDRAPPOC);
+       pcSlice->setLatestEdrapLeadingPicDecodableFlag(m_latestEdrapLeadingPicDecodableFlag);
+@@ -4451,7 +4451,7 @@ void EncGOP::compressGOP(int pocLast, int numPicRcvd, PicList &rcListPic, std::l
+         if (m_pcRateCtrl->getCpbSaturationEnabled())
+         {
+           m_pcRateCtrl->updateCpbState(actualTotalBits);
+-          msg( NOTICE, " [CPB %6d bits]", m_pcRateCtrl->getCpbState() );
++          msg( VTM_NOTICE, " [CPB %6d bits]", m_pcRateCtrl->getCpbState() );
+         }
+       }
+       xCreateFrameFieldInfoSEI( leadingSeiMessages, pcSlice, isField );
+@@ -4507,7 +4507,7 @@ void EncGOP::compressGOP(int pocLast, int numPicRcvd, PicList &rcListPic, std::l
+ 
+       m_AUWriterIf->outputAU( accessUnit );
+ 
+-      msg( NOTICE, "\n" );
++      msg( VTM_NOTICE, "\n" );
+       fflush( stdout );
+     }
+ 
+@@ -4580,8 +4580,8 @@ void EncGOP::printOutSummary(uint32_t numAllPicCoded, bool isField, const bool p
+   const ChromaFormat chFmt = m_pcCfg->getChromaFormatIdc();
+ 
+   //-- all
+-  msg( INFO, "\n" );
+-  msg( DETAILS,"\nSUMMARY --------------------------------------------------------\n" );
++  msg( VTM_INFO, "\n" );
++  msg( VTM_DETAILS,"\nSUMMARY --------------------------------------------------------\n" );
+ #if JVET_O0756_CALCULATE_HDRMETRICS
+   const bool calculateHdrMetrics = m_pcEncLib->getCalculateHdrMetrics();
+ #else
+@@ -4593,25 +4593,25 @@ void EncGOP::printOutSummary(uint32_t numAllPicCoded, bool isField, const bool p
+   id += layerId == 0 ? " " : std::to_string(layerId);
+   m_gcAnalyzeAll.printOut(header, metrics, id, chFmt, printMSEBasedSNR, printSequenceMSE, printMSSSIM, printHexPsnr,
+                           printRprPsnr, bitDepths, useWPSNR, calculateHdrMetrics);
+-  if( g_verbosity >= INFO ) std::cout<<header<<'\n'<<metrics<<std::endl;
++  if( g_verbosity >= VTM_INFO ) std::cout<<header<<'\n'<<metrics<<std::endl;
+ 
+   id="i";
+   id += layerId == 0 ? " " : std::to_string(layerId);
+   m_gcAnalyzeI.printOut(header, metrics, id, chFmt, printMSEBasedSNR, printSequenceMSE, printMSSSIM, printHexPsnr,
+                         printRprPsnr, bitDepths, false, false);
+-  if( g_verbosity >= DETAILS ) std::cout<< "\n\nI Slices--------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
++  if( g_verbosity >= VTM_DETAILS ) std::cout<< "\n\nI Slices--------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
+ 
+   id="p";
+   id += layerId == 0 ? " " : std::to_string(layerId);
+   m_gcAnalyzeP.printOut(header, metrics, id, chFmt, printMSEBasedSNR, printSequenceMSE, printMSSSIM, printHexPsnr,
+                         printRprPsnr, bitDepths, false, false);
+-  if( g_verbosity >= DETAILS ) std::cout<<"\n\nP Slices--------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
++  if( g_verbosity >= VTM_DETAILS ) std::cout<<"\n\nP Slices--------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
+ 
+   id="b";
+   id += layerId == 0 ? " " : std::to_string(layerId);
+   m_gcAnalyzeB.printOut(header, metrics, id, chFmt, printMSEBasedSNR, printSequenceMSE, printMSSSIM, printHexPsnr,
+                         printRprPsnr, bitDepths, false, false);
+-  if( g_verbosity >= DETAILS ) std::cout<<"\n\nB Slices--------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
++  if( g_verbosity >= VTM_DETAILS ) std::cout<<"\n\nB Slices--------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
+ 
+ #if WCG_WPSNR
+   if (useLumaWPSNR)
+@@ -4620,7 +4620,7 @@ void EncGOP::printOutSummary(uint32_t numAllPicCoded, bool isField, const bool p
+     id += layerId == 0 ? " " : std::to_string(layerId);
+     m_gcAnalyzeWPSNR.printOut(header, metrics, id, chFmt, printMSEBasedSNR, printSequenceMSE, printMSSSIM, printHexPsnr,
+                               printRprPsnr, bitDepths, useLumaWPSNR, false);
+-    if( g_verbosity >= DETAILS ) std::cout<<"\nWPSNR SUMMARY --------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
++    if( g_verbosity >= VTM_DETAILS ) std::cout<<"\nWPSNR SUMMARY --------------------------------------------------------\n"<<header<<'\n'<<metrics<<std::endl;
+ 
+   }
+ #endif
+@@ -4656,7 +4656,7 @@ void EncGOP::printOutSummary(uint32_t numAllPicCoded, bool isField, const bool p
+     id += layerId == 0 ? " " : std::to_string(layerId);
+     m_gcAnalyzeAllField.printOut(header, metrics, id, chFmt, printMSEBasedSNR, printSequenceMSE, printMSSSIM,
+                                  printHexPsnr, printRprPsnr, bitDepths, useWPSNR, false);
+-    if (g_verbosity >= DETAILS)
++    if (g_verbosity >= VTM_DETAILS)
+     {
+       std::cout << "\n\nSUMMARY INTERLACED ---------------------------------------------\n"
+                 << header << '\n'
+@@ -4675,7 +4675,7 @@ void EncGOP::printOutSummary(uint32_t numAllPicCoded, bool isField, const bool p
+     }
+   }
+ 
+-  msg( DETAILS,"\nRVM: %.3lf\n", xCalculateRVM() );
++  msg( VTM_DETAILS,"\nRVM: %.3lf\n", xCalculateRVM() );
+ }
+ 
+ uint64_t EncGOP::preLoopFilterPicAndCalcDist( Picture* pcPic )
+@@ -5302,7 +5302,7 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+     uint32_t numRBSPBytes_nal = uint32_t((*it)->m_nalUnitData.str().size());
+     if (m_pcCfg->getSummaryVerboseness() > 0)
+     {
+-      msg( NOTICE, "*** %6s numBytesInNALunit: %u\n", nalUnitTypeToString((*it)->m_nalUnitType), numRBSPBytes_nal);
++      msg( VTM_NOTICE, "*** %6s numBytesInNALunit: %u\n", nalUnitTypeToString((*it)->m_nalUnitType), numRBSPBytes_nal);
+     }
+     if( ( *it )->m_nalUnitType != NAL_UNIT_PREFIX_SEI && ( *it )->m_nalUnitType != NAL_UNIT_SUFFIX_SEI )
+     {
+@@ -5395,9 +5395,9 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+     c = 'E';
+   }
+ 
+-  if( g_verbosity >= NOTICE )
++  if( g_verbosity >= VTM_NOTICE )
+   {
+-    msg( NOTICE, "POC %4d LId: %2d TId: %1d ( %s, %c-SLICE, QP %d ) %10d bits",
++    msg( VTM_NOTICE, "POC %4d LId: %2d TId: %1d ( %s, %c-SLICE, QP %d ) %10d bits",
+          pcSlice->getPOC(),
+          pcSlice->getPic()->layerId,
+          pcSlice->getTLayer(),
+@@ -5406,7 +5406,7 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+          pcSlice->getSliceQp(),
+          uibits );
+ 
+-    msg( NOTICE, " [Y %6.4lf dB    U %6.4lf dB    V %6.4lf dB]", dPSNR[COMPONENT_Y], dPSNR[COMPONENT_Cb], dPSNR[COMPONENT_Cr] );
++    msg( VTM_NOTICE, " [Y %6.4lf dB    U %6.4lf dB    V %6.4lf dB]", dPSNR[COMPONENT_Y], dPSNR[COMPONENT_Cb], dPSNR[COMPONENT_Cr] );
+ 
+ #if EXTENSION_360_VIDEO
+     m_ext360.printPerPOCInfo(NOTICE);
+@@ -5420,7 +5420,7 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+         std::copy(reinterpret_cast<uint8_t *>(&dPSNR[i]), reinterpret_cast<uint8_t *>(&dPSNR[i]) + sizeof(dPSNR[i]),
+                   reinterpret_cast<uint8_t *>(&xPsnr[i]));
+       }
+-      msg(NOTICE, " [xY %16" PRIx64 " xU %16" PRIx64 " xV %16" PRIx64 "]", xPsnr[COMPONENT_Y], xPsnr[COMPONENT_Cb], xPsnr[COMPONENT_Cr]);
++      msg(VTM_NOTICE, " [xY %16" PRIx64 " xU %16" PRIx64 " xV %16" PRIx64 "]", xPsnr[COMPONENT_Y], xPsnr[COMPONENT_Cb], xPsnr[COMPONENT_Cr]);
+ 
+ #if EXTENSION_360_VIDEO
+       m_ext360.printPerPOCInfo(NOTICE, true);
+@@ -5428,18 +5428,18 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+     }
+     if (printMSSSIM)
+     {
+-      msg( NOTICE, " [MS-SSIM Y %1.6lf    U %1.6lf    V %1.6lf]", msssim[COMPONENT_Y], msssim[COMPONENT_Cb], msssim[COMPONENT_Cr] );
++      msg( VTM_NOTICE, " [MS-SSIM Y %1.6lf    U %1.6lf    V %1.6lf]", msssim[COMPONENT_Y], msssim[COMPONENT_Cb], msssim[COMPONENT_Cr] );
+     }
+ 
+     if( printFrameMSE )
+     {
+-      msg(NOTICE, " [Y MSE %6.4lf  U MSE %6.4lf  V MSE %6.4lf]", mseYuvFrame[COMPONENT_Y], mseYuvFrame[COMPONENT_Cb],
++      msg(VTM_NOTICE, " [Y MSE %6.4lf  U MSE %6.4lf  V MSE %6.4lf]", mseYuvFrame[COMPONENT_Y], mseYuvFrame[COMPONENT_Cb],
+           mseYuvFrame[COMPONENT_Cr]);
+     }
+ #if WCG_WPSNR
+     if (useLumaWPSNR)
+     {
+-      msg(NOTICE, " [WY %6.4lf dB    WU %6.4lf dB    WV %6.4lf dB]", dPSNRWeighted[COMPONENT_Y], dPSNRWeighted[COMPONENT_Cb], dPSNRWeighted[COMPONENT_Cr]);
++      msg(VTM_NOTICE, " [WY %6.4lf dB    WU %6.4lf dB    WV %6.4lf dB]", dPSNRWeighted[COMPONENT_Y], dPSNRWeighted[COMPONENT_Cb], dPSNRWeighted[COMPONENT_Cr]);
+ 
+       if (m_pcEncLib->getPrintHexPsnr())
+       {
+@@ -5450,7 +5450,7 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+                     reinterpret_cast<uint8_t *>(&dPSNRWeighted[i]) + sizeof(dPSNRWeighted[i]),
+                     reinterpret_cast<uint8_t *>(&xPsnrWeighted[i]));
+         }
+-        msg(NOTICE, " [xWY %16" PRIx64 " xWU %16" PRIx64 " xWV %16" PRIx64 "]", xPsnrWeighted[COMPONENT_Y], xPsnrWeighted[COMPONENT_Cb], xPsnrWeighted[COMPONENT_Cr]);
++        msg(VTM_NOTICE, " [xWY %16" PRIx64 " xWU %16" PRIx64 " xWV %16" PRIx64 "]", xPsnrWeighted[COMPONENT_Y], xPsnrWeighted[COMPONENT_Cb], xPsnrWeighted[COMPONENT_Cr]);
+       }
+     }
+ #endif
+@@ -5459,7 +5459,7 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+     {
+       for (int i=0; i<1; i++)
+       {
+-        msg(NOTICE, " [DeltaE%d %6.4lf dB]", (int)m_pcCfg->getWhitePointDeltaE(i), deltaE[i]);
++        msg(VTM_NOTICE, " [DeltaE%d %6.4lf dB]", (int)m_pcCfg->getWhitePointDeltaE(i), deltaE[i]);
+         if (m_pcEncLib->getPrintHexPsnr())
+         {
+           int64_t xdeltaE[MAX_NUM_COMPONENT];
+@@ -5468,12 +5468,12 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+             std::copy_n(reinterpret_cast<uint8_t*>(&deltaE[i]), sizeof(deltaE[i]),
+                         reinterpret_cast<uint8_t*>(&xdeltaE[i]));
+           }
+-          msg(NOTICE, " [xDeltaE%d %16" PRIx64 "]", (int)m_pcCfg->getWhitePointDeltaE(i), xdeltaE[0]);
++          msg(VTM_NOTICE, " [xDeltaE%d %16" PRIx64 "]", (int)m_pcCfg->getWhitePointDeltaE(i), xdeltaE[0]);
+         }
+       }
+       for (int i=0; i<1; i++)
+       {
+-        msg(NOTICE, " [PSNRL%d %6.4lf dB]", (int)m_pcCfg->getWhitePointDeltaE(i), psnrL[i]);
++        msg(VTM_NOTICE, " [PSNRL%d %6.4lf dB]", (int)m_pcCfg->getWhitePointDeltaE(i), psnrL[i]);
+ 
+         if (m_pcEncLib->getPrintHexPsnr())
+         {
+@@ -5484,18 +5484,18 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+                         reinterpret_cast<uint8_t*>(&xpsnrL[i]));
+           }
+ 
+-          msg(NOTICE, " [xPSNRL%d %16" PRIx64 "]", (int) m_pcCfg->getWhitePointDeltaE(i), xpsnrL[0]);
++          msg(VTM_NOTICE, " [xPSNRL%d %16" PRIx64 "]", (int) m_pcCfg->getWhitePointDeltaE(i), xpsnrL[0]);
+         }
+       }
+     }
+ #endif
+-    msg(NOTICE, m_pcCfg->getPrintHighPrecEncTime() ? " [ET %6.3f ]" : " [ET %5.0f ]", dEncTime);
++    msg(VTM_NOTICE, m_pcCfg->getPrintHighPrecEncTime() ? " [ET %6.3f ]" : " [ET %5.0f ]", dEncTime);
+ 
+     // msg( SOME, " [WP %d]", pcSlice->getUseWeightedPrediction());
+ 
+     for (int refList = 0; refList < 2; refList++)
+     {
+-      msg(NOTICE, " [L%d", refList);
++      msg(VTM_NOTICE, " [L%d", refList);
+       for (int refIndex = 0; refIndex < pcSlice->getNumRefIdx(RefPicList(refList)); refIndex++)
+       {
+         const ScalingRatio &scaleRatio = pcSlice->getScalingRatio(RefPicList(refList), refIndex);
+@@ -5505,45 +5505,45 @@ void EncGOP::xCalculateAddPSNR(Picture* pcPic, PelUnitBuf cPicD, const AccessUni
+         {
+           if (scaleRatio != SCALE_1X)
+           {
+-            msg(NOTICE, " %dc(%1.2lfx, %1.2lfx)", pcSlice->getRefPOC(RefPicList(refList), refIndex),
++            msg(VTM_NOTICE, " %dc(%1.2lfx, %1.2lfx)", pcSlice->getRefPOC(RefPicList(refList), refIndex),
+                 double(scaleRatio.x) / (1 << ScalingRatio::BITS), double(scaleRatio.y) / (1 << ScalingRatio::BITS));
+           }
+           else
+           {
+-            msg(NOTICE, " %dc", pcSlice->getRefPOC(RefPicList(refList), refIndex));
++            msg(VTM_NOTICE, " %dc", pcSlice->getRefPOC(RefPicList(refList), refIndex));
+           }
+         }
+         else
+         {
+           if (scaleRatio != SCALE_1X)
+           {
+-            msg(NOTICE, " %d(%1.2lfx, %1.2lfx)", pcSlice->getRefPOC(RefPicList(refList), refIndex),
++            msg(VTM_NOTICE, " %d(%1.2lfx, %1.2lfx)", pcSlice->getRefPOC(RefPicList(refList), refIndex),
+                 double(scaleRatio.x) / (1 << ScalingRatio::BITS), double(scaleRatio.y) / (1 << ScalingRatio::BITS));
+           }
+           else
+           {
+-            msg(NOTICE, " %d", pcSlice->getRefPOC(RefPicList(refList), refIndex));
++            msg(VTM_NOTICE, " %d", pcSlice->getRefPOC(RefPicList(refList), refIndex));
+           }
+         }
+ 
+         if (pcSlice->getRefPOC(RefPicList(refList), refIndex) == pcSlice->getPOC())
+         {
+-          msg(NOTICE, ".%d", pcSlice->getRefPic(RefPicList(refList), refIndex)->layerId);
++          msg(VTM_NOTICE, ".%d", pcSlice->getRefPic(RefPicList(refList), refIndex)->layerId);
+         }
+       }
+-      msg( NOTICE, "]" );
++      msg( VTM_NOTICE, "]" );
+     }
+     if (m_pcEncLib->isResChangeInClvsEnabled())
+     {
+-      msg( NOTICE, " [Y2 %6.4lf dB  U2 %6.4lf dB  V2 %6.4lf dB]", upscaledPSNR[COMPONENT_Y], upscaledPSNR[COMPONENT_Cb], upscaledPSNR[COMPONENT_Cr] );
++      msg( VTM_NOTICE, " [Y2 %6.4lf dB  U2 %6.4lf dB  V2 %6.4lf dB]", upscaledPSNR[COMPONENT_Y], upscaledPSNR[COMPONENT_Cb], upscaledPSNR[COMPONENT_Cr] );
+     }
+     else if (m_pcEncLib->isRefLayerRescaledAvailable())
+     {
+-      msg(NOTICE, " [Y2 %6.4lf dB  U2 %6.4lf dB  V2 %6.4lf dB]", upscaledPSNR[COMPONENT_Y], upscaledPSNR[COMPONENT_Cb], upscaledPSNR[COMPONENT_Cr]);
++      msg(VTM_NOTICE, " [Y2 %6.4lf dB  U2 %6.4lf dB  V2 %6.4lf dB]", upscaledPSNR[COMPONENT_Y], upscaledPSNR[COMPONENT_Cb], upscaledPSNR[COMPONENT_Cr]);
+     } 
+ 
+   }
+-  else if( g_verbosity >= INFO )
++  else if( g_verbosity >= VTM_INFO )
+   {
+     std::cout << "\r\t" << pcSlice->getPOC();
+     std::cout.flush();
+@@ -6052,14 +6052,14 @@ void EncGOP::xCalculateInterlacedAddPSNR( Picture* pcPicOrgFirstField, Picture*
+ 
+   *PSNR_Y = dPSNR[COMPONENT_Y];
+ 
+-  msg( INFO, "\n                                      Interlaced frame %d: [Y %6.4lf dB    U %6.4lf dB    V %6.4lf dB]", pcPicOrgSecondField->getPOC()/2, dPSNR[COMPONENT_Y], dPSNR[COMPONENT_Cb], dPSNR[COMPONENT_Cr] );
++  msg( VTM_INFO, "\n                                      Interlaced frame %d: [Y %6.4lf dB    U %6.4lf dB    V %6.4lf dB]", pcPicOrgSecondField->getPOC()/2, dPSNR[COMPONENT_Y], dPSNR[COMPONENT_Cb], dPSNR[COMPONENT_Cr] );
+   if (printMSSSIM)
+   {
+     printf(" [MS-SSIM Y %1.6lf    U %1.6lf    V %1.6lf]", msssim[COMPONENT_Y], msssim[COMPONENT_Cb], msssim[COMPONENT_Cr] );
+   }
+   if (printFrameMSE)
+   {
+-    msg(DETAILS, " [Y MSE %6.4lf  U MSE %6.4lf  V MSE %6.4lf]", mseYuvFrame[COMPONENT_Y], mseYuvFrame[COMPONENT_Cb],
++    msg(VTM_DETAILS, " [Y MSE %6.4lf  U MSE %6.4lf  V MSE %6.4lf]", mseYuvFrame[COMPONENT_Y], mseYuvFrame[COMPONENT_Cb],
+         mseYuvFrame[COMPONENT_Cr]);
+   }
+ 
+diff --git a/source/Lib/EncoderLib/RateCtrl.cpp b/source/Lib/EncoderLib/RateCtrl.cpp
+index 010c7840a..87acc8ab7 100644
+--- a/source/Lib/EncoderLib/RateCtrl.cpp
++++ b/source/Lib/EncoderLib/RateCtrl.cpp
+@@ -518,7 +518,7 @@ void EncRCGOP::create(EncRCSeq *encRCSeq, int numPic, bool useAdaptiveBitsRatio)
+     }
+     else
+     {
+-      msg( WARNING, "Warning: Current rate control does not support this coding configuration." );
++      msg( VTM_WARNING, "Warning: Current rate control does not support this coding configuration." );
+     }
+ 
+     xCalEquaCoeff( encRCSeq, lambdaRatio, equaCoeffA, equaCoeffB, encRCSeq->getGOPSize() );
+@@ -1755,7 +1755,7 @@ void RateCtrl::init(int totalFrames, int targetBitrate, const Fraction& frameRat
+     }
+     else
+     {
+-      msg( WARNING, "\n hierarchical bit allocation is not support for the specified coding structure currently.\n" );
++      msg( VTM_WARNING, "\n hierarchical bit allocation is not support for the specified coding structure currently.\n" );
+     }
+   }
+ 
+@@ -1946,7 +1946,7 @@ void RateCtrl::initHrdParam(const GeneralHrdParams* generalHrd, const OlsHrdPara
+   m_cpbState = (uint32_t)(m_cpbSize*fInitialCpbFullness);
+   m_bufferingRate = (uint32_t) (((olsHrd->getBitRateValueMinus1(0, 0) + 1) << (6 + generalHrd->getBitRateScale()))
+                                 * frameRate.den / frameRate.num);
+-  msg(NOTICE, "\nHRD - [Initial CPB state %6d] [CPB Size %6d] [Buffering Rate %6d]\n", m_cpbState, m_cpbSize, m_bufferingRate);
++  msg(VTM_NOTICE, "\nHRD - [Initial CPB state %6d] [CPB Size %6d] [Buffering Rate %6d]\n", m_cpbState, m_cpbSize, m_bufferingRate);
+ }
+ 
+ void RateCtrl::destroyRCGOP()
+diff --git a/source/Lib/EncoderLib/SEIwrite.cpp b/source/Lib/EncoderLib/SEIwrite.cpp
+index 5d3f4c4fa..d84b24898 100644
+--- a/source/Lib/EncoderLib/SEIwrite.cpp
++++ b/source/Lib/EncoderLib/SEIwrite.cpp
+@@ -1799,7 +1799,7 @@ void SEIWriter::xWriteSEINeuralNetworkPostFilterCharacteristics(const SEINeuralN
+       xWriteUvlc(sei.m_extendedPatchHeightCdDeltaMinus1, "extended_nnpfc_patch_height_cd_delta_minus1");
+     }
+     xWriteUvlc(sei.m_paddingType, "nnpfc_padding_type");
+-    if (sei.m_paddingType == NNPC_PaddingType::FIXED_PADDING)
++    if (sei.m_paddingType == NNPC_PaddingType::NNPC_FIXED_PADDING)
+     {
+       if (sei.m_inpOrderIdc != 1)
+       {
+diff --git a/source/Lib/Utilities/VideoIOYuv.cpp b/source/Lib/Utilities/VideoIOYuv.cpp
+index 923afc0df..a342e304a 100644
+--- a/source/Lib/Utilities/VideoIOYuv.cpp
++++ b/source/Lib/Utilities/VideoIOYuv.cpp
+@@ -314,7 +314,7 @@ void VideoIOYuv::writeY4mFileHeader()
+       {
+         header += cf.name;
+         found = true;
+-        msg(WARNING, "Value for chroma sample location unsupported by y4m. Signalling unspecified location.");
++        msg(VTM_WARNING, "Value for chroma sample location unsupported by y4m. Signalling unspecified location.");
+         break;
+       }
+     }
+@@ -1211,7 +1211,7 @@ bool VideoIOYuv::write(uint32_t orgWidth, uint32_t orgHeight, const CPelUnitBuf
+ 
+   if ((width444 == 0) || (height444 == 0))
+   {
+-    msg( WARNING, "\nWarning: writing %d x %d luma sample output picture!", width444, height444);
++    msg( VTM_WARNING, "\nWarning: writing %d x %d luma sample output picture!", width444, height444);
+   }
+ 
+   if (m_outY4m)
+@@ -1331,7 +1331,7 @@ bool VideoIOYuv::write(const CPelUnitBuf &picTop, const CPelUnitBuf &picBottom,
+ 
+     if ((width444 == 0) || (height444 == 0))
+     {
+-      msg( WARNING, "\nWarning: writing %d x %d luma sample output picture!", width444, height444);
++      msg( VTM_WARNING, "\nWarning: writing %d x %d luma sample output picture!", width444, height444);
+     }
+ 
+     const uint32_t csx = ::getComponentScaleX(compID, dstChrFormat );
+-- 
+2.17.1
+

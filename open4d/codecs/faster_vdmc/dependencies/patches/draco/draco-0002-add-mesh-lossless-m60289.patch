@@ -1,0 +1,757 @@
+From 49c05933bde9688548c598aac631ec736f242ce3 Mon Sep 17 00:00:00 2001
+From: Julien Ricard <julien.ricard@interdigital.com>
+Date: Mon, 6 Feb 2023 21:01:19 +0100
+Subject: [PATCH] Add mesh lossless (m60289)
+
+---
+ PATCHED                                            |   1 +
+ src/draco/attributes/point_attribute.cc            |  74 +++++++++++++
+ src/draco/attributes/point_attribute.h             |  16 +++
+ .../compression/attributes/points_sequencer.h      |  14 +++
+ .../sequential_attribute_decoders_controller.cc    |   2 +-
+ .../sequential_attribute_decoders_controller.h     |   1 +
+ .../attributes/sequential_attribute_encoder.cc     |  25 +++++
+ .../attributes/sequential_attribute_encoder.h      |   8 ++
+ .../sequential_attribute_encoders_controller.cc    |   5 +-
+ .../sequential_attribute_encoders_controller.h     |   1 +
+ .../sequential_integer_attribute_decoder.cc        | 110 +++++++++++++++++++
+ .../sequential_integer_attribute_decoder.h         |   2 +
+ .../sequential_integer_attribute_encoder.cc        | 121 +++++++++++++++++++++
+ .../sequential_integer_attribute_encoder.h         |   5 +-
+ .../mesh/mesh_edgebreaker_encoder_impl.cc          |   6 +
+ .../mesh_attribute_indices_encoding_observer.h     |   1 +
+ src/draco/mesh/corner_table.h                      |   8 ++
+ src/draco/mesh/mesh_attribute_corner_table.cc      |  29 +++++
+ src/draco/point_cloud/point_cloud.cc               |   2 +
+ 19 files changed, 426 insertions(+), 5 deletions(-)
+ create mode 100644 PATCHED
+
+diff --git a/PATCHED b/PATCHED
+new file mode 100644
+index 0000000..688d8d7
+--- /dev/null
++++ b/PATCHED
+@@ -0,0 +1 @@
++patched
+\ No newline at end of file
+diff --git a/src/draco/attributes/point_attribute.cc b/src/draco/attributes/point_attribute.cc
+index e54ab54..a81c292 100644
+--- a/src/draco/attributes/point_attribute.cc
++++ b/src/draco/attributes/point_attribute.cc
+@@ -15,6 +15,7 @@
+ #include "draco/attributes/point_attribute.h"
+ 
+ #include <unordered_map>
++#include <set>
+ 
+ using std::unordered_map;
+ 
+@@ -174,6 +175,35 @@ AttributeValueIndex::ValueType PointAttribute::DeduplicateFormattedValues(
+   AttributeHashableValue hashable_value;
+   IndexTypeVector<AttributeValueIndex, AttributeValueIndex> value_map(
+       num_unique_entries_);
++  IndexTypeVector<PointIndex, AttributeValueIndex> indices_map(indices_map_);
++
++
++  typedef std::vector<AttributeValueIndex> Edge;
++  typedef std::vector<AttributeValueIndex> Face;
++  auto attribute_hash = [this](AttributeValueIndex a) {
++      return a.value();
++  };
++  auto attribute_compare = [this](AttributeValueIndex a0,
++      AttributeValueIndex a1) { return a0 == a1; };
++  auto edge_hash = [this](Edge e) {
++      int hash = 0;
++
++      hash = static_cast<uint32_t>(HashCombine(e[0].value(), e[1].value())) +
++          static_cast<uint32_t>(HashCombine(e[1].value(), e[0].value()));
++
++      return hash;
++  };
++  auto edge_compare = [this](Edge e0, Edge e1) {
++      if (e0[0] == e1[0] && e0[1] == e1[1]) return true;
++      if (e0[1] == e1[0] && e0[0] == e1[1]) return true;
++      return false;
++  };
++
++  std::vector<Edge> edges;
++
++  unordered_map<Edge, std::set<FaceIndex>, decltype(edge_hash), decltype(edge_compare)>
++      edge_to_face(num_unique_entries_, edge_hash, edge_compare);
++
+   for (AttributeValueIndex i(0); i < num_unique_entries_; ++i) {
+     const AttributeValueIndex att_pos = i + in_att_offset;
+     att_value = in_att.GetValue<T, num_components_t>(att_pos);
+@@ -200,6 +230,45 @@ AttributeValueIndex::ValueType PointAttribute::DeduplicateFormattedValues(
+       ++unique_vals;
+     }
+   }
++  for (PointIndex i(0); i < static_cast<uint32_t>(indices_map_.size()); ++i) {
++      indices_map[i] = value_map[indices_map_[i]];
++  }
++  for (int i = 0; i < indices_map_.size(); i += 3) {
++      //Face t_f;
++      for (int j = 0; j < 3; j++) {
++          Edge t_e;
++          t_e.push_back(indices_map.at(PointIndex(i + j)));
++          t_e.push_back(indices_map.at(PointIndex(i + ((j + 1) % 3))));
++
++          edge_to_face[t_e].insert(FaceIndex(i / 3));
++      }
++  }
++
++  unordered_map<int, int> keep_repeat_points;
++  for (auto& iter : edge_to_face) {
++      if (iter.second.size() > 2) {
++          keep_repeat_points[iter.first[0].value()] = 0;
++          keep_repeat_points[iter.first[1].value()] = 0;
++      }
++      if (iter.first[0] == iter.first[1]) {
++          keep_repeat_points[iter.first[0].value()] = 0;
++      }
++  }
++
++  for (AttributeValueIndex i(0); i < value_map.size(); i++) {
++      auto it = keep_repeat_points.find(value_map[i].value());
++      if (it != keep_repeat_points.end()) {
++          if (it->second) {
++              const AttributeValueIndex att_pos = value_map[i] + in_att_offset;
++              att_value = in_att.GetValue<T, num_components_t>(att_pos);
++              SetAttributeValue(unique_vals, &att_value);
++              // Update index mapping.
++              value_map[i] = unique_vals;
++              ++unique_vals;
++          }
++          it->second++;
++      }
++  }
+   if (unique_vals == num_unique_entries_) {
+     return unique_vals.value();  // Nothing has changed.
+   }
+@@ -218,6 +287,11 @@ AttributeValueIndex::ValueType PointAttribute::DeduplicateFormattedValues(
+     }
+   }
+   num_unique_entries_ = unique_vals.value();
++  repeat_num.resize(num_unique_entries_);
++  in_att;
++  for (int i = 0; i < value_map.size(); i++) {
++      repeat_num[value_map[AttributeValueIndex(i)].value()]++;
++  }
+   return num_unique_entries_;
+ }
+ #endif
+diff --git a/src/draco/attributes/point_attribute.h b/src/draco/attributes/point_attribute.h
+index d55c50c..34dd2e5 100644
+--- a/src/draco/attributes/point_attribute.h
++++ b/src/draco/attributes/point_attribute.h
+@@ -103,6 +103,18 @@ class PointAttribute : public GeometryAttribute {
+     indices_map_[point_index] = entry_index;
+   }
+ 
++  //Set params about non-manifold
++  void SetNonManifoldVertices(AttributeValueIndex entry_index) {
++      non_manifold_vertices.push_back(entry_index);
++  }
++
++  AttributeValueIndex GetNonManifoldVertices(size_t index) const {
++      return non_manifold_vertices[index];
++  }
++  size_t GetNonManifoldVerticesSize() const {
++      return non_manifold_vertices.size();
++  }
++
+   // Same as GeometryAttribute::GetValue(), but using point id as the input.
+   // Mapping to attribute value index is performed automatically.
+   void GetMappedValue(PointIndex point_index, void *out_data) const {
+@@ -164,6 +176,10 @@ class PointAttribute : public GeometryAttribute {
+   // its original format.
+   std::unique_ptr<AttributeTransformData> attribute_transform_data_;
+ 
++  //store non-manifest points
++  std::vector<AttributeValueIndex> non_manifold_vertices;
++  std::vector<int> repeat_num;
++
+   friend struct PointAttributeHasher;
+ };
+ 
+diff --git a/src/draco/compression/attributes/points_sequencer.h b/src/draco/compression/attributes/points_sequencer.h
+index 2f4f7e1..6ee1e62 100644
+--- a/src/draco/compression/attributes/points_sequencer.h
++++ b/src/draco/compression/attributes/points_sequencer.h
+@@ -35,9 +35,22 @@ class PointsSequencer {
+     return GenerateSequenceInternal();
+   }
+ 
++  bool GenerateSequence(std::vector<PointIndex>* out_point_ids,
++      std::vector<int32_t>* vertex_to_data_map) {
++      out_point_ids_ = out_point_ids;
++      vertex_to_data_map_ = vertex_to_data_map;
++      return GenerateSequenceInternal();
++  }
++
+   // Appends a point to the sequence.
+   void AddPointId(PointIndex point_id) { out_point_ids_->push_back(point_id); }
+ 
++  void AddVertexToData(int32_t vertex_id, int32_t data_id) {
++      if (vertex_to_data_map_ == nullptr) return;
++      if (vertex_id >= vertex_to_data_map_->size())
++          vertex_to_data_map_->resize(vertex_id + 1);
++      vertex_to_data_map_->at(vertex_id) = data_id;
++  }
+   // Sets the correct mapping between point ids and value ids. I.e., the inverse
+   // of the |out_point_ids|. In general, |out_point_ids_| does not contain
+   // sufficient information to compute the inverse map, because not all point
+@@ -56,6 +69,7 @@ class PointsSequencer {
+ 
+  private:
+   std::vector<PointIndex> *out_point_ids_;
++  std::vector<int32_t>* vertex_to_data_map_;
+ };
+ 
+ }  // namespace draco
+diff --git a/src/draco/compression/attributes/sequential_attribute_decoders_controller.cc b/src/draco/compression/attributes/sequential_attribute_decoders_controller.cc
+index 0e5e26b..ddf0dd3 100644
+--- a/src/draco/compression/attributes/sequential_attribute_decoders_controller.cc
++++ b/src/draco/compression/attributes/sequential_attribute_decoders_controller.cc
+@@ -52,7 +52,7 @@ bool SequentialAttributeDecodersController::DecodeAttributesDecoderData(
+ 
+ bool SequentialAttributeDecodersController::DecodeAttributes(
+     DecoderBuffer *buffer) {
+-  if (!sequencer_ || !sequencer_->GenerateSequence(&point_ids_)) {
++  if (!sequencer_ || !sequencer_->GenerateSequence(&point_ids_, &vertex_to_data_map_)) {
+     return false;
+   }
+   // Initialize point to attribute value mapping for all decoded attributes.
+diff --git a/src/draco/compression/attributes/sequential_attribute_decoders_controller.h b/src/draco/compression/attributes/sequential_attribute_decoders_controller.h
+index abc1f36..ad9ed4b 100644
+--- a/src/draco/compression/attributes/sequential_attribute_decoders_controller.h
++++ b/src/draco/compression/attributes/sequential_attribute_decoders_controller.h
+@@ -53,6 +53,7 @@ class SequentialAttributeDecodersController : public AttributesDecoder {
+  private:
+   std::vector<std::unique_ptr<SequentialAttributeDecoder>> sequential_decoders_;
+   std::vector<PointIndex> point_ids_;
++  std::vector<int32_t> vertex_to_data_map_;
+   std::unique_ptr<PointsSequencer> sequencer_;
+ };
+ 
+diff --git a/src/draco/compression/attributes/sequential_attribute_encoder.cc b/src/draco/compression/attributes/sequential_attribute_encoder.cc
+index 6bde3ee..640e509 100644
+--- a/src/draco/compression/attributes/sequential_attribute_encoder.cc
++++ b/src/draco/compression/attributes/sequential_attribute_encoder.cc
+@@ -52,6 +52,16 @@ bool SequentialAttributeEncoder::EncodePortableAttribute(
+   return true;
+ }
+ 
++bool SequentialAttributeEncoder::EncodePortableAttribute(
++    const std::vector<PointIndex>& point_ids,
++    std::vector<int32_t>& vertex_to_data_map, EncoderBuffer* out_buffer) {
++    // Lossless encoding of the input values.
++    if (!EncodeValues(point_ids, vertex_to_data_map, out_buffer)) {
++        return false;
++    }
++    return true;
++}
++
+ bool SequentialAttributeEncoder::EncodeDataNeededByPortableTransform(
+     EncoderBuffer *out_buffer) {
+   // Default implementation doesn't transform the input data.
+@@ -72,6 +82,21 @@ bool SequentialAttributeEncoder::EncodeValues(
+   return true;
+ }
+ 
++bool SequentialAttributeEncoder::EncodeValues(
++    const std::vector<PointIndex>& point_ids,
++    std::vector<int32_t>& vertex_to_data_map, EncoderBuffer* out_buffer) {
++    const int entry_size = static_cast<int>(attribute_->byte_stride());
++    const std::unique_ptr<uint8_t[]> value_data_ptr(new uint8_t[entry_size]);
++    uint8_t* const value_data = value_data_ptr.get();
++    // Encode all attribute values in their native raw format.
++    for (uint32_t i = 0; i < point_ids.size(); ++i) {
++        const AttributeValueIndex entry_id = attribute_->mapped_index(point_ids[i]);
++        attribute_->GetValue(entry_id, value_data);
++        out_buffer->Encode(value_data, entry_size);
++    }
++    return true;
++}
++
+ void SequentialAttributeEncoder::MarkParentAttribute() {
+   is_parent_encoder_ = true;
+ }
+diff --git a/src/draco/compression/attributes/sequential_attribute_encoder.h b/src/draco/compression/attributes/sequential_attribute_encoder.h
+index 00f62db..4a40664 100644
+--- a/src/draco/compression/attributes/sequential_attribute_encoder.h
++++ b/src/draco/compression/attributes/sequential_attribute_encoder.h
+@@ -53,6 +53,10 @@ class SequentialAttributeEncoder {
+   virtual bool EncodePortableAttribute(const std::vector<PointIndex> &point_ids,
+                                        EncoderBuffer *out_buffer);
+ 
++  virtual bool EncodePortableAttribute(
++      const std::vector<PointIndex>& point_ids,
++      std::vector<int32_t>& vertex_to_data_map, EncoderBuffer* out_buffer);
++
+   // Encodes any data related to the portable attribute transform.
+   virtual bool EncodeDataNeededByPortableTransform(EncoderBuffer *out_buffer);
+ 
+@@ -99,6 +103,10 @@ class SequentialAttributeEncoder {
+   virtual bool EncodeValues(const std::vector<PointIndex> &point_ids,
+                             EncoderBuffer *out_buffer);
+ 
++  virtual bool EncodeValues(const std::vector<PointIndex>& point_ids,
++      std::vector<int32_t>& vertex_to_data_map,
++      EncoderBuffer* out_buffer);
++
+   bool is_parent_encoder() const { return is_parent_encoder_; }
+ 
+   void SetPortableAttribute(std::unique_ptr<PointAttribute> att) {
+diff --git a/src/draco/compression/attributes/sequential_attribute_encoders_controller.cc b/src/draco/compression/attributes/sequential_attribute_encoders_controller.cc
+index 7d5d1ee..7ab6086 100644
+--- a/src/draco/compression/attributes/sequential_attribute_encoders_controller.cc
++++ b/src/draco/compression/attributes/sequential_attribute_encoders_controller.cc
+@@ -61,7 +61,7 @@ bool SequentialAttributeEncodersController::EncodeAttributesEncoderData(
+ 
+ bool SequentialAttributeEncodersController::EncodeAttributes(
+     EncoderBuffer *buffer) {
+-  if (!sequencer_ || !sequencer_->GenerateSequence(&point_ids_)) {
++  if (!sequencer_ || !sequencer_->GenerateSequence(&point_ids_, &vertex_to_data_map_)) {
+     return false;
+   }
+   return AttributesEncoder::EncodeAttributes(buffer);
+@@ -81,8 +81,7 @@ bool SequentialAttributeEncodersController::
+ bool SequentialAttributeEncodersController::EncodePortableAttributes(
+     EncoderBuffer *out_buffer) {
+   for (uint32_t i = 0; i < sequential_encoders_.size(); ++i) {
+-    if (!sequential_encoders_[i]->EncodePortableAttribute(point_ids_,
+-                                                          out_buffer)) {
++    if (!sequential_encoders_[i]->EncodePortableAttribute(point_ids_, vertex_to_data_map_, out_buffer)) {
+       return false;
+     }
+   }
+diff --git a/src/draco/compression/attributes/sequential_attribute_encoders_controller.h b/src/draco/compression/attributes/sequential_attribute_encoders_controller.h
+index 13c2704..9a9d0a8 100644
+--- a/src/draco/compression/attributes/sequential_attribute_encoders_controller.h
++++ b/src/draco/compression/attributes/sequential_attribute_encoders_controller.h
+@@ -108,6 +108,7 @@ class SequentialAttributeEncodersController : public AttributesEncoder {
+   std::vector<bool> sequential_encoder_marked_as_parent_;
+   std::vector<PointIndex> point_ids_;
+   std::unique_ptr<PointsSequencer> sequencer_;
++  std::vector<int32_t> vertex_to_data_map_;
+ };
+ 
+ }  // namespace draco
+diff --git a/src/draco/compression/attributes/sequential_integer_attribute_decoder.cc b/src/draco/compression/attributes/sequential_integer_attribute_decoder.cc
+index 17f32fc..73ae77f 100644
+--- a/src/draco/compression/attributes/sequential_integer_attribute_decoder.cc
++++ b/src/draco/compression/attributes/sequential_integer_attribute_decoder.cc
+@@ -17,6 +17,9 @@
+ #include "draco/compression/attributes/prediction_schemes/prediction_scheme_decoder_factory.h"
+ #include "draco/compression/attributes/prediction_schemes/prediction_scheme_wrap_decoding_transform.h"
+ #include "draco/compression/entropy/symbol_decoding.h"
++#include <unordered_map>
++#include <set>
++#include "draco/attributes/point_attribute.h"
+ 
+ namespace draco {
+ 
+@@ -176,10 +179,117 @@ bool SequentialIntegerAttributeDecoder::DecodeIntegerValues(
+         return false;
+       }
+     }
++  }
++  // Decode non-manifold vertices
++  auto mesh_lossless = decoder()->options()->GetGlobalBool("mesh_lossless", false);
++  printf("SequentialIntegerAttributeEncoder::EncodeValues: mesh_lossless = %d \n",mesh_lossless);
++  if (mesh_lossless) {
++    char hasNonManifolds[1];
++    in_buffer->Decode(hasNonManifolds);
++    if (hasNonManifolds[0]) {
++      const PointAttribute* const attrib = attribute();
++      PointAttribute* tempAtt = const_cast<PointAttribute*>(attrib);
++      //decode non-manifolds points
++      std::vector<int> isNonManifold(num_entries, 0);
++      DecodeSymbols(static_cast<uint32_t>(num_entries), 1, in_buffer,
++        reinterpret_cast<uint32_t*>(isNonManifold.data()));
++      for (uint32_t i = 0; i < isNonManifold.size(); i++) {
++        if (isNonManifold[i]) {
++            tempAtt->SetNonManifoldVertices(AttributeValueIndex(i));
++        }
++      }
++      switch (num_components) {
++      case 1:
++        MergeNonManifoldPoints<1>(tempAtt, num_entries);
++        break;
++      case 2:
++        MergeNonManifoldPoints<2>(tempAtt, num_entries);
++        break;
++      case 3:
++        MergeNonManifoldPoints<3>(tempAtt, num_entries);
++        break;
++      case 4:
++        MergeNonManifoldPoints<4>(tempAtt, num_entries);
++        break;
++      default:
++        break;
++      }
++    }
+   }
+   return true;
+ }
+ 
++template <const int num_components>
++void SequentialIntegerAttributeDecoder::MergeNonManifoldPoints(
++    PointAttribute* att, const size_t num_entries) {
++    /* typedef conditional_t<
++        sizeof(T) == 1, uint8_t,
++                          conditional_t<sizeof(T) == 2, uint16_t,
++                                        conditional_t<sizeof(T) == 4, uint32_t,
++                                                       uint64_t>>>
++        HashType;*/
++        //typedef std::array<T, num_components> AttributeValue;
++    typedef std::array<uint32_t, num_components> AttributeHashableValue;
++    std::unordered_map<AttributeHashableValue, std::set<AttributeValueIndex>,
++        HashArray<AttributeHashableValue>>
++        value_to_index_map;
++    int32_t* const data = GetPortableAttributeData();
++    std::vector<int32_t> out_data;
++    IndexTypeVector<AttributeValueIndex, AttributeValueIndex> value_map(
++        num_entries);
++
++    std::set<AttributeValueIndex> non_manifold_ids;
++
++    for (AttributeValueIndex i(0); i < num_entries; i++) {
++        AttributeHashableValue value;
++        for (int j = 0; j < num_components; j++) {
++            value[j] = data[num_components * i.value() + j];
++        }
++        value_to_index_map[value].insert(i);
++    }
++
++    for (int i = 0; i < att->GetNonManifoldVerticesSize(); i++) {
++        non_manifold_ids.insert(att->GetNonManifoldVertices(i));
++    }
++
++    AttributeValueIndex final_vertices_id(0);
++    for (AttributeValueIndex i(0); i < num_entries; ++i) {
++        AttributeHashableValue value;
++        for (int j = 0; j < num_components; j++) {
++            value[j] = data[num_components * i.value() + j];
++        }
++        if (non_manifold_ids.find(i) == non_manifold_ids.end()) {
++            for (int j = 0; j < num_components; j++) {
++                out_data.push_back(value[j]);
++            }
++            value_map[i] = final_vertices_id;
++            final_vertices_id++;
++        }
++    }
++    for (auto& i : non_manifold_ids) {
++        AttributeHashableValue value;
++        for (int j = 0; j < num_components; j++) {
++            value[j] = data[num_components * i.value() + j];
++        }
++        for (auto& j : value_to_index_map.at(value)) {
++            if (j != i) {
++                value_map[i] = value_map[j];
++                if (value_map[i] != 0) break;
++            }
++        }
++    }
++
++    att->Reset(out_data.size() / num_components);
++    for (int i = 0; i < out_data.size(); i++) {
++        data[i] = out_data[i];
++    }
++    for (PointIndex i(0); i < static_cast<uint32_t>(att->indices_map_size());
++        ++i) {
++        att->SetPointMapEntry(i, value_map[att->mapped_index(i)]);
++    }
++}
++
++
+ bool SequentialIntegerAttributeDecoder::StoreValues(uint32_t num_values) {
+   switch (attribute()->data_type()) {
+     case DT_UINT8:
+diff --git a/src/draco/compression/attributes/sequential_integer_attribute_decoder.h b/src/draco/compression/attributes/sequential_integer_attribute_decoder.h
+index ef48ed8..4812d7e 100644
+--- a/src/draco/compression/attributes/sequential_integer_attribute_decoder.h
++++ b/src/draco/compression/attributes/sequential_integer_attribute_decoder.h
+@@ -35,6 +35,8 @@ class SequentialIntegerAttributeDecoder : public SequentialAttributeDecoder {
+                     DecoderBuffer *in_buffer) override;
+   virtual bool DecodeIntegerValues(const std::vector<PointIndex> &point_ids,
+                                    DecoderBuffer *in_buffer);
++  template <const int num_components>
++  void MergeNonManifoldPoints(PointAttribute* tempAtt, const size_t num_entries);
+ 
+   // Returns a prediction scheme that should be used for decoding of the
+   // integer values.
+diff --git a/src/draco/compression/attributes/sequential_integer_attribute_encoder.cc b/src/draco/compression/attributes/sequential_integer_attribute_encoder.cc
+index 5f673be..47c7e5e 100644
+--- a/src/draco/compression/attributes/sequential_integer_attribute_encoder.cc
++++ b/src/draco/compression/attributes/sequential_integer_attribute_encoder.cc
+@@ -199,6 +199,127 @@ bool SequentialIntegerAttributeEncoder::EncodeValues(
+   return true;
+ }
+ 
++bool SequentialIntegerAttributeEncoder::EncodeValues(
++    const std::vector<PointIndex>& point_ids,
++    std::vector<int32_t>& vertex_to_data_map, EncoderBuffer* out_buffer) {
++    // Initialize general quantization data.
++    const PointAttribute* const attrib = attribute();
++    if (attrib->size() == 0) {
++        return true;
++    }
++
++    int8_t prediction_scheme_method = PREDICTION_NONE;
++    if (prediction_scheme_) {
++        if (!SetPredictionSchemeParentAttributes(prediction_scheme_.get())) {
++            return false;
++        }
++        prediction_scheme_method =
++            static_cast<int8_t>(prediction_scheme_->GetPredictionMethod());
++    }
++    out_buffer->Encode(prediction_scheme_method);
++    if (prediction_scheme_) {
++        out_buffer->Encode(
++            static_cast<int8_t>(prediction_scheme_->GetTransformType()));
++    }
++
++    const int num_components = portable_attribute()->num_components();
++    const int num_values =
++        static_cast<int>(num_components * portable_attribute()->size());
++    const int32_t* const portable_attribute_data = GetPortableAttributeData();
++
++    // We need to keep the portable data intact, but several encoding steps can
++    // result in changes of this data, e.g., by applying prediction schemes that
++    // change the data in place. To preserve the portable data we store and
++    // process all encoded data in a separate array.
++    std::vector<int32_t> encoded_data(num_values);
++
++    // All integer values are initialized. Process them using the prediction
++    // scheme if we have one.
++    if (prediction_scheme_) {
++        prediction_scheme_->ComputeCorrectionValues(
++            portable_attribute_data, &encoded_data[0], num_values, num_components,
++            point_ids.data());
++    }
++
++    if (prediction_scheme_ == nullptr ||
++        !prediction_scheme_->AreCorrectionsPositive()) {
++        const int32_t* const input =
++            prediction_scheme_ ? encoded_data.data() : portable_attribute_data;
++        ConvertSignedIntsToSymbols(input, num_values,
++            reinterpret_cast<uint32_t*>(&encoded_data[0]));
++    }
++
++    if (encoder() == nullptr || encoder()->options()->GetGlobalBool(
++        "use_built_in_attribute_compression", true)) {
++        out_buffer->Encode(static_cast<uint8_t>(1));
++        Options symbol_encoding_options;
++        if (encoder() != nullptr) {
++            SetSymbolEncodingCompressionLevel(&symbol_encoding_options,
++                10 - encoder()->options()->GetSpeed());
++        }
++        if (!EncodeSymbols(reinterpret_cast<uint32_t*>(encoded_data.data()),
++            static_cast<int>(point_ids.size()) * num_components,
++            num_components, &symbol_encoding_options, out_buffer)) {
++            return false;
++        }
++    }
++    else {
++        // No compression. Just store the raw integer values, using the number of
++        // bytes as needed.
++
++        // To compute the maximum bit-length, first OR all values.
++        uint32_t masked_value = 0;
++        for (uint32_t i = 0; i < static_cast<uint32_t>(num_values); ++i) {
++            masked_value |= encoded_data[i];
++        }
++        // Compute the msb of the ORed value.
++        int value_msb_pos = 0;
++        if (masked_value != 0) {
++            value_msb_pos = MostSignificantBit(masked_value);
++        }
++        const int num_bytes = 1 + value_msb_pos / 8;
++
++        out_buffer->Encode(static_cast<uint8_t>(0));
++        out_buffer->Encode(static_cast<uint8_t>(num_bytes));
++
++        if (num_bytes == DataTypeLength(DT_INT32)) {
++            out_buffer->Encode(encoded_data.data(), sizeof(int32_t) * num_values);
++        }
++        else {
++            for (uint32_t i = 0; i < static_cast<uint32_t>(num_values); ++i) {
++                out_buffer->Encode(encoded_data.data() + i, num_bytes);
++            }
++        }
++    }
++
++    if (prediction_scheme_) {
++        prediction_scheme_->EncodePredictionData(out_buffer);
++    }
++    // Encode non-manifold vertices
++    PointAttribute* tempAtt = const_cast<PointAttribute*>(attrib);
++    auto mesh_lossless = encoder()->options()->GetGlobalBool("mesh_lossless", false);
++    printf("SequentialIntegerAttributeEncoder::EncodeValues: mesh_lossless = %d \n",mesh_lossless);
++    if (mesh_lossless) {
++      if (tempAtt->GetNonManifoldVerticesSize() > 0) {
++        std::vector<int> isNonManifold(portable_attribute()->size(), 0);
++        for (uint32_t i = 0; i < tempAtt->GetNonManifoldVerticesSize(); i++) {
++          uint32_t data_id =
++              vertex_to_data_map[tempAtt->GetNonManifoldVertices(i).value()];
++          isNonManifold[data_id]++;
++        }
++        out_buffer->Encode(static_cast<uint8_t>(1));
++        Options symbol_encoding_options;
++        EncodeSymbols(reinterpret_cast<uint32_t*>(isNonManifold.data()),
++          static_cast<int>(isNonManifold.size()), 1,
++          &symbol_encoding_options, out_buffer);
++      }
++      else {
++        out_buffer->Encode(static_cast<uint8_t>(0));
++      }
++    }
++    return true;
++}
++
+ bool SequentialIntegerAttributeEncoder::PrepareValues(
+     const std::vector<PointIndex> &point_ids, int num_points) {
+   // Convert all values to int32_t format.
+diff --git a/src/draco/compression/attributes/sequential_integer_attribute_encoder.h b/src/draco/compression/attributes/sequential_integer_attribute_encoder.h
+index c1d6222..07eee73 100644
+--- a/src/draco/compression/attributes/sequential_integer_attribute_encoder.h
++++ b/src/draco/compression/attributes/sequential_integer_attribute_encoder.h
+@@ -37,7 +37,10 @@ class SequentialIntegerAttributeEncoder : public SequentialAttributeEncoder {
+  protected:
+   bool EncodeValues(const std::vector<PointIndex> &point_ids,
+                     EncoderBuffer *out_buffer) override;
+-
++  bool EncodeValues(const std::vector<PointIndex>& point_ids,
++      std::vector<int32_t>& vertex_to_data_map,
++      EncoderBuffer* out_buffer) override;
++
+   // Returns a prediction scheme that should be used for encoding of the
+   // integer values.
+   virtual std::unique_ptr<PredictionSchemeTypedEncoderInterface<int32_t>>
+diff --git a/src/draco/compression/mesh/mesh_edgebreaker_encoder_impl.cc b/src/draco/compression/mesh/mesh_edgebreaker_encoder_impl.cc
+index 4bf6aa9..b23ca19 100644
+--- a/src/draco/compression/mesh/mesh_edgebreaker_encoder_impl.cc
++++ b/src/draco/compression/mesh/mesh_edgebreaker_encoder_impl.cc
+@@ -277,6 +277,12 @@ Status MeshEdgebreakerEncoderImpl<TraversalEncoder>::EncodeConnectivity() {
+     corner_table_ = CreateCornerTableFromAllAttributes(mesh_);
+   } else {
+     corner_table_ = CreateCornerTableFromPositionAttribute(mesh_);
++    //record the geometry points which are added because break nonmanifest.
++    const PointAttribute* pos = mesh_->attribute(PointAttribute::POSITION);
++    PointAttribute* temp_pos = const_cast<PointAttribute*>(pos);
++    for (int i = 0; i < corner_table_->GetNonManifoldVertexParentSize(); i++) {
++        temp_pos->SetNonManifoldVertices(AttributeValueIndex(pos->size() + i));
++    }
+   }
+   if (corner_table_ == nullptr ||
+       corner_table_->num_faces() == corner_table_->NumDegeneratedFaces()) {
+diff --git a/src/draco/compression/mesh/traverser/mesh_attribute_indices_encoding_observer.h b/src/draco/compression/mesh/traverser/mesh_attribute_indices_encoding_observer.h
+index dd9738b..ab2ee72 100644
+--- a/src/draco/compression/mesh/traverser/mesh_attribute_indices_encoding_observer.h
++++ b/src/draco/compression/mesh/traverser/mesh_attribute_indices_encoding_observer.h
+@@ -52,6 +52,7 @@ class MeshAttributeIndicesEncodingObserver {
+         mesh_->face(FaceIndex(corner.value() / 3))[corner.value() % 3];
+     // Append the visited attribute to the encoding order.
+     sequencer_->AddPointId(point_id);
++    sequencer_->AddVertexToData(vertex.value(), encoding_data_->num_values);
+ 
+     // Keep track of visited corners.
+     encoding_data_->encoded_attribute_value_index_to_corner_map.push_back(
+diff --git a/src/draco/mesh/corner_table.h b/src/draco/mesh/corner_table.h
+index 3aa720f..329bf0d 100644
+--- a/src/draco/mesh/corner_table.h
++++ b/src/draco/mesh/corner_table.h
+@@ -158,6 +158,14 @@ class CornerTable {
+     return non_manifold_vertex_parents_[vertex - num_original_vertices_];
+   }
+ 
++  // Returns the non-manifold parent vertex index of a given corner table vertex.
++  VertexIndex NonManifoldVertexParent(VertexIndex vertex) const {
++      return non_manifold_vertex_parents_[vertex];
++  }
++  size_t GetNonManifoldVertexParentSize() const {
++      return non_manifold_vertex_parents_.size();
++  }
++
+   // Returns true if the corner is valid.
+   inline bool IsValid(CornerIndex c) const {
+     return Vertex(c) != kInvalidVertexIndex;
+diff --git a/src/draco/mesh/mesh_attribute_corner_table.cc b/src/draco/mesh/mesh_attribute_corner_table.cc
+index 28b68d5..c300a43 100644
+--- a/src/draco/mesh/mesh_attribute_corner_table.cc
++++ b/src/draco/mesh/mesh_attribute_corner_table.cc
+@@ -16,6 +16,7 @@
+ 
+ #include "draco/mesh/corner_table_iterators.h"
+ #include "draco/mesh/mesh_misc_functions.h"
++#include <unordered_map>
+ 
+ namespace draco {
+ 
+@@ -143,6 +144,12 @@ void MeshAttributeCornerTable::RecomputeVerticesInternal(
+   vertex_to_attribute_entry_id_map_.clear();
+   vertex_to_left_most_corner_map_.clear();
+   int num_new_vertices = 0;
++  auto attribute_hash = [this](AttributeValueIndex a) { return a.value(); };
++  auto attribute_compare = [this](AttributeValueIndex a0,
++      AttributeValueIndex a1) { return a0 == a1; };
++  std::unordered_map<AttributeValueIndex, AttributeValueIndex,
++      decltype(attribute_hash), decltype(attribute_compare)>
++      uv_id_map(1, attribute_hash, attribute_compare);
+   for (VertexIndex v(0); v < corner_table_->num_vertices(); ++v) {
+     const CornerIndex c = corner_table_->LeftMostCorner(v);
+     if (c == kInvalidCornerIndex) {
+@@ -169,12 +176,34 @@ void MeshAttributeCornerTable::RecomputeVerticesInternal(
+         act_c = SwingLeft(act_c);
+       }
+     }
++
++    if (mesh != nullptr) {
++        const PointIndex first_point_id = mesh->CornerToPointId(first_c.value());
++        if (uv_id_map.find(att->mapped_index(first_point_id)) ==
++            uv_id_map.end()) {
++            uv_id_map[att->mapped_index(first_point_id)] = first_vert_id;
++        }
++        else {
++            PointAttribute* tempAtt = const_cast<PointAttribute*>(att);
++            tempAtt->SetNonManifoldVertices(first_vert_id);
++        }
++    }
+     corner_to_vertex_map_[first_c.value()] = VertexIndex(first_vert_id.value());
+     vertex_to_left_most_corner_map_.push_back(first_c);
+     act_c = corner_table_->SwingRight(first_c);
+     while (act_c != kInvalidCornerIndex && act_c != first_c) {
+       if (IsCornerOppositeToSeamEdge(corner_table_->Next(act_c))) {
+         first_vert_id = AttributeValueIndex(num_new_vertices++);
++        if (mesh != nullptr) {
++            const PointIndex point_id = mesh->CornerToPointId(act_c.value());
++            if (uv_id_map.find(att->mapped_index(point_id)) == uv_id_map.end()) {
++                uv_id_map[att->mapped_index(point_id)] = first_vert_id;
++            }
++            else {
++                PointAttribute* tempAtt = const_cast<PointAttribute*>(att);
++                tempAtt->SetNonManifoldVertices(first_vert_id);
++            }
++        }
+         if (init_vertex_to_attribute_entry_map) {
+           const PointIndex point_id = mesh->CornerToPointId(act_c.value());
+           vertex_to_attribute_entry_id_map_.push_back(
+diff --git a/src/draco/point_cloud/point_cloud.cc b/src/draco/point_cloud/point_cloud.cc
+index be5323a..c4c0023 100644
+--- a/src/draco/point_cloud/point_cloud.cc
++++ b/src/draco/point_cloud/point_cloud.cc
+@@ -275,6 +275,8 @@ bool PointCloud::DeduplicateAttributeValues() {
+   }
+   // Deduplicate all attributes.
+   for (int32_t att_id = 0; att_id < num_attributes(); ++att_id) {
++      if (attribute(att_id)->attribute_type() != GeometryAttribute::POSITION)
++          continue;
+     if (!attribute(att_id)->DeduplicateValues(*attribute(att_id))) {
+       return false;
+     }
+-- 
+1.8.3.1
+

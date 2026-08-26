@@ -1,0 +1,96 @@
+From 5c76c80a7ae680482ea7bbf1fdb9f008fa3caf6e Mon Sep 17 00:00:00 2001
+From: Julien Ricard <julien.ricard@interdigital.com>
+Date: Mon, 2 Jan 2023 14:14:15 +0100
+Subject: [PATCH] Update cmake and namespace for compilation issues
+
+---
+ CMakeLists.txt                  | 22 +++++++++++-----------
+ source/Lib/apputils/IStreamIO.h |  6 ++----
+ 2 files changed, 13 insertions(+), 15 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 551ec4b..e871acb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -18,7 +18,7 @@ if( PROJECT_VERSION_RC )
+     set( PROJECT_VERSION "${PROJECT_VERSION}-${PROJECT_VERSION_RC}" )
+ endif()
+ 
+-set( CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules" )
++set( CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules" )
+ message( STATUS "CMAKE_MODULE_PATH: updating module path to: ${CMAKE_MODULE_PATH}" )
+ 
+ # we enable x86 intrinsics for all target architectures, because they are implemented through simd-everywhere on non-x86
+@@ -108,24 +108,24 @@ endif()
+ 
+ set( VVENC_ENABLE_TRACING         OFF CACHE BOOL "Set ENABLE_TRACING=1 as a compiler flag" )
+ 
+-set( VVENC_TOPLEVEL_OUTPUT_DIRS   ON  CACHE BOOL   "Put build artifacts into ${CMAKE_SOURCE_DIR}/{bin,lib}/" )
++set( VVENC_TOPLEVEL_OUTPUT_DIRS   ON  CACHE BOOL   "Put build artifacts into ${CMAKE_CURRENT_SOURCE_DIR}/{bin,lib}/" )
+ 
+ if( VVENC_TOPLEVEL_OUTPUT_DIRS )
+   # Using CMake's default library name convention which is the same for all configurations.
+-  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_SOURCE_DIR}/lib/debug-${VVENC_OUTPUT_DIR_POSTFIX}" )
+-  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_SOURCE_DIR}/lib/release-${VVENC_OUTPUT_DIR_POSTFIX}" )
+-  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_SOURCE_DIR}/lib/relwithdebinfo-${VVENC_OUTPUT_DIR_POSTFIX}" )
+-  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL     "${CMAKE_SOURCE_DIR}/lib/minsizerel-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_CURRENT_SOURCE_DIR}/lib/debug-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_CURRENT_SOURCE_DIR}/lib/release-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/lib/relwithdebinfo-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL     "${CMAKE_CURRENT_SOURCE_DIR}/lib/minsizerel-${VVENC_OUTPUT_DIR_POSTFIX}" )
+ 
+   set( CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG}" )
+   set( CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE}" )
+   set( CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO}" )
+   set( CMAKE_LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL     "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL}" )
+ 
+-  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_SOURCE_DIR}/bin/debug-${VVENC_OUTPUT_DIR_POSTFIX}" )
+-  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_SOURCE_DIR}/bin/release-${VVENC_OUTPUT_DIR_POSTFIX}" )
+-  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_SOURCE_DIR}/bin/relwithdebinfo-${VVENC_OUTPUT_DIR_POSTFIX}" )
+-  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${CMAKE_SOURCE_DIR}/bin/minsizerel-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_CURRENT_SOURCE_DIR}/bin/debug-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_CURRENT_SOURCE_DIR}/bin/release-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/bin/relwithdebinfo-${VVENC_OUTPUT_DIR_POSTFIX}" )
++  set( CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${CMAKE_CURRENT_SOURCE_DIR}/bin/minsizerel-${VVENC_OUTPUT_DIR_POSTFIX}" )
+ else()
+   # Put build artifacts below build-directory. (Don't need to add {debug,release,relwithdebinfo,minsizerel}-{static,shared}/)
+   set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib" )
+@@ -265,7 +265,7 @@ endif()
+ # handle rpath correctly
+ if( VVENC_ENABLE_INSTALL )
+   if( CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT )
+-    set( CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Standard install prefix" FORCE )
++    set( CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/install" CACHE PATH "Standard install prefix" FORCE )
+   endif()
+ 
+   # use GNU install dirs
+diff --git a/source/Lib/apputils/IStreamIO.h b/source/Lib/apputils/IStreamIO.h
+index aec9f08..a378de9 100644
+--- a/source/Lib/apputils/IStreamIO.h
++++ b/source/Lib/apputils/IStreamIO.h
+@@ -709,11 +709,12 @@ inline std::ostream& operator << ( std::ostream& os, const IStreamToAbbr<T,A>& t
+ }
+ 
+ 
++} // namespace
++
+ // ====================================================================================================================
+ // vvencGOPEntry
+ // ====================================================================================================================
+ 
+-
+ inline std::ostream& operator<< ( std::ostream& os, const vvencGOPEntry& entry )
+ {
+   os << entry.m_sliceType;
+@@ -776,8 +777,5 @@ inline std::istream& operator>> ( std::istream& in, vvencGOPEntry& entry )
+   return in;
+ }
+ 
+-
+-} // namespace
+-
+ //! \}
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,90 @@
+From b35af19fe5c1b2978de5d68ed8c0437b9ccc2a87 Mon Sep 17 00:00:00 2001
+From: David Flynn <davidflynn@apple.com>
+Date: Sat, 7 May 2022 02:25:12 +0200
+Subject: [PATCH 2/2] build: workaround libstdc++ issue with noexcept callable
+ in call_once
+
+libstdc++ takes issue with the callable being noexcept.
+
+This patch is licensed as follows:
+
+The copyright in this software is being made available under the BSD
+Licence, included below.  This software may be subject to other third
+party and contributor rights, including patent rights, and no such
+rights are granted under this licence.
+
+Copyright (c) 2022, ISO/IEC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the ISO/IEC nor the names of its contributors
+  may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+---
+ DirectXMesh/DirectXMeshOptimizeLRU.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/DirectXMesh/DirectXMeshOptimizeLRU.cpp b/DirectXMesh/DirectXMeshOptimizeLRU.cpp
+index b2a76a3..abf7ccf 100644
+--- a/DirectXMesh/DirectXMeshOptimizeLRU.cpp
++++ b/DirectXMesh/DirectXMeshOptimizeLRU.cpp
+@@ -521,7 +521,7 @@ HRESULT DirectX::OptimizeFacesLRU(
+ #ifdef WIN32
+     InitOnceExecuteOnce(&s_initOnce, ComputeVertexScores, nullptr, nullptr);
+ #else
+-    std::call_once(s_initOnce, ComputeVertexScores);
++    std::call_once(s_initOnce, &ComputeVertexScores);
+ #endif
+ 
+     return OptimizeFacesImpl<uint16_t>(indices, static_cast<uint32_t>(nFaces * 3), faceRemap, lruCacheSize, 0);
+@@ -546,7 +546,7 @@ HRESULT DirectX::OptimizeFacesLRU(
+ #ifdef WIN32
+     InitOnceExecuteOnce(&s_initOnce, ComputeVertexScores, nullptr, nullptr);
+ #else
+-    std::call_once(s_initOnce, ComputeVertexScores);
++    std::call_once(s_initOnce, &ComputeVertexScores);
+ #endif
+ 
+     return OptimizeFacesImpl<uint32_t>(indices, static_cast<uint32_t>(nFaces * 3), faceRemap, lruCacheSize, 0);
+@@ -574,7 +574,7 @@ HRESULT DirectX::OptimizeFacesLRUEx(
+ #ifdef WIN32
+     InitOnceExecuteOnce(&s_initOnce, ComputeVertexScores, nullptr, nullptr);
+ #else
+-    std::call_once(s_initOnce, ComputeVertexScores);
++    std::call_once(s_initOnce, &ComputeVertexScores);
+ #endif
+ 
+     auto subsets = ComputeSubsets(attributes, nFaces);
+@@ -627,7 +627,7 @@ HRESULT DirectX::OptimizeFacesLRUEx(
+ #ifdef WIN32
+     InitOnceExecuteOnce(&s_initOnce, ComputeVertexScores, nullptr, nullptr);
+ #else
+-    std::call_once(s_initOnce, ComputeVertexScores);
++    std::call_once(s_initOnce, &ComputeVertexScores);
+ #endif
+ 
+     auto subsets = ComputeSubsets(attributes, nFaces);
+-- 
+2.32.0 (Apple Git-131)
+

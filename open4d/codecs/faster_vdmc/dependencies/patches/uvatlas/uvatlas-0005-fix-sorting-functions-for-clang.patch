@@ -1,0 +1,78 @@
+From a15a4fe447c1aeaf76b8db26b7b7f17fd4acfa54 Mon Sep 17 00:00:00 2001
+From: Julien Ricard <julien.ricard@interdigital.com>
+Date: Wed, 12 Oct 2022 17:43:22 +0200
+Subject: [PATCH] Fix sorting functions for clang
+
+---
+ UVAtlas/isochart/UVAtlasRepacker.cpp |  6 +++++-
+ UVAtlas/isochart/packingcharts.cpp   | 17 ++++++++++++++---
+ 2 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/UVAtlas/isochart/UVAtlasRepacker.cpp b/UVAtlas/isochart/UVAtlasRepacker.cpp
+index 0fae0ef..94c7a8c 100644
+--- a/UVAtlas/isochart/UVAtlasRepacker.cpp
++++ b/UVAtlas/isochart/UVAtlasRepacker.cpp
+@@ -1206,7 +1206,11 @@ void CUVAtlasRepacker::SortCharts()
+     std::sort(m_SortedChartIndex.begin(), m_SortedChartIndex.end(),
+         [=](size_t a, size_t b)
+         {
+-            return (m_ChartsInfo[a].maxLength > m_ChartsInfo[b].maxLength);
++            if( m_ChartsInfo[a].maxLength == m_ChartsInfo[b].maxLength ){
++                return a > b;
++            } else {
++                return (m_ChartsInfo[a].maxLength > m_ChartsInfo[b].maxLength);
++            }
+         });
+ }
+ 
+diff --git a/UVAtlas/isochart/packingcharts.cpp b/UVAtlas/isochart/packingcharts.cpp
+index c20fa59..90f5de7 100644
+--- a/UVAtlas/isochart/packingcharts.cpp
++++ b/UVAtlas/isochart/packingcharts.cpp
+@@ -66,6 +66,7 @@
+ #include "pch.h"
+ #include "isochartmesh.h"
+ #include "maxheap.hpp"
++#include <map>
+ 
+ // VECTOR field selector
+ // v can be a XMFLOAT2 or XMFLOAT3 variable
+@@ -2472,7 +2473,8 @@ void CIsochartMesh::AlignUVWithLongestAxis() const
+ // Sort the charts in decreasing order by chart area.
+ namespace
+ {
+-    int CompareChart(const void* chart1, const void* chart2)
++    int CompareChart(const void* chart1, const void* chart2,
++                         std::map<const void*, size_t>& map )
+     {
+         auto pChart1 = *reinterpret_cast<const CIsochartMesh* const*>(chart1);
+         auto pChart2 = *reinterpret_cast<const CIsochartMesh* const*>(chart2);
+@@ -2490,14 +2492,23 @@ namespace
+         {
+             return 1;
+         }
+-        return 0;
++        return map[chart1] > map[chart2];
+     }
+ }
+ 
+ void CIsochartMesh::SortCharts(
+     ISOCHARTMESH_ARRAY& chartList)
+ {
+-    std::sort(chartList.begin(), chartList.end(), CompareChart);
++    // std::sort(chartList.begin(), chartList.end(), CompareChart);
++    std::map<const void*, size_t> map;
++    for(size_t i=0;i<chartList.size();i++){
++        map.insert( std::make_pair( reinterpret_cast<const void*>(chartList[i]), i ) );
++    }
++    std::sort(chartList.begin(), chartList.end(),
++        [=,&map](const void* chart1, const void* chart2 )
++        {
++            return CompareChart( chart1, chart2, map );
++        });
+ }
+ 
+ // Add One Chart into atlas
+-- 
+1.8.3.1
+

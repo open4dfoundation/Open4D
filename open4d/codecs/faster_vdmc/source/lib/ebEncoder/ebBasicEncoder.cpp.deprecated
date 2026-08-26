@@ -1,0 +1,1775 @@
+/* The copyright in this software is being made available under the BSD
+ * License, included below. This software may be subject to other third party
+ * and contributor rights, including patent rights, and no such rights are
+ * granted under this license.
+ *
+ * Copyright (c) 2023, ISO/IEC
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  * Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *  * Neither the name of the ISO/IEC nor the names of its contributors may
+ *    be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include <iostream>
+#include <algorithm>
+#include <fstream>
+#include <unordered_map>
+#include <time.h>
+#include <math.h>
+#include <tuple>
+#include <bitset>
+#include <deque>
+// internal headers
+#include "ebIO.h"
+#include "ebChrono.h"
+#include "ebModel.h"
+#include "ebGeometry.h"
+#include "ebColor.h"
+#include "ebModelConverter.h"
+#include "ebVertexTraversal.h"
+
+#include "ebBasicEncoder.h"
+#include "ebEntropy.h"
+#include "ebEntropyContext.h"
+#include "ebRansCodecUtils.h"
+#include "ebRansSymbolCodec.h"
+#include "ebRansBinaryCodec.h"
+
+#include "ebBitstream.h"
+#include "ebWriter.hpp"
+#include "syntaxElements/meshCoding.hpp"
+
+using namespace eb;
+
+void EBBasicEncoder::encode(const Model& input)
+{
+
+    COUT << "  Encoding using forward Edgebreaker method" << std::endl;
+
+    switch (cfg.traversal) {
+    case eb::EBConfig::Traversal::EB:     COUT << "    Using topology traversal for vertex predictions" << std::endl; break;
+    case eb::EBConfig::Traversal::DEGREE: COUT << "    Using vertex degree traversal for vertex predictions" << std::endl; break;
+    }
+
+    // Cleanup the input model to convert non-manifold elements to manifold
+
+    // A.1 - Convert input mesh into OVTable
+    auto t = now();
+    ModelConverter::convertModelToCTMesh(input, _ovTable, cfg.deduplicate, cfg.useMainIndexIfEqual, cfg.unify, cfg.verbose);
+    COUT << "  Convert time (ms) = " << elapsed(t) << std::endl;
+
+    // A.2 - triangulate boundaries if needed, by adding dummy points and triangles
+    t = now();
+    int nbLoops = _ovTable.closeBoundaries(dummyVertices);
+    COUT << "  Hole fill time (ms) = " << elapsed(t) << std::endl;
+
+    if (nbLoops != 0) {
+        COUT << "  -> Detected " << nbLoops << " loops that were triangulated adding " << dummyVertices.size()
+            << " dumy vertices and " << _ovTable.getTriangleCount() - input.getTriangleCount() << " triangles" << std::endl;
+    }
+
+    // A.3 - Quantize the CT mesh if needed*
+    t = now();
+    if (!cfg.intAttr)
+        quantize(dummyVertices.size()); // do not include dummy values in bbox computation
+
+    COUT << "  Quantize time (ms) = " << elapsed(t) << std::endl;
+
+    // B - init some little stuffs
+    // then these allocations shall better be performed in initCompression
+    t = now();
+
+    numOfVertices  = _ovTable.getPositionCount(); // pb is allocated after dummies inserted 
+    numOfTriangles = _ovTable.getTriangleCount();
+    numOfUVCoords  = _ovTable.getUVCount();
+
+    // Allocate memory for vertex array
+    G_est.resize(numOfVertices);
+    // Allocate memory for M U MI MC tables
+    //init tables for marking visited vertices and triangles
+    M.assign(numOfVertices,0);	  // Table for marking visited vertices
+    MI.assign(numOfVertices,-1);  // Table for marking visited vertices indices
+    UF.resize(numOfTriangles, 0); // !! is a bool or use ids and -1 or some invalid init
+    U.assign(numOfTriangles,0);   // Table for marking visited triangles
+    MC.assign(numOfUVCoords,0);	  // Table for marking visited corners
+
+    // C - do the job, CC per CC
+
+    // T id of the last symbol compressed so far
+    T = 0;
+    N = 0;
+    ccCount = 0;
+    posSkipDup = 0;
+    int startHandle = 0;
+    prevFaceId = -1;
+
+    for (auto c = 0; c < 3 * numOfTriangles; ++c) {      // compress component
+        if (!U[_ovTable.t(c)]) {                         // starts with an unvisited triangle
+
+            ccStartCorners.push_back(c);
+            startCompression(c);
+
+            int size = oHandles.size() - startHandle;
+            if (size != 0) {                              // we store only if non null
+                oHandleSizes.push_back(ccCount);          // the index of the CC 
+                oHandleSizes.push_back(oHandles.size());  // the size of the handle
+                startHandle = oHandles.size();
+            }
+            ccProcessedEndIdx.push_back(processedCorners.size());
+            ccCount++;
+        }
+    }
+
+    // encode attributes with separate index table
+    encodeSeparateIndexAttributes();
+
+    // encode the per face attributes
+    encodePerFaceAttributes();
+
+    // should already be sorted from insertion to avoid this
+    if (cfg.traversal != EBConfig::Traversal::EB) {
+        std::sort(oDummies.begin(), oDummies.end());
+    }
+
+    //
+    COUT << "  Encoding time (ms) = " << elapsed(t) << std::endl;
+}
+
+//
+void EBBasicEncoder::startCompression(const int c)
+{
+    const auto& ov = _ovTable;
+    const auto& G = _ovTable.positions;
+    const auto& V = _ovTable.V;
+    const auto& O = _ovTable.O;
+
+    if (cfg.traversal == EBConfig::Traversal::EB) {
+        // estimate 1st  vertex
+        encodeMainIndexAttributes(c, 0);
+    }
+    M[V[c]] = 1;
+    MI[V[c]] = N++;
+
+    if (cfg.traversal == EBConfig::Traversal::EB) {
+        //estimate third vertex and mark it as visited
+        encodeMainIndexAttributes(ov.n(c), 1);
+    }
+    M[V[ov.n(c)]] = 1;
+    MI[V[ov.n(c)]] = N++;
+
+    if (cfg.traversal == EBConfig::Traversal::EB) {
+        //estimate second vertex and mark it as visited
+        encodeMainIndexAttributes(ov.p(c), 2);
+    }
+    M[V[ov.p(c)]] = 1;
+    MI[V[ov.p(c)]] = N++;
+
+    processedCorners.push_back(c);
+
+    // paint the triangle 
+    U[ov.t(c)]=1; // mark the triangle as visited
+
+    // traverse triangles incident on the first vertex
+    int a = O[c];
+
+    // we keep a count of number of triangles incident on the first corner
+    int count = 1;
+
+    //first traverse 'C' triangles 
+    while (a != ov.p(O[ov.p(c)])) {
+
+        // increment count for number of triangles incident on the first corner
+        count++;
+
+        // paint the triangle, increment # of triangles 
+        U[ov.t(a)]=1;
+        T++;
+
+        // estimate next vertex and mark it as visited
+        processedCorners.push_back(a);
+        if (cfg.traversal == EBConfig::Traversal::EB) {
+            encodeMainIndexAttributes(a, -1);
+        }
+        M[ov.V[a]] = 1;
+        MI[ov.V[a]] = N++;
+
+        // continue with the right neighbor 
+        a = O[ov.n(a)];
+    }
+
+    // traverse 'R' triangle incident on first vertex 
+    processedCorners.push_back(a);
+    U[ov.t(a)]=1;
+    T++;
+    count++;
+
+    // Initializes the CLRES table
+    // Append(I - 2) Cs and 1R to the beginning of the array
+    // First write I-2 C's
+    for (int i = 0; i < (count - 2); i++) {
+        oClers.push_back('C');
+    }
+    // now write one R
+    oClers.push_back('R');
+
+    // Start CC compression
+    CompressRec(O[ov.p(a)]);
+
+    // perform main index traversals as post process
+    if (cfg.traversal != EBConfig::Traversal::EB) {
+        encodeCcMainIndexAttributes(c);
+    }
+
+}
+
+//
+void EBBasicEncoder::CompressRec(int c)
+{
+    const auto& ov = _ovTable;
+    const auto& G = _ovTable.positions;
+    const auto& V = _ovTable.V;
+    const auto& O = _ovTable.O;
+
+    //start traversal for triangle tree
+    do
+    {
+        processedCorners.push_back(c);
+        //mark the triangle as visited
+        U[ov.t(c)]=1;
+        T++;
+
+        //check for handles
+        CheckHandle(c);
+
+        //test whether tip vertex was visited
+        if (M[V[c]] == 0)
+        {
+            //append encoding of C to clers
+            oClers.push_back('C');
+
+            //estimate next vertex and mark it as visited
+            if (cfg.traversal == EBConfig::Traversal::EB) {
+                encodeMainIndexAttributes(c, -1);
+            }
+            M[V[c]] = 1;
+            MI[V[c]] = N++;
+
+            //continue with the right neighbor
+            c = ov.r(c);
+        }
+        else
+            //test whether right triangle was visited
+            if (U[ov.t(ov.r(c))] > 0)
+            {
+                //test whether left triangle was visited
+                if (U[ov.t(ov.l(c))] > 0)
+                {
+                    //append code for E and pop
+                    oClers.push_back('E');
+                    return;
+                }
+                else
+                {
+                    //append code for R, move to left triangle
+                    oClers.push_back('R');
+                    c = ov.l(c);
+                }
+            }
+            else
+                //test whether left triangle was visited
+                if (U[ov.t(ov.l(c))] > 0)
+                {
+                    //append code for L, move to right triangle
+                    oClers.push_back('L');
+                    c = ov.r(c);
+                }
+                else
+                {
+                    //store corner number in decompression, to support handles
+                    U[ov.t(c)] = T * 3 + 2;
+
+                    //append code for S
+                    oClers.push_back('S');
+
+                    //recursive call to visit right branch first
+                    CompressRec(ov.r(c));
+
+                    //move to left triangle
+                    c = ov.l(c);
+
+                    //if the triangle to the left was visited, then  return
+                    if (U[ov.t(c)] > 0)
+                        return;
+                }
+    } while (true);
+
+}
+
+// we use triangles indices only and binary indication on direction, then 3T+1 or 3T+2 values
+void EBBasicEncoder::CheckHandle(const int c)
+{
+    const auto& ov = _ovTable;
+
+    //check for handles from the right
+    if (U[ov.t(ov.O[ov.n(c)])] > 1)
+    {
+        //store opposite corners for handle triangles
+        oHandles.push_back(U[ov.t(ov.O[ov.n(c)])]);
+        oHandles.push_back(T * 3 + 1);
+    }
+
+    //check for handles from the left
+    if (U[ov.t(ov.O[ov.p(c)])] > 1)
+    {
+        //store opposite corners for handle triangles
+        oHandles.push_back(U[ov.t(ov.O[ov.p(c)])]);
+        oHandles.push_back(T * 3 + 2);
+    }
+}
+
+void EBBasicEncoder::encodeCcMainIndexAttributes(const int startCorner)
+{
+    const auto& ov = _ovTable;
+    const auto& V = _ovTable.V;
+
+    PredictionVertexTraverser traverser;
+    traverser.init(&_ovTable, ov.getPositionCount(), ov.getTriangleCount() );
+    traverser.traverse(startCorner); 
+
+    // clear marked corner before traversal
+    // partial CC clearing would be sufficient
+    M.assign(M.size(), 0);
+
+    int v = 0;
+    for (auto c: traverser.visitedCorners) {
+        encodeMainIndexAttributes(c, v > 2 ? -1 : v);
+        v++;
+    }
+}
+
+//
+void EBBasicEncoder::encodeMainIndexAttributes(const int c, const int v)
+{
+    const auto& V = _ovTable.V;
+    const auto& G = _ovTable.positions;
+    const auto& UV = _ovTable.uvcoords;
+    const auto& OTC = _ovTable.OTC;
+    const bool predictUVs = (UV.size() && !OTC.size()); // predict UVs in first pass if no separate index
+
+    bool bypasspos = false;
+    if (cfg.deduplicate)
+    {
+        // check for duplicated positions
+        const auto dupIt = _ovTable.duplicatesMap.find(_ovTable.V[c]);
+        if (dupIt != _ovTable.duplicatesMap.end())
+        {
+            isVertexDup.push_back(true);
+            oDuplicateSplitVertexIdx.push_back(dupIt->second);
+        }
+        else
+            isVertexDup.push_back(false);
+
+        // early return if duplicate already coded
+        if (dupIt != _ovTable.duplicatesMap.end())
+        {
+            if (processedDupIdx.find(dupIt->second) != processedDupIdx.end())
+            {
+                bypasspos = true; // no need to encode as already processed
+                posSkipDup++;
+            }
+            else
+                processedDupIdx.insert(dupIt->second);
+        }
+        // then use duplicate pos info to replicate the value when decoding      
+    }
+
+    // reindex the dummy vertives
+    if (isCornerVertexDummy(c))
+    {
+        if (cfg.traversal == EBConfig::Traversal::EB) {
+            // reindexation is dependent on how we encode some values separately
+            if (cfg.posPred != EBConfig::PosPred::MPARA)
+                oDummies.push_back(oVertices.size());
+            else
+                oDummies.push_back(oVertices.size() + sVertices.size() + oDummies.size() + posSkipDup);
+        }
+        else {
+            oDummies.push_back(MI[V[c]]);
+        }
+    }
+
+    if (!bypasspos)
+    {
+        // positions
+        switch (cfg.posPred) {
+        case EBConfig::PosPred::NONE:
+            oVertices.push_back(G[V[c]]);
+            break;
+        case EBConfig::PosPred::MPARA:
+            posEncodeWithPrediction(c, v);
+            break;
+        }
+        // UVCoords
+        if (predictUVs) {
+            switch (cfg.uvPred) {
+            case EBConfig::UvPred::NONE:
+                oUVCoords.push_back(UV[V[c]]);
+                break;
+            case EBConfig::UvPred::STRETCH:
+                uvEncodeWithPrediction(c, v);
+                break;
+            }
+        }
+    }
+    else {
+        M[V[c]] = 1;
+    }
+}
+
+void EBBasicEncoder::posEncodeWithPrediction(const int c, const int v)
+{
+    const auto MAX_PARALLELOGRAMS = 4;
+    const auto& OV = _ovTable;
+    const auto& V = _ovTable.V;                 // NO CC SHIFTING
+    const auto& O = _ovTable.O;                 // NO CC SHIFTING
+    const auto& G = _ovTable.positions;         // NO CC SHIFTING
+    // use a separate table for start and dummy vertices => less unique symbols for entropy coding
+    if ((v == 0) || isCornerVertexDummy(c))
+    {
+        if (v == 0)
+            sVertices.push_back(G[V[c]]);                     // start point, store as global coordinate
+        M[V[c]] = 1; // redundant if no post traversal
+        return;
+    }
+    
+    switch (v) {                                              // case 0 already handled along with dummies
+    case 1:                                                   // store delta, 
+    case 2:                                                   // store delta, 
+        oVertices.push_back(G[V[c]] - G[V[OV.p(c)]]); break;
+    default:                                                  // store parallelogram estimation
+        bool prevIsDummy = isCornerVertexDummy(OV.p(c));
+        // search for some parallelogram estimations around the vertex of the corner
+        int  count = 0;
+        int  altC = c;
+        glm::vec3 predPos(0, 0, 0);                       // the predicted position
+        do                                                // loop through corners attached to the current vertex 
+        {
+            if (count >= MAX_PARALLELOGRAMS) break;
+            if (((!isCornerVertexDummy(O[altC])) &&
+                (!isCornerVertexDummy(OV.p(altC))) &&
+                (!isCornerVertexDummy(OV.n(altC)))) &&
+                ((M[V[O[altC]]] > 0) && (M[V[OV.p(altC)]] > 0) && (M[V[OV.n(altC)]] > 0)))
+            {
+                // parallelogram prediction estG = prevG + nextG - oppoGd
+                glm::vec3 estG = G[V[OV.p(altC)]] + G[V[OV.n(altC)]] - G[V[O[altC]]];
+                predPos += estG;                      // accumulate parallelogram predictions
+                ++count;
+            }
+            altC = OV.p(O[OV.p(altC)]);              // swing around the triangle fan
+        } while (altC != c);
+
+        if (count > 0)                                             // use parallelogram prediction when possible
+            predPos = glm::round(predPos / glm::vec3(count));      // divide and round each component of vector predPos
+        else                                                       // or fallback to delta with available values
+            // G[V[OV.n(c)]] cannot be dummy if prevIsDummy and is necessarly marked
+            predPos = prevIsDummy ? G[V[OV.n(c)]] : G[V[OV.p(c)]];
+
+        oVertices.push_back(G[V[c]] - predPos);    // store the residual = position - predicted
+    }                                              // end
+
+    M[V[c]] = 1; // redundant if no post traversal
+
+}
+
+// c corner to use for the prediction, 
+void EBBasicEncoder::predictUV(const int c, glm::vec2& predUV, const std::vector<int>& indices)
+{
+    const auto& OV = _ovTable;
+    const auto& V = _ovTable.V;
+    const auto& G = _ovTable.positions;
+    const auto& UV = _ovTable.uvcoords;
+    const auto& IDX = indices;
+    const auto& O = _ovTable.O;
+    const auto& OTC = _ovTable.OTC;
+    const auto& ov = _ovTable;
+
+    // we do not accumulate uv predictions, stop on first 
+    glm::dvec2 uvPrev = UV[IDX[OV.p(c)]];
+    glm::dvec2 uvNext = UV[IDX[OV.n(c)]];
+    glm::dvec2 uvCurr = UV[IDX[c]];
+    glm::dvec3 gPrev = G[V[OV.p(c)]];
+    glm::dvec3 gNext = G[V[OV.n(c)]];
+    glm::dvec3 gCurr = G[V[c]];
+    glm::dvec3 gNgP = gPrev - gNext;
+    glm::dvec3 gNgC = gCurr - gNext;
+    glm::dvec2 uvNuvP = uvPrev - uvNext;
+    double gNgP_dot_gNgC = glm::dot(gNgP, gNgC);
+    double d2_gNgP = glm::dot(gNgP, gNgP);
+    if (d2_gNgP > 0)
+    {
+        glm::dvec2 uvProj = uvNext + uvNuvP * (gNgP_dot_gNgC / d2_gNgP);
+        glm::dvec3 gProj = gNext + gNgP * (gNgP_dot_gNgC / d2_gNgP);
+        double d2_gProj_gCurr = glm::dot(gCurr - gProj, gCurr - gProj);
+        const glm::dvec2 uvProjuvCurr = glm::dvec2(uvNuvP.y, -uvNuvP.x) * std::sqrt(d2_gProj_gCurr / d2_gNgP);
+        glm::dvec2 predUV0(uvProj + uvProjuvCurr);
+        glm::dvec2 predUV1(uvProj - uvProjuvCurr);
+
+        bool useOpp = false;
+        const bool hasSeparateUvIndex = OTC.size() != 0;
+        const bool onSeam = (hasSeparateUvIndex ? (OTC[c] != -4) : false);
+        // we cannot use the opposite if beyond a seam
+        //bool checkOpposite = (!onSeam && O[c] >= 0 && IDX[O[c]] >= 0 && MC[IDX[O[c]]] > 0);
+        //if (ov.OTC.empty())  // to simplify and mutualize - exclude dummy opposites
+        //    checkOpposite &= O[c] >= 0 && IDX[O[c]] >= 0 && M[IDX[O[c]]] > 0 && !isCornerVertexDummy(O[c]);
+        const bool checkOpposite = O[c] >= 0 && IDX[O[c]] >= 0 && (
+            (hasSeparateUvIndex && !onSeam && MC[IDX[O[c]]] > 0)
+            || (!hasSeparateUvIndex && M[IDX[O[c]]] && !isCornerVertexDummy(O[c]))
+            );
+        if (checkOpposite) {
+            // check that O not aligned with N and P (possible to disciminate sides
+            const glm::dvec2 uvOpp = UV[IDX[O[c]]];
+            // this test should be using 64b integers - this is ( vecNP ^ vec NO )
+            const glm::dvec2 NP = (uvPrev - uvNext);
+            glm::dvec2 NO(uvOpp - uvNext);
+            // evaluate cross product
+            const double NPxNO = NP.x * NO.y - NP.y * NO.x;
+            // in current implementation NPxNO is integer and check can be to strict zero
+            useOpp = (NPxNO != 0);
+
+#if 0
+            // check additionnal problems - debug only
+            const auto NC = (uvCurr - uvNext);
+            const double NPxNC = NP.x * NC.y - NP.y * NC.x;
+            if (!((NPxNC > 0) ^ (NPxNO > 0))) // C and O should be on both side of [NP]
+                // TODO : check if less problmes when using eg UVATLAS_LIMIT_FACE_STRETCH 
+                // TODO : check incidence of texParamWidth in UVAtlasCreate (textureParametrization.cpp)
+                bool problem = true; // bad parametrization or degenerate C=P or C=N
+#endif
+        }
+
+        if (useOpp) {
+            const glm::dvec2 uvOpp = UV[IDX[O[c]]];
+            const auto OUV0 = uvOpp - predUV0;
+            const auto OUV1 = uvOpp - predUV1;
+            predUV = (dot(OUV0, OUV0) < dot(OUV1, OUV1)) ? predUV1 : predUV0;
+        }
+        else {
+            const auto CPr0 = uvCurr - predUV0;
+            const auto CPr1 = uvCurr - predUV1;
+            const bool orientation = dot(CPr0, CPr0) < dot(CPr1, CPr1);
+            predUV = round(orientation ? predUV0 : predUV1);
+            orientations.push_back(orientation);
+        }
+    }
+    else
+    {
+        predUV = round((UV[IDX[OV.n(c)]] + UV[IDX[OV.p(c)]]) / 2.0f);
+    }
+}
+
+
+void EBBasicEncoder::uvEncodeWithPrediction(const int c, const int v) {
+
+    const auto MAX_STRETCH_PREDS = 8;
+    auto& OV = _ovTable;
+    auto& V = _ovTable.V;
+    auto& O = _ovTable.O;
+    auto& G = _ovTable.positions;
+    auto& UV = _ovTable.uvcoords;
+
+    // use a separate table for start and dummy uv coords => less unique symbols for entopy coding
+    if ((v == 0) || isCornerVertexDummy(c))
+    {
+        if (v == 0)
+            sUVCoords.push_back(UV[V[c]]);                          // start point, store as global coordinate
+        // this introduces a shift to be handled when decoding as no related oUVCoords.push_back exist
+        return;
+    }
+    // switch on vertex index. case 0 already handled with dummies
+    switch (v) {
+    case 1:                                                       // delta, 
+    case 2:                                                       // delta, 
+        oUVCoords.push_back(UV[V[c]] - UV[V[OV.p(c)]]); break;
+    default:                                                      // parallelogram
+        bool prevIsDummy = isCornerVertexDummy(OV.p(c));
+        { // same loop with or without dummies
+            int  count = 0;
+            bool last = false;
+            int  altC = c;
+            glm::vec2 predUV(0, 0);
+            do {
+
+                if (count >= MAX_STRETCH_PREDS) break;
+
+                if ((c != altC) && isCornerVertexDummy(altC))
+                {   // stop after looping in both directions or if a complete turn achieved
+                    if (last) break;
+                    altC = c;
+                    last = true;
+                }
+                else if (((!isCornerVertexDummy(OV.p(altC))) &&
+                    (!isCornerVertexDummy(OV.n(altC)))) &&
+                    ((M[V[OV.p(altC)]] > 0) && (M[V[OV.n(altC)]] > 0)))
+                {
+                    glm::vec2 estUV(0, 0);
+                    predictUV(altC, estUV, V);
+                    predUV += estUV;
+                    ++count;
+                }
+                altC = (!last) ? OV.p(O[OV.p(altC)]) : OV.n(O[OV.n(altC)]); // swing right or left
+            } while (altC != c);
+            if (count > 0) {
+                predUV = glm::round(predUV / glm::vec2(count));
+                oUVCoords.push_back(UV[V[c]] - predUV);
+            }
+            else
+            {
+                glm::vec2 predUV = prevIsDummy ? UV[V[OV.n(c)]] : UV[V[OV.p(c)]];
+                const auto resUV = UV[V[c]] - predUV;
+                oUVCoords.push_back(resUV);
+            }
+        }
+        break;
+    } // end of switch
+}
+
+void EBBasicEncoder::encodeSeparateIndexAttributes()
+{
+
+    const auto& ov = _ovTable;
+
+    if (ov.OTC.size()) // if hasUV and separate table
+    {
+        // let's create a temp OV table where O/V is set with OTC/TC, 
+        // for the case of alternative traversal
+        if (cfg.traversal != EBConfig::Traversal::EB) {
+
+            _uvCornerTable.O = _ovTable.O;  // we will add UV seams cuts on top of this
+            _uvCornerTable.V = _ovTable.TC;
+        }
+        std::vector<int> uvCcStartCorners; // extended set of start corners
+        auto startPcIdx = 0;               // start processed corner index
+        // work CC per CC
+        for (auto ccIdx = 0; ccIdx < ccProcessedEndIdx.size(); ++ccIdx) {
+            // init extended set of start corners for the CC
+            uvCcStartCorners.push_back(ccStartCorners[ccIdx]);
+            // here we should have the list of the processed corners and be able to define seams
+            for (int pcIdx = startPcIdx; pcIdx < ccProcessedEndIdx[ccIdx]; ++pcIdx)
+            {
+                auto corner = processedCorners[pcIdx];
+                const int corners[3] = { corner, ov.n(corner), ov.p(corner) };
+
+                for (int i = 0; i < 3; ++i) {
+                    const int cur_corner = corners[i];
+                    const int opp_corner = ov.O[cur_corner];
+                    if (cfg.traversal != EBConfig::Traversal::EB) {
+                        // break edges to dummies
+                        if (isCornerVertexDummy(cur_corner) || isCornerVertexDummy(opp_corner))
+                        {
+                            _uvCornerTable.O[cur_corner] = -3;
+                            _uvCornerTable.O[opp_corner] = -3;
+                            if (!isCornerVertexDummy(cur_corner)) // we do not push the opposite corner
+                                uvCcStartCorners.push_back(cur_corner);
+                        }
+                    }
+                    // no explicit seams on boundary edges
+                    if (ov.OTC[cur_corner] < -2) continue;
+                    const bool is_seam = ov.OTC[cur_corner] == -2;
+                    seams.push_back(is_seam);
+                    const int updval = is_seam ? -3 : -4; // used to identify seams when predicting uvs
+                    _ovTable.OTC[cur_corner] = updval;
+                    _ovTable.OTC[opp_corner] = updval;
+                    if (cfg.traversal != EBConfig::Traversal::EB) {
+                        if (is_seam) {
+                            _uvCornerTable.O[cur_corner] = -3;
+                            _uvCornerTable.O[opp_corner] = -3;
+                            // we store seam corners as a potential start corners
+                            uvCcStartCorners.push_back(cur_corner);
+                            uvCcStartCorners.push_back(opp_corner);
+                        }
+                    }
+                }
+            }
+            //
+            startPcIdx = ccProcessedEndIdx[ccIdx];
+        }
+        
+        const auto& TC = _ovTable.TC;
+        const auto& UV = _ovTable.uvcoords;
+
+        // a template approach would be better to reduce 
+
+        if (cfg.traversal == EBConfig::Traversal::DEGREE) {
+            PredictionVertexTraverser traverser;
+            traverser.init(&_uvCornerTable, _ovTable.uvcoords.size(), ov.getTriangleCount() );
+            for (auto corner : uvCcStartCorners) {
+                if (!traverser.isCornerFaceVisited(corner)) 
+                    traverser.traverse(corner);
+            }
+            for (auto cur_corner : traverser.visitedCorners)
+            {
+                if ((TC[cur_corner] < 0) || MC[TC[cur_corner]] > 0) continue;
+
+                switch (cfg.uvPred) {
+                case EBConfig::UvPred::NONE:
+                    oUVCoords.push_back(UV[TC[cur_corner]]);
+                    break;
+                case EBConfig::UvPred::STRETCH:
+                    uvSepEncodeWithPrediction(cur_corner);
+                    break;
+                }
+                MC[TC[cur_corner]] = 1;
+            }
+        }
+        else { // EBConfig::Traversal::EB, use processedCOrners from EB traversal
+
+            for (auto corner : processedCorners)
+            {
+                const int corners[3] = { corner, ov.n(corner), ov.p(corner) };
+                for (int i = 0; i < 3; ++i) {
+                    const int cur_corner = corners[i];
+
+                    if ((TC[cur_corner] < 0) || MC[TC[cur_corner]] > 0) continue;
+
+                    switch (cfg.uvPred) {
+                    case EBConfig::UvPred::NONE:
+                        oUVCoords.push_back(UV[TC[cur_corner]]);
+                        break;
+                    case EBConfig::UvPred::STRETCH:
+                        uvSepEncodeWithPrediction(cur_corner);
+                        break;
+                    }
+                    MC[TC[cur_corner]] = 1;
+
+                }
+            }
+        }
+    }
+}
+
+void EBBasicEncoder::encodePerFaceAttributes(void)
+{
+
+    const auto& ov = _ovTable;
+
+    if (ov.ids.size()) // has face ids
+    {
+        for (auto corner : processedCorners)
+        {
+            const int corners[3] = { corner, ov.n(corner), ov.p(corner) };
+            // check if the face contains no virtual vertices 
+            bool realFace = true;
+            for (int i = 0; i < 3; ++i)
+                realFace &= !isCornerVertexDummy(corners[i]);            
+            if (realFace)
+            {
+                const int tri = ov.t(corner);
+                //auto prev = oFids.size() ? *oFids.crbegin() : -1;
+                auto curFaceID = ov.ids[tri];
+                // store a boolean values checking for equallity between successive values
+                oFidsIdIsDifferent.push_back(curFaceID == prevFaceId);
+                // if the id associated to the current face is equal
+                // to the previously encoded value, nothing to do
+                if (curFaceID != prevFaceId)
+                {
+                    // check if the 3 adjacent faces (through opposites) have already been encoded
+                    bool decodedFacing = UF[ov.t(ov.O[corners[0]])];
+                    bool decodedRight = UF[ov.t(ov.O[corners[1]])];
+                    bool decodedLeft = UF[ov.t(ov.O[corners[2]])];
+                    // if already encoded, retreive corresponding ids
+                    int faceIdFacing = decodedFacing ? ov.ids[ov.t(ov.O[corners[0]])] : -1;
+                    int faceIdRight = decodedRight ? ov.ids[ov.t(ov.O[corners[1]])] : -1;
+                    int faceIdLeft = decodedLeft ? ov.ids[ov.t(ov.O[corners[2]])] : -1;
+                    // starting from each of the adjacent triangles
+                    // (sharing one edge with the triangle we are encoding)
+                    for (auto k = 0; k < 3; k++)
+                    {
+                        // we will potentially update the "decoded" (decodable) status and related id
+                        // for each of the 3 reference triangles
+                        auto dec = (k == 0) ? decodedRight : ((k == 1) ? decodedLeft : decodedFacing);
+                        if (!dec)
+                        {
+                            // initialise a starting "rotating corner" as a corner of the non encoded
+                            // adjacent triangle (R for k==0, L if k==1, F if k==2) 
+                            auto rc = ov.O[corners[(k + 1) % 3]];
+                            // then start looping through adjacent triangles, swinging around a first 
+                            // corner shared with the triangle we are encoding
+                            rc = ov.O[ov.n(rc)];
+                            // stopping if an encoded triangle is found, or if the analyzed face is one of 
+                            // the 3 original R,L,F triangles
+                            while (rc != ov.p(ov.O[corners[(k) % 3]]) && !UF[ov.t(rc)])
+                            {
+                                rc = ov.O[ov.n(rc)];
+                            }
+                            if (!UF[ov.t(rc)])
+                            {
+                                // if no encoded face found, then swing around the other shared corners
+                                rc = ov.O[corners[(k + 1) % 3]];
+                                rc = ov.O[ov.p(rc)];
+                                while (rc != ov.n(ov.O[corners[(k + 2) % 3]]) && !UF[ov.t(rc)])
+                                {
+                                    rc = ov.O[ov.p(rc)];
+                                }
+                            }
+                            auto newDecoded = UF[ov.t(rc)] ? ov.ids[ov.t(rc)] : -1;
+                            // if an already encoded face is found during the procedure, then update
+                            // the corresponding "decoded" (can be decoded) status, and Id value 
+                            if (newDecoded >= 0) {
+                                if (k == 0) {
+                                    decodedRight = true;
+                                    faceIdRight = newDecoded;
+                                }
+                                else if (k == 1) {
+                                    decodedLeft = true;
+                                    faceIdLeft = newDecoded;
+                                }
+                                else
+                                {
+                                    decodedFacing = true;
+                                    faceIdFacing = newDecoded;
+                                }
+                            }
+                        }
+
+                    }
+
+                    if (decodedRight)
+                        oFaceIdIsRight.push_back(faceIdRight == curFaceID);
+                    if (!decodedRight || (faceIdRight != curFaceID))
+                    {
+                        if ((decodedLeft) && (faceIdLeft != faceIdRight))
+                            oFaceIdIsLeft.push_back(faceIdLeft == curFaceID);
+                        if (!decodedLeft || (faceIdLeft != curFaceID))
+                        {
+                            if ((decodedFacing) && (faceIdFacing != faceIdRight) && (faceIdFacing != faceIdLeft))
+                                oFaceIdIsFacing.push_back(faceIdFacing == curFaceID);
+                            if (!decodedFacing || (faceIdFacing != curFaceID))
+                                oNotPredictedFaceId.push_back(curFaceID);
+                        }
+                    }
+                }
+                UF[tri] = 1; // mark the face as encoded
+                prevFaceId = curFaceID;
+            }
+        }
+    }
+}
+
+//
+void EBBasicEncoder::uvSepEncodeWithPrediction(const int c) {
+    
+    const auto MAX_STRETCH_PREDS = 8;
+    auto& OV = _ovTable;
+    auto& OTC = _ovTable.OTC;
+    auto& O = _ovTable.O;
+    auto& UV = _ovTable.uvcoords;
+    auto& TC = _ovTable.TC;
+    auto& V = _ovTable.V;
+    auto& G = _ovTable.positions;
+    bool hasUVn = TC[OV.n(c)] >= 0 && MC[TC[OV.n(c)]];
+    bool hasUVp = TC[OV.p(c)] >= 0 && MC[TC[OV.p(c)]];
+    int predC = c;
+    int minn = (hasUVn)+(hasUVp);
+
+    // selection of the triangle used for prediction
+    if (!hasUVn || !hasUVp) 
+    {
+        auto altC = c;
+        while (OTC[OV.n(altC)] == -4)
+        {
+            altC = OV.n(O[OV.n(altC)]);
+            if (altC == c) break;
+            bool hasUVna = TC[OV.n(altC)] >= 0 && MC[TC[OV.n(altC)]];
+            bool hasUVpa = TC[OV.p(altC)] >= 0 && MC[TC[OV.p(altC)]];
+            int curn = (hasUVna)+(hasUVpa);
+            if (curn > minn)
+            {
+                predC = altC; minn = curn;
+                hasUVn = hasUVna; hasUVp = hasUVpa;
+                if (minn == 2) break;
+            }
+        }
+        if (altC != c && minn < 2)
+        {
+            altC = c;
+            while (OTC[OV.p(altC)] == -4)
+            {
+                altC = OV.p(O[OV.p(altC)]);
+                if (altC == c) break;
+                bool hasUVna = TC[OV.n(altC)] >= 0 && MC[TC[OV.n(altC)]];
+                bool hasUVpa = TC[OV.p(altC)] >= 0 && MC[TC[OV.p(altC)]];
+                int curn = (hasUVna)+(hasUVpa);
+                if (curn > minn)
+                {
+                    predC = altC; minn = curn;
+                    hasUVn = hasUVna; hasUVp = hasUVpa;
+                    if (minn == 2) break;
+                }
+            }
+        }
+    }
+
+    if (!hasUVn && !hasUVp)                                         // start point, store as global coord
+    {   // use a separate table for start and dummy uv coords => less unique symbols for entropy coding
+        // this introduces a shift to be handled when decoding as no related oUVCoords.push_back
+        sUVCoords.push_back(UV[TC[predC]]);
+    }
+    else if (!hasUVn)                                               // cannot predict, use delta
+        oUVCoords.push_back(UV[TC[predC]] - UV[TC[OV.p(predC)]]);
+    else if (!hasUVp)                                               // cannot predict, use delta
+        oUVCoords.push_back(UV[TC[predC]] - UV[TC[OV.n(predC)]]);
+    else {
+        int  count = 0;
+        int  altC = predC;
+        glm::vec2 predUV(0, 0);
+        do {
+
+            if (count >= MAX_STRETCH_PREDS) break;
+
+            glm::vec2 estUV(0, 0);
+            if ((TC[OV.p(altC)] >= 0) && (TC[OV.n(altC)] >= 0)) {
+                if ((MC[TC[OV.p(altC)]] > 0) && (MC[TC[OV.n(altC)]] > 0))
+                {
+                    predictUV(altC, estUV, TC);
+                    predUV += estUV;
+                    ++count;
+                }
+            }
+            if (OTC[OV.p(altC)] == -4) {
+                altC = OV.p(O[OV.p(altC)]);
+            }
+            else {
+                altC = -1; // force reverse loop
+                break;
+            }
+        } while (altC != c);
+        if (altC != c) {
+            altC = predC;
+            do {
+
+                if (count >= MAX_STRETCH_PREDS) break;
+
+                if (OTC[OV.n(altC)] == -4) {
+                    altC = OV.n(O[OV.n(altC)]);
+                }
+                else {
+                    break;
+                }
+                glm::vec2 estUV(0, 0);
+                if ((TC[OV.p(altC)] >= 0) && (TC[OV.n(altC)] >= 0)) {
+                    if ((MC[TC[OV.p(altC)]] > 0) && (MC[TC[OV.n(altC)]] > 0))
+                    {
+                        predictUV(altC, estUV, TC);
+                        predUV += estUV;
+                        ++count;
+                    }
+                }
+            } while (altC != c);
+        }
+        if (count > 0) {
+            predUV = glm::round(predUV / glm::vec2(count));
+            oUVCoords.push_back(UV[TC[predC]] - glm::round(predUV));
+        }
+    }
+
+}
+
+uint32_t ConvertSignedIntToSymbol(int32_t val) {
+    if (val >= 0) {
+        return (val) << 1;
+    }
+    val = -(val + 1);
+    uint32_t ret = (val);
+    ret <<= 1;
+    ret |= 1;
+    return ret;
+}
+
+bool EBBasicEncoder::save(std::string fileName) {
+
+    Bitstream bitstream;
+
+    if (!serialize(bitstream))
+        return false;
+
+    auto t = now();
+    if (!bitstream.save(fileName)) {
+        std::cerr << "Error: can't save compressed bitstream." << std::endl;
+        return false;
+    }
+    COUT << "  Bitstream write to file time (ms) = " << elapsed(t) << std::endl;
+
+    COUT << "  Saved bitstream byte size = " << bitstream.size() << std::endl;
+
+    return true;
+}
+
+// entropy encoding and serialization into a bitstream
+bool EBBasicEncoder::serialize(Bitstream& bitstream) {
+
+    auto timeAll = now();
+    auto t = now();
+
+    // AC coded buffers
+    std::vector<uint8_t> meshHandleBuffer;
+    std::vector<uint8_t> meshClersSymbolBuffer;
+    std::vector<uint8_t> meshPositionIsDuplicateFlagBuffer;
+    std::vector<uint8_t> meshPositionResidualsBuffer;
+    std::vector<uint8_t> meshAttributeSeamBuffer;
+    std::vector<uint8_t> meshAttributeResidualBuffer;
+    std::vector<uint8_t> meshTexCoordStretchOrientationBuffer;
+    std::vector<uint8_t> meshFaceIdResidualsBuffer;
+    std::vector<uint8_t> meshFaceIdIsRBuffer;
+    std::vector<uint8_t> meshFaceIdIsLBuffer;
+    std::vector<uint8_t> meshFaceIdIsFBuffer;
+    std::vector<uint8_t> meshFaceIdDBuffer;
+
+    if (_ovTable.uvcoords.empty()) // or sUVCoords or oUVCoords empy
+        qt = -1; // override user setting if no uv in bitstream - used for decoding
+
+    const bool hasSeparateUvIndex = _ovTable.OTC.size();
+
+    const bool hasFID = _ovTable.ids.size();
+    if (!hasFID)
+        qm = -1;
+
+    // check ranges and adjust auto quantization if selected
+    // when adjusting ranges coding/decoding should be possible and aligned with draco integer mode
+    // but still decoded output may not all lie wihtin the quantized range (residuals offsets from within range absolute values)
+    if (cfg.intAttr && (qp >=0)) 
+    {
+        auto minv = std::numeric_limits<int>::max();
+        auto maxv = std::numeric_limits<int>::min();
+        for (auto v : sVertices)
+        {
+            for (auto i = 0; i < v.length(); ++i)
+            {
+                minv = std::min((int)v[i], minv);
+                maxv = std::max((int)v[i], maxv);
+            }
+        }
+        if (minv < 0) // // not handled in this version
+        {
+            std::cout << "ERROR : negative quantized position values present" << std::endl;
+        }
+
+        if (qp == 0)
+        {
+            qp = std::ceil(std::log2(maxv+1));
+            COUT << "  qp = " << qp << " (auto)" << std::endl;
+        }
+
+        if (maxv > ( (1 << qp) - 1))
+        {
+            std::cout << "ERROR : maximal position values beyond quantized range" << std::endl;
+        }
+    }
+
+    if (cfg.intAttr && (qt >=0) )
+    {
+        auto minv = std::numeric_limits<int>::max();
+        auto maxv = std::numeric_limits<int>::min();
+        for (auto v : sUVCoords) // coding/decoding possible, but still may not correspond to quantized range for the complete mesh
+        {
+            for (auto i = 0; i < v.length(); ++i)
+            {
+                minv = std::min((int)v[i], minv);
+                maxv = std::max((int)v[i], maxv);
+            }
+        }
+        if (minv < 0) // not handled in this version
+        {
+            std::cout << "ERROR : negative quantized texture coordinates values present" << std::endl;
+        }
+
+        if (qt == 0)
+        {
+            qt = std::ceil(std::log2(maxv+1));
+            COUT << "  qt = " << qt << " (auto)" << std::endl;
+        }
+
+        if (maxv > ( (1 << qt) - 1))
+        {
+            std::cout << "ERROR : maximal texture coordinates values beyond quantized range" << std::endl;
+        }
+    }
+
+    if (hasFID && (qm >=0))
+    {
+        auto minv = std::numeric_limits<int>::max();
+        auto maxv = std::numeric_limits<int>::min();
+        for (auto v : oNotPredictedFaceId) // coding/decoding possible, but still may not correspond to quantized range for the complete mesh
+        {
+            minv = std::min(v, minv);
+            maxv = std::max(v, maxv);
+        }
+        if (minv < 0) // not handled in this version
+        {
+            std::cout << "ERROR : negative face Id values present" << std::endl;
+        }
+
+        if (qm == 0)
+        {
+            qm = std::ceil(std::log2(maxv+1));
+            COUT << "  qm = "<< qm << " (auto)" << std::endl;
+        }
+
+        if (maxv > ( (1 << qm) - 1))
+        {
+            std::cout << "ERROR : maximal face Id values beyond quantized range" << std::endl;
+        }
+    }
+
+    if (hasFID)
+    {
+        AdaptiveBitModel ctxCoeffRemSuffix[8]; // to be adjusted depending on fid quantization
+        AdaptiveBitModel ctxCoeffRemPrefix[8];
+        AdaptiveBitModel ctxL, ctxF, ctxR, ctxD;
+        EntropyEncoder     ac,acL,acF,acR, acD;
+        const auto         maxAcBufLen = oNotPredictedFaceId.size() * 4 + 1024;
+        ac.setBuffer(maxAcBufLen, nullptr);
+        acR.setBuffer(oFaceIdIsRight.size() + 1024, nullptr); // to be resized...
+        acL.setBuffer(oFaceIdIsLeft.size() + 1024, nullptr);
+        acF.setBuffer(oFaceIdIsFacing.size() + 1024, nullptr);
+        acD.setBuffer(oFidsIdIsDifferent.size() + 1024, nullptr);
+        ac.start();
+        for (auto fidRes:oNotPredictedFaceId) {
+            ac.encodeExpGolomb(fidRes, 2, ctxCoeffRemPrefix, ctxCoeffRemSuffix);
+        }
+        acD.start();
+        for (auto fidD:oFidsIdIsDifferent) {
+            acD.encode(fidD, ctxD);
+        }
+        acR.start();
+        for (auto fidR:oFaceIdIsRight) {
+            acR.encode(fidR, ctxR);
+        }
+        acL.start();
+        for (auto fidL:oFaceIdIsLeft) {
+            acL.encode(fidL, ctxL);
+        }
+        acF.start();
+        for (auto fidF:oFaceIdIsFacing) {
+            acF.encode(fidF, ctxF);
+        }
+
+        auto resLength = ac.stop();
+        meshFaceIdResidualsBuffer.assign(ac.buffer(), ac.buffer() + resLength);
+
+        auto resRLength = acR.stop();
+        meshFaceIdIsRBuffer.assign(acR.buffer(), acR.buffer() + resRLength);
+
+        auto resLLength = acL.stop();
+        meshFaceIdIsLBuffer.assign(acL.buffer(), acL.buffer() + resLLength);
+
+        auto resFLength = acF.stop();
+        meshFaceIdIsFBuffer.assign(acF.buffer(), acF.buffer() + resFLength);
+
+        auto resDLength = acD.stop();
+        meshFaceIdDBuffer.assign(acD.buffer(), acD.buffer() + resDLength);
+
+        auto totalLength = resLength + resRLength + resLLength + resFLength + resDLength;
+        COUT << "  FaceId bytes = " << totalLength << " bpf = " << 8.0 * (float)(totalLength) / oFidsIdIsDifferent.size() << std::endl;
+    }
+
+    size_t posLength = 0;
+    // cfg.predCoder == EBConfig::ECName::DIRAC - single alternative .. TO BE ADDED
+    {
+        AdaptiveBitModel ctxCoeffRemPrefix[12];
+        AdaptiveBitModel ctxCoeffRemSuffix[12];
+        const auto bias = 3;
+        const auto bctx = 2;
+        AdaptiveBitModel ctxz;
+        AdaptiveBitModel ctxs;
+        AdaptiveBitModel ctxlb[2][bctx];
+        EntropyEncoder     ac;
+        const auto         maxAcBufLen = oVertices.size() * 3 * 4 + 1024;
+        ac.setBuffer(maxAcBufLen, nullptr);
+        ac.start();
+        bool islow = true;
+        //for (auto i = 0; i < oVertices.size(); ++i) {
+        for (int32_t k = 0; k < 3; ++k) {
+            for (auto i = 0; i < oVertices.size(); ++i) { // may be better to use x then y then z, or use 3 sets of rem pref and suff
+                {
+                    const int value = (int)(oVertices[i][k]);
+                    int pval;
+                    const bool isz = (value == 0);
+                    ac.encode(isz, ctxz);
+                    if (isz) {
+                        islow = true; continue;
+                    }
+                    ac.encode(value < 0, ctxs);
+                    pval = abs(value) - 1;
+                    for (int k = 0; k < bias; ++k)
+                    {
+                        const auto ctx = std::min(k, bctx - 1);
+                        if (pval <= k) {
+                            ac.encode(0, ctxlb[islow][ctx]);
+                            break;
+                        }
+                        ac.encode(1, ctxlb[islow][ctx]);
+                    }
+                    islow = pval < bias;
+                    if (pval >= bias)
+                        ac.encodeExpGolomb(pval - bias, gshift, ctxCoeffRemPrefix, ctxCoeffRemSuffix);
+                }
+            }
+        }
+        posLength = ac.stop();
+        const auto byteCount = uint32_t(posLength);
+        // assign position residuals buffer
+        meshPositionResidualsBuffer.assign(ac.buffer(), ac.buffer() + byteCount);
+    }
+    COUT << "  Positions bytes = " << posLength << " bpv = " << 8.0 * (float)posLength / oVertices.size() << std::endl;
+
+    size_t uvLength = 0;
+    if (qt >= 0)
+    {
+        //cfg.predCoder == EBConfig::ECName::DIRAC - single alternative ..TO BE ADDED
+        {
+            AdaptiveBitModel ctxCoeffRemPrefix[12];
+            AdaptiveBitModel ctxCoeffRemSuffix[12];
+            EntropyEncoder     ac;
+            const auto bias = 3;
+            const auto bctx = 2;
+            AdaptiveBitModel ctxz;
+            AdaptiveBitModel ctxs;
+            AdaptiveBitModel ctxlb[2][bctx];
+            const auto         maxAcBufLen = oUVCoords.size() * 2 * 4 + 1024;
+            ac.setBuffer(maxAcBufLen, nullptr);
+            ac.start();
+            bool islow = true;
+            for (auto i = 0; i < oUVCoords.size(); ++i) { // no gain when using x then y or using separate ctx for those ?
+                for (int32_t k = 0; k < 2; ++k) {
+                    {
+                        const int value = (int)(oUVCoords[i][k]);
+                        int pval;
+                        const bool isz = (value == 0);
+                        ac.encode(isz, ctxz);
+                        if (isz) {
+                            islow = true; continue;
+                        }
+                        ac.encode(value < 0, ctxs);
+                        pval = abs(value) - 1;
+                        for (int k = 0; k < bias; ++k)
+                        {
+                            auto ctx = std::min(k, bctx - 1);
+                            if (pval <= k) {
+                                ac.encode(0, ctxlb[islow][ctx]);
+                                break;
+                            }
+                            ac.encode(1, ctxlb[islow][ctx]);
+                        }
+                        islow = pval < bias;
+                      if (pval >= bias){
+                        ac.encodeExpGolomb(pval - bias, gshift, ctxCoeffRemPrefix, ctxCoeffRemSuffix);
+                      }
+                    }
+                }
+            }
+            uvLength = ac.stop();
+            const auto byteCount = uint32_t(uvLength);
+            // assign attributes residuals buffer
+            meshAttributeResidualBuffer.assign(ac.buffer(), ac.buffer()+ byteCount);
+        }
+        COUT << "  UVCoords bytes = " << uvLength << " bpv = " << 8.0 * (float)uvLength / oUVCoords.size() << std::endl;
+
+        // extra data for mpara 
+        if (cfg.uvPred == EBConfig::UvPred::STRETCH)
+        {
+            size_t uvOrientationLength = 0;
+            { // single coder selection for uv orientation .. TO BE ADDED
+                std::vector<uint8_t> orientBuffer;
+                rans::RansBinaryEncoder orientEncoder;
+                for (auto it = orientations.begin(); it != orientations.end(); ++it) {
+                    orientEncoder.append(*it);
+                }
+                orientEncoder.encode(orientBuffer);
+                uvOrientationLength = orientBuffer.size();
+                const auto byteCount = uint32_t(uvOrientationLength);
+                const auto nbOrientations = uint32_t(orientations.size());
+                // assign uv strech orientation buffr
+                meshTexCoordStretchOrientationBuffer = std::move(orientBuffer);
+            }
+            COUT << "  UVCoords auxiliary orientation selection bytes = " << uvOrientationLength << " bpv = " << 8.0 * (float)uvOrientationLength / oUVCoords.size() << std::endl;
+        }
+
+        // extra data for uv coord seams when separte uv indices - should be replicated for all non geo attributes
+        if (hasSeparateUvIndex)
+        {
+            size_t uvSeamsLength = 0;
+            { // single coder selection for seams.. TO BE ADDED
+                // using dirac
+                AdaptiveBitModel ctx;
+                EntropyEncoder   ac;
+                ac.setBuffer(seams.size() + 1024, nullptr);
+                ac.start();
+                for (auto i = 0; i < seams.size(); ++i) {
+                    ac.encode(seams[i], ctx);
+                }
+                uvSeamsLength = ac.stop();
+                const auto byteCount = uint32_t(uvSeamsLength);
+                const auto nbSeams = uint32_t(seams.size());
+                // assign attribute seams buffer
+                meshAttributeSeamBuffer.assign(ac.buffer(), ac.buffer() + byteCount);
+            }
+            COUT << "  UVCoords auxiliary seam bytes = " << uvSeamsLength << " bpv = " << 8.0 * (float)uvSeamsLength / oUVCoords.size() << std::endl;
+        }
+    }
+    else
+    {
+        COUT << "  no UVCoords " << std::endl;
+    }
+    // CLERS table
+    std::map<char, uint32_t> clersToInt = { {'C',0}, {'S',1}, {'L',3}, {'R',5},{'E',7} };
+    std::vector<uint32_t> clersUI32;
+    clersUI32.reserve(oClers.size());
+    for (auto i = 0; i < oClers.size(); ++i) {
+        const auto symb = clersToInt.find(oClers[i])->second;
+        clersUI32.push_back(symb);
+    }
+    auto tc = now();
+    size_t topoLength = 0;
+    // cfg.topoCoder == EBConfig::ECName::DIRAC - single alternative ..TO BE ADDED
+    {
+        // alternative using binary coding for clers symbols and three bit contexts
+        // adding context selection based on previous symbol
+        const auto       maxAcBufLent = oClers.size() + 1024;
+
+        int prev = 0;
+        int prevprev = 0;
+        int Crun = 0;
+
+        AdaptiveBitModel ctx_isNotC[9];
+        AdaptiveBitModel ctx_bit1[9];
+        AdaptiveBitModel ctx_bit02[9];
+        AdaptiveBitModel ctx_bit12[9];
+
+        EntropyEncoder   ac;
+        ac.setBuffer(maxAcBufLent, nullptr);
+        ac.start();
+        int pS = 0; // 'C'
+        bool useExtended = (clersUI32.size() > 3000); // fixed threshold is this basic variant
+        for (auto i = 0; i < clersUI32.size(); ++i) {
+            const auto value = clersUI32[i];
+            const bool isNotC = (value & 1);
+            ac.encode(isNotC, ctx_isNotC[pS]);
+            if (isNotC)
+            {
+                const bool bit1 = (value & 2);
+                const bool bit2 = (value & 4);
+                ac.encode(bit1, ctx_bit1[pS]);
+                if (bit1)
+                    ac.encode(bit2, ctx_bit12[pS]);
+                else
+                    ac.encode(bit2, ctx_bit02[pS]);
+            }
+
+            prevprev = prev;
+            prev = (value + 1) >> 1; // C:0->0, S:1->1, L:3->2, R:5->3, E:7->4
+
+            Crun = isNotC ? 0 : Crun + 1;
+            switch (prev) {
+              case 0:// prev is C
+                pS = !useExtended? 0 : Crun<2? 0 : Crun<7? 1 : 2;
+                break;
+              case 1:// prev is S
+                pS = 3;
+                break;
+              case 2:// prev is L
+                pS = 4;
+                break;
+              case 3:// prev is R
+                pS = 5 + (prevprev == 0/*C*/? 0 : prevprev == 3/*R*/? 1 : 2);
+                break;
+              case 4:// prev is E
+                pS = 8;
+                break;
+            }
+        }
+        topoLength = ac.stop();
+        const auto byteCount = uint32_t(topoLength);
+        COUT << "  Topology bytes = " << topoLength << " , bpf = " << 8.0 * (float)topoLength / oClers.size() << std::endl;
+        // assign topology symbols buffer
+        meshClersSymbolBuffer.assign(ac.buffer(), ac.buffer() + byteCount);
+    }
+
+    COUT << "  CLERS AC coding time (ms) = " << elapsed(tc) << std::endl;
+
+    // Handles
+    const auto NumHandles = oHandles.size() / 2;
+    COUT << "  Handles count = " << NumHandles << std::endl;
+    const int MinHandles = MIN_HANDLE; // TODO: add in syntax
+
+    if (NumHandles >= MinHandles) // AC coding only if handles are not to few
+    {
+        int prev1 = 0;
+        int prev2 = 0;
+        const auto nexp = 8;
+        const auto capexp = 3;
+        AdaptiveBitModel   ctx1, ctx2, cexp[nexp];
+        StaticBitModel sctx;
+        EntropyEncoder     ac;
+        const auto         maxAcBufLen = oHandles.size() * 32 + 1024;
+        ac.setBuffer(maxAcBufLen, nullptr);
+        ac.start();
+        int fixed = 0;
+        for (auto i = 0; i < NumHandles; i++) {
+            int cur1 = (abs(oHandles[2 * i + 0]) - 2) / 3;
+            // no need to encode the sign in forward mode, it is allways positive
+            //ac.encode(oHandles[2 * i + 0] > 0, ctx1);       // AC encode the sign of h1, using ctx1
+            int cur2 = (oHandles[2 * i + 1] - 1) / 3;
+            ac.encode((oHandles[2 * i + 1] - 1) % 3, ctx2); // AC encode the shift of h2, using ctx2
+            // AC encode the first signed delta value per blocks of 4 bits using multiple contexts cexp[]
+            unsigned int val;
+            val = 2 * abs(cur1 - prev1) - ((cur1 - prev1) < 0 ? 1 : 0);
+            int nb;
+            nb = std::ceil(log2(val + 1) / 4);
+            if (nb == 0) nb = 1;
+            for (auto i = 1; i < nb; ++i)
+            {
+                ac.encode(1, cexp[std::min(i - 1, capexp)]);
+            }
+            ac.encode(0, cexp[std::min(nb - 1, capexp)]);
+            fixed += 4 * nb;
+            for (auto i = 4 * nb - 1; i >= 0; --i)
+            {
+                ac.encode(val & (1 << i), sctx);
+            }
+            // AC encode the second signed delta value per blocks of 4 bits using multiple contexts cexp[]
+            val = 2 * abs(cur2 - prev2) - ((cur2 - prev2) < 0 ? 1 : 0);
+            nb = std::ceil(log2(val + 1) / 4);
+            if (nb == 0) nb = 1;
+            for (auto i = 1; i < nb; ++i)
+            {
+                ac.encode(1, cexp[std::min(i - 1, capexp)]);
+            }
+            ac.encode(0, cexp[std::min(nb - 1, capexp)]);
+            fixed += 4 * nb;
+            for (auto i = 4 * nb - 1; i >= 0; --i)
+            {
+                ac.encode(val & (1 << i), sctx);
+            }
+            prev1 = cur1;
+            prev2 = cur2;
+        }
+        auto handleOrientationLength = ac.stop();
+        const auto byteCount = uint32_t(handleOrientationLength);
+        COUT << "  Handles auxiliary orientation selection bytes = " << handleOrientationLength << " , bph = " << 8.0 * (float)handleOrientationLength / oHandles.size() / 2 << std::endl;
+        // assign handle shift buffer
+        meshHandleBuffer.assign(ac.buffer(), ac.buffer() + byteCount);
+    }
+
+    if (cfg.deduplicate)
+    {
+        if (oDuplicateSplitVertexIdx.size())
+        {
+            AdaptiveBitModel ctx;
+            EntropyEncoder   ac;
+            ac.setBuffer(isVertexDup.size() + 10, nullptr); // to resize better
+            ac.start();
+            for (auto i = 0; i < isVertexDup.size(); ++i) {
+                ac.encode(isVertexDup[i], ctx);
+            }
+            auto dupLength = ac.stop();
+            const auto byteCount = uint32_t(dupLength);
+            COUT << "  De duplicate indices bytes = " << byteCount << std::endl;
+
+            // assign duplicate position information buffer
+            meshPositionIsDuplicateFlagBuffer.assign(ac.buffer(), ac.buffer() + byteCount);
+        }
+    }
+
+    COUT << "  AC encoding time (ms) = " << elapsed(t) << std::endl;
+
+    t = now();
+
+    // Using bitstream writer to fill syntax tables 
+    MeshCoding meshCoding; // Top level syntax element
+    EbWriter   ebWriter;
+
+    // Filling Mesh Coding Header
+    auto& mch = meshCoding.getMeshCodingHeader();
+    // Codec Variant
+    mch.getMeshCodecType() = MeshCodecType::CODEC_TYPE_FORWARD;
+    // vertex traversal method
+    switch (cfg.traversal) {
+    case EBConfig::Traversal::EB: mch.getMeshVertexTraversalMethod() = MeshVertexTraversalMethod::MESH_EB_TRAVERSAL; break;
+    case EBConfig::Traversal::DEGREE: mch.getMeshVertexTraversalMethod() = MeshVertexTraversalMethod::MESH_DEGREE_TRAVERSAL; break;
+    }
+    // Position Encoding Parameters
+    auto& mpep = mch.getMeshPositionEncodingParameters();
+    mpep.getMeshPositionBitDepthMinus1() = qp - 1;
+    mpep.getMeshClersSymbolsEncodingMethod() = MeshClersSymbolsEncodingMethod::MESH_CLERS_AC_DEFAULT;
+    mpep.getMeshPositionPredictionMethod() = MeshPositionPredictionMethod::MESH_POSITION_MPARA;
+    mpep.getMeshPositionResidualsEncodingMethod() = MeshPositionResidualsEncodingMethod::MESH_POSITION_AC_DEFAULT;
+    mpep.getMeshPositionDeduplicateMethod() = cfg.deduplicate ? MeshPositionDeduplicateMethod::MESH_POSITION_DEDUP_DEFAULT : MeshPositionDeduplicateMethod::MESH_POSITION_DEDUP_NONE;
+    // Position Dequantization
+    mch.getMeshPositionDequantizeFlag() = (qp >= 7 && !cfg.intAttr); // this condition to be modified through a more flexible ebEncode interface
+    if (mch.getMeshPositionDequantizeFlag())
+    {
+        auto& mpdp = mch.getMeshPositionDequantizeParameters();
+        mpdp.getMeshPositionMin(0) = minPos.x;
+        mpdp.getMeshPositionMin(1) = minPos.y;
+        mpdp.getMeshPositionMin(2) = minPos.z;
+        mpdp.getMeshPositionMax(0) = maxPos.x;
+        mpdp.getMeshPositionMax(1) = maxPos.y;
+        mpdp.getMeshPositionMax(2) = maxPos.z;
+    }
+    // Attributes
+    uint8_t attributeCount = (qt >= 0) + (qm >=0); // only tex coords - exclusive in first implementation
+    mch.allocateAttributes(attributeCount);
+    mch.getMeshAttributeCount() = attributeCount;
+    for (auto i = 0; i < mch.getMeshAttributeCount(); i++)
+    {
+        if ((i==0) && (qt >= 0)) // TO BE MODIFIED - ordering when multiple attributes
+        {
+            mch.getMeshAttributeType()[i] = MeshAttributeType::MESH_ATTR_TEXCOORD; 
+            auto& maep = mch.getMeshAttributesEncodingParameters(i);
+
+            maep.getMeshAttributeBitDepthMinus1() = qt - 1;
+            maep.getMeshAttributePerFaceFlag() = false;
+            if (!maep.getMeshAttributePerFaceFlag())
+            {
+                maep.getMeshAttributeSeparateIndexFlag() = hasSeparateUvIndex;
+                if (!maep.getMeshAttributeSeparateIndexFlag())
+                    maep.getMeshAttributeReferenceIndexPlus1() = 0; // we always use position as the principal attibute for now 
+            }
+            // !! something to revise to ba able to better write the following
+            maep.getMeshAttributePredictionMethod() = (uint8_t)MeshAttributePredictionMethod_TEXCOORD::MESH_TEXCOORD_STRETCH;
+            maep.getMeshAttributeResidualsEncodingMethod() = (uint8_t)MeshAttributeResidualsEncodingMethod_TEXCOORD::MESH_TEXCOORD_AC_DEFAULT;
+
+            mch.getMeshAttributeDequantizeFlag()[i] = (qt >= 7 && !_ovTable.uvcoords.empty() && !cfg.intAttr); // this condition to be modified through a more flexible ebEncode interface
+            if (mch.getMeshAttributeDequantizeFlag()[i])
+            {
+                auto& madp = mch.getMeshAttributesDequantizeParameters()[i];
+                /*
+                for (auto j = 0; j < mch.getNumComponents(i); j++)
+                {
+                    madp.getMeshAttributeMin(j) = mmm;
+                    madp.getMeshAttributeMax(j) = MMM;
+                }
+                */
+                madp.getMeshAttributeMin(0) = minUv.x;
+                madp.getMeshAttributeMin(1) = minUv.y;
+                madp.getMeshAttributeMax(0) = maxUv.x;
+                madp.getMeshAttributeMax(1) = maxUv.y;
+            }
+        }
+        else // (qm >=0) TO BE MODIFIED - ordering when multiple attributes
+        {
+            mch.getMeshAttributeType()[i] = MeshAttributeType::MESH_ATTR_MATERIAL_ID;
+            auto& maep = mch.getMeshAttributesEncodingParameters(i);
+            maep.getMeshAttributeBitDepthMinus1() = qm - 1; // TODO enforce range
+            maep.getMeshAttributePerFaceFlag() = true;
+            maep.getMeshAttributeSeparateIndexFlag() = true; // with no start positions - should this default to true for all per face 
+            maep.getMeshAttributePredictionMethod() = (uint8_t)MeshAttributePredictionMethod_MATERIALID::MESH_MATERIALID_DEFAULT; // no specific for face IDs
+            maep.getMeshAttributeResidualsEncodingMethod() = (uint8_t)MeshAttributeResidualsEncodingMethod_MATERIALID::MESH_MATERIALID_AC_DEFAULT;
+
+            mch.getMeshAttributeDequantizeFlag()[i] = false;
+        }
+    }
+
+
+    // Payload
+
+    // Filling Mesh Position Coding Payload
+    auto& mpcp = meshCoding.getMeshPositionCodingPayload();
+
+    mpcp.getMeshVertexCount() = oVertices.size(); //!! check alignment with semantics
+    mpcp.getMeshClersCount() = oClers.size();
+    mpcp.getMeshCcCount() = ccCount;
+    mpcp.getMeshVirtualVertexCount() = oDummies.size();
+    mpcp.getMeshVirtualIndexDelta().resize(mpcp.getMeshVirtualVertexCount());
+    for (auto i = 0; i < mpcp.getMeshVirtualVertexCount(); ++i) {
+        mpcp.getMeshVirtualIndexDelta()[i] = (i > 0) ? oDummies[i] - oDummies[i - 1] : oDummies[0];
+    }
+    mpcp.getMeshCcWithHandlesCount() = oHandleSizes.size() >> 1;
+    mpcp.getMeshHandlesCcOffset().resize(mpcp.getMeshCcWithHandlesCount());
+    mpcp.getMeshHandlesCount().resize(mpcp.getMeshCcWithHandlesCount());
+    for (auto i = 0; i < mpcp.getMeshCcWithHandlesCount(); i++) {
+        mpcp.getMeshHandlesCcOffset()[i] = oHandleSizes[2 * i + 0] - (i ? oHandleSizes[2 * i - 2] : 0);
+        mpcp.getMeshHandlesCount()[i] = (oHandleSizes[2 * i + 1] - (i ? oHandleSizes[2 * i - 1] : 0)) >> 1;
+        // NumHandles += mpcp.getMeshHandlesCount()[i];
+    }
+    if (NumHandles < MinHandles)
+    { // store deltas
+        mpcp.getMeshHandleIndexFirstDelta().resize(NumHandles);
+        mpcp.getMeshHandleIndexSecondDelta().resize(NumHandles);
+        for (auto i = 0; i < NumHandles; i++) {
+            mpcp.getMeshHandleIndexFirstDelta()[i] = (int)oHandles[2 * i + 0] - (i ? oHandles[2 * i - 2] : 0);
+            mpcp.getMeshHandleIndexSecondDelta()[i] = (int)oHandles[2 * i + 1] - (i ? oHandles[2 * i - 1] : 0);
+        }
+    }
+    else
+    { // store AC coded buffer
+        mpcp.getMeshCodedHandleBufferSize() = meshHandleBuffer.size();
+        mpcp.getMeshHandleBuffer() = meshHandleBuffer;
+    }
+
+    mpcp.getMeshCodedClersSymbolsSize() = meshClersSymbolBuffer.size();
+    mpcp.getMeshClersSymbol() = meshClersSymbolBuffer;
+
+    auto NumPositionStart = mpcp.getMeshCcCount();
+    auto& mpdi = mpcp.getMeshPositionDeduplicateInformation();
+
+    if (mpep.getMeshPositionDeduplicateMethod() == MeshPositionDeduplicateMethod::MESH_POSITION_DEDUP_DEFAULT) {
+        mpdi.getMeshPositionDeduplicateCount() = oDuplicateSplitVertexIdx.size();
+        unsigned int NumSplitVertex = 0;
+        if (mpdi.getMeshPositionDeduplicateCount() > 0)
+        {
+            mpdi.getMeshPositionDeduplicateIdx().resize(mpdi.getMeshPositionDeduplicateCount());
+            for (auto i = 0; i < mpdi.getMeshPositionDeduplicateCount(); ++i) {
+                mpdi.getMeshPositionDeduplicateIdx()[i] = oDuplicateSplitVertexIdx[i];
+            }
+            mpdi.getMeshPositionDeduplicateStartPositions() = sVertices.size(); // used, this is sVertices when different from ccount
+            NumPositionStart = mpdi.getMeshPositionDeduplicateStartPositions();
+
+            mpdi.getMeshPositionIsDuplicateSize() = meshPositionIsDuplicateFlagBuffer.size();
+            mpdi.getMeshPositionIsDuplicateFlag() = meshPositionIsDuplicateFlagBuffer;
+
+        }
+    }
+
+
+    mpcp.getMeshPositionStart().resize(NumPositionStart);
+    for (auto i = 0; i < NumPositionStart; i++) {
+        mpcp.getMeshPositionStart()[i].resize(3);
+        for (auto j = 0; j < 3; j++) {
+            mpcp.getMeshPositionStart()[i][j] = sVertices[i][j];
+        }
+    }
+
+    // !! is it true if we skip predictions and if vertex count not set to iVerts but total input verts ? 
+    auto NumPredictedPositions = mpcp.getMeshVertexCount() - mpcp.getMeshCcCount();
+
+    mpcp.getMeshCodedPositionResidualsSize() = meshPositionResidualsBuffer.size();
+    mpcp.getMeshPositionResidual() = meshPositionResidualsBuffer;
+
+
+    // Filling Mesh Attribute Coding Payload
+    auto& macp = meshCoding.getMeshAttributeCodingPayload();
+    macp.allocate(mch.getMeshAttributeCount());
+    for (auto i = 0; i < mch.getMeshAttributeCount(); i++) {
+        if (qt >= 0)
+        {
+            //macp.get
+            auto mesh_attribute_per_face_flag = mch.getMeshAttributesEncodingParameters(i).getMeshAttributePerFaceFlag();
+            auto mesh_attribute_separate_index_flag = mch.getMeshAttributesEncodingParameters(i).getMeshAttributeSeparateIndexFlag();
+            if (!mesh_attribute_per_face_flag && mesh_attribute_separate_index_flag) {
+                macp.getMeshAttributeSeamsCount()[i] = seams.size();
+                macp.getMeshCodedAttributeSeamsSize()[i] = meshAttributeSeamBuffer.size();
+                macp.getMeshAttributeSeam()[i] = meshAttributeSeamBuffer;
+            }
+
+            // TODO !! REWRITE SYNTAX
+            if (mesh_attribute_separate_index_flag)
+                macp.getMeshAttributeStartCount()[i] = sUVCoords.size();
+
+            // TO BE EXTENDED FOR CASES WITH MULTIPLE ATTRIBUTES
+            macp.getMeshAttributeStart()[i].resize(sUVCoords.size());
+            const auto numComponents = mch.getNumComponents(i);
+            for (auto j = 0; j < sUVCoords.size(); j++) {
+                macp.getMeshAttributeStart()[i][j].resize(numComponents);
+                for (auto k = 0; k < numComponents; k++) {
+                    macp.getMeshAttributeStart()[i][j][k] = sUVCoords[j][k];
+                }
+            }
+
+            macp.getMeshAttributeResidualsCount()[i] = oUVCoords.size();
+            macp.getMeshCodedAttributeResidualsSize()[i] = meshAttributeResidualBuffer.size();
+            macp.getMeshAttributeResidual()[i] = meshAttributeResidualBuffer;
+
+            if (mesh_attribute_separate_index_flag)
+            {
+                auto& madi = macp.getMeshAttributeDeduplicateInformation()[i]; //EMPTY 
+            }
+            {
+                auto& maed = macp.getMeshAttributeExtraData()[i];
+                if ((mch.getMeshAttributeType()[i] == MeshAttributeType::MESH_ATTR_TEXCOORD)
+                    && (mch.getMeshAttributesEncodingParameters()[i].getMeshAttributePredictionMethod()
+                        == (uint8_t)MeshAttributePredictionMethod_TEXCOORD::MESH_TEXCOORD_STRETCH))
+                {
+                    auto& mtced = maed.getMeshTexCoordStretchExtraData();
+
+                    mtced.getMeshTexCoordStretchOrientationsCount() = orientations.size();
+                    mtced.getMeshCodedTexCoordStretchOrientationsSize() = meshTexCoordStretchOrientationBuffer.size();
+                    mtced.getMeshTexCoordStretchOrientation() = meshTexCoordStretchOrientationBuffer;
+                }
+            }
+        }
+        else
+        {
+            // we assume that the only other attribute is id for now
+            auto mesh_attribute_per_face_flag = mch.getMeshAttributesEncodingParameters(i).getMeshAttributePerFaceFlag();
+            // we assume we have a separte index - enabling to set start size to 0
+            macp.getMeshAttributeStartCount()[i] = 0; // no start ini per face material id coding in tis implementation
+            macp.getMeshAttributeResidualsCount()[i] = oNotPredictedFaceId.size();
+            macp.getMeshCodedAttributeResidualsSize()[i] = meshFaceIdResidualsBuffer.size();
+            macp.getMeshAttributeResidual()[i] = meshFaceIdResidualsBuffer;
+
+            {
+                auto& maed = macp.getMeshAttributeExtraData()[i];
+                if ((mch.getMeshAttributeType()[i] == MeshAttributeType::MESH_ATTR_MATERIAL_ID)
+                    && (mch.getMeshAttributesEncodingParameters()[i].getMeshAttributePredictionMethod()
+                        == (uint8_t)MeshAttributePredictionMethod_MATERIALID::MESH_MATERIALID_DEFAULT))
+                {
+                    if (mch.getMeshAttributesEncodingParameters()[i].getMeshAttributeResidualsEncodingMethod() == (uint8_t)MeshAttributeResidualsEncodingMethod_MATERIALID::MESH_MATERIALID_AC_DEFAULT)
+                    {
+                        auto& mmied = maed.getMeshMaterialIDExtraData();
+                        mmied.getMeshMaterialIDRCount() = oFaceIdIsRight.size();
+                        mmied.getMeshCodedMaterialIDRSize() = meshFaceIdIsRBuffer.size();
+                        mmied.getMeshMaterialIDR() = meshFaceIdIsRBuffer;
+                        mmied.getMeshMaterialIDLCount() = oFaceIdIsLeft.size();
+                        mmied.getMeshCodedMaterialIDLSize() = meshFaceIdIsLBuffer.size();
+                        mmied.getMeshMaterialIDL() = meshFaceIdIsLBuffer;
+                        mmied.getMeshMaterialIDFCount() = oFaceIdIsFacing.size();
+                        mmied.getMeshCodedMaterialIDFSize() = meshFaceIdIsFBuffer.size();
+                        mmied.getMeshMaterialIDF() = meshFaceIdIsFBuffer;
+                        mmied.getMeshMaterialIDDCount() = oFidsIdIsDifferent.size();
+                        mmied.getMeshCodedMaterialIDDSize() = meshFaceIdDBuffer.size();
+                        mmied.getMeshMaterialIDD() = meshFaceIdDBuffer;
+                    }
+                }
+            }
+        }
+
+    }
+
+    COUT << "  Syntax fill time (ms) = " << elapsed(t) << std::endl;
+
+    t = now();
+
+    //serialize to bitstream
+    auto totalSize = bitstream.size();
+    ebWriter.write(bitstream, meshCoding);
+    totalSize = bitstream.size() - totalSize;
+    
+    COUT << "  Serialize syntax to bitstream time (ms) = " << elapsed(t) << std::endl;
+
+    COUT << "  Total payload bytes = " << totalSize << std::endl;
+
+    return true;
+}
+

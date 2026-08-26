@@ -1,0 +1,413 @@
+From 06638fbcb454ea1902d426362bbbc2cb109d9892 Mon Sep 17 00:00:00 2001
+From: joohyungbyeon <pa_be@naver.com>
+Date: Wed, 27 Mar 2024 17:18:34 +0900
+Subject: [PATCH] SHM12.4_with_joint_coding
+
+---
+ build/linux/common/makefile.base              |  2 +-
+ source/App/TAppEncoder/TAppEncCfg.cpp         | 15 ++++++++++++
+ source/App/TAppEncoder/TAppEncLayerCfg.h      |  3 +++
+ source/App/TAppEncoder/TAppEncTop.cpp         |  8 +++++--
+ source/Lib/TLibCommon/TComSlice.cpp           |  2 --
+ source/Lib/TLibCommon/TypeDef.h               |  3 ++-
+ source/Lib/TLibDecoder/TDecCAVLC.cpp          |  1 -
+ source/Lib/TLibEncoder/TEncCfg.h              | 19 ++++++++++++---
+ source/Lib/TLibEncoder/TEncCu.cpp             |  5 +++-
+ source/Lib/TLibEncoder/TEncGOP.cpp            | 16 +++++++++----
+ .../TLibEncoder/TEncSampleAdaptiveOffset.cpp  |  5 +---
+ source/Lib/TLibEncoder/TEncSlice.cpp          | 23 +++++++++++++++++--
+ source/Lib/TLibEncoder/TEncSlice.h            |  3 +++
+ 13 files changed, 83 insertions(+), 22 deletions(-)
+
+diff --git a/build/linux/common/makefile.base b/build/linux/common/makefile.base
+index d1e1daf..9ae2e4d 100644
+--- a/build/linux/common/makefile.base
++++ b/build/linux/common/makefile.base
+@@ -47,7 +47,7 @@ endif
+ 
+ # default cpp flags for all configurations
+ #CPPFLAGS          = -Wall -fPIC $(DEFS) -I$(CURDIR)/$(INC_DIR) $(USER_INC_DIRS)
+-CPPFLAGS          = -fPIC $(DEFS) -I$(CURDIR)/$(INC_DIR) $(USER_INC_DIRS) -Wall -Wshadow -Wno-sign-compare -Werror
++CPPFLAGS          = -fPIC $(DEFS) -I$(CURDIR)/$(INC_DIR) $(USER_INC_DIRS) -Wall -Wshadow -Wno-sign-compare
+ 
+ ########## 
+ # enforce 32-bit build : 1=yes, 0=no
+diff --git a/source/App/TAppEncoder/TAppEncCfg.cpp b/source/App/TAppEncoder/TAppEncCfg.cpp
+index 3eee161..7b5711e 100644
+--- a/source/App/TAppEncoder/TAppEncCfg.cpp
++++ b/source/App/TAppEncoder/TAppEncCfg.cpp
+@@ -685,6 +685,9 @@ Bool TAppEncCfg::parseCfg( Int argc, TChar* argv[] )
+   string* cfg_ReconFile     [MAX_LAYERS];
+   string* cfg_dQPFileName   [MAX_LAYERS];
+   Double* cfg_fQP           [MAX_LAYERS];
++#if SLICE_CONTROL
++  Int*    cfg_dispQP           [MAX_LAYERS];
++#endif
+   Int*    cfg_layerId       [MAX_LAYERS];
+   Int*    cfg_repFormatIdx  [MAX_LAYERS];
+   Int*    cfg_SourceWidth   [MAX_LAYERS]; 
+@@ -809,6 +812,9 @@ Bool TAppEncCfg::parseCfg( Int argc, TChar* argv[] )
+     cfg_ReconFile[layer]    = &m_apcLayerCfg[layer]->m_reconFileName;
+     cfg_dQPFileName[layer]  = &m_apcLayerCfg[layer]->m_dQPFileName;
+     cfg_fQP[layer]          = &m_apcLayerCfg[layer]->m_fQP;
++#if SLICE_CONTROL
++    cfg_dispQP[layer]          = &m_apcLayerCfg[layer]->m_iDispQP;
++#endif
+     cfg_colourRemapSEIFileRoot[layer] = &m_apcLayerCfg[layer]->m_colourRemapSEIFileRoot;
+     cfg_repFormatIdx[layer]         = &m_apcLayerCfg[layer]->m_repFormatIdx;
+     cfg_layerId[layer]              = &m_apcLayerCfg[layer]->m_layerId;
+@@ -1293,6 +1299,9 @@ Bool TAppEncCfg::parseCfg( Int argc, TChar* argv[] )
+   ("QP%d,-q%d",                                                                   cfg_fQP,  30.0, m_numLayers, "Qp value for layer %d, if value is float, QP is switched once during encoding")
+ #else
+   ("QP,q",                                            m_fQP,                                             30.0, "Qp value, if value is float, QP is switched once during encoding")
++#endif
++#if SLICE_CONTROL
++  ("DispQP%d,-dispq%d", cfg_dispQP, 8, m_numLayers, "Qp value for layer %d, if value is float, QP is switched once during encoding")
+ #endif
+   ("DeltaQpRD,-dqr",                                  m_uiDeltaQpRD,                                       0u, "max dQp offset for slice")
+   ("MaxDeltaQP,d",                                    m_iMaxDeltaQP,                                        0, "max dQp offset for block")
+@@ -2677,6 +2686,9 @@ Bool TAppEncCfg::parseCfg( Int argc, TChar* argv[] )
+     Int& m_iQP                      = m_apcLayerCfg[layer]->m_iQP;
+     Double& m_fQP                   = m_apcLayerCfg[layer]->m_fQP;
+ 
++#if SLICE_CONTROL
++    Int& m_dispiQP                  = m_apcLayerCfg[layer]->m_iDispQP;
++#endif
+     string& m_dQPFileName           = m_apcLayerCfg[layer]->m_dQPFileName;
+     Int* m_internalBitDepth         = m_apcLayerCfg[layer]->m_internalBitDepth;
+ #endif //SVC_EXTENSION
+@@ -4289,6 +4301,9 @@ Void TAppEncCfg::xPrintParameter()
+     UInt& m_uiQuadtreeTUMaxDepthIntra      = m_apcLayerCfg[layerIdx]->m_uiQuadtreeTUMaxDepthIntra;
+ 
+     Double& m_fQP                          = m_apcLayerCfg[layerIdx]->m_fQP;
++#if SLICE_CONTROL
++    Int& m_dispQP                          = m_apcLayerCfg[layerIdx]->m_iDispQP;
++#endif
+     Int& m_iMaxCuDQPDepth                  = m_apcLayerCfg[layerIdx]->m_iMaxCuDQPDepth;
+ 
+     Bool& m_RCEnableRateControl            = m_apcLayerCfg[layerIdx]->m_RCEnableRateControl;
+diff --git a/source/App/TAppEncoder/TAppEncLayerCfg.h b/source/App/TAppEncoder/TAppEncLayerCfg.h
+index fb60650..928b9d9 100644
+--- a/source/App/TAppEncoder/TAppEncLayerCfg.h
++++ b/source/App/TAppEncoder/TAppEncLayerCfg.h
+@@ -116,6 +116,9 @@ protected:
+   Bool      m_entropyCodingSyncEnabledFlag;
+ 
+   Int       m_iQP;                                            ///< QP value of key-picture (integer)
++#if SLICE_CONTROL
++  Int       m_iDispQP;                                        ///< Displacement QP value of key-picture
++#endif
+   std::string m_dQPFileName;                                  ///< QP offset for each slice (initialized from external file)
+   Int*      m_aidQP;                                          ///< array of slice QP values
+   TAppEncCfg* m_cAppEncCfg;                                   ///< pointer to app encoder config
+diff --git a/source/App/TAppEncoder/TAppEncTop.cpp b/source/App/TAppEncoder/TAppEncTop.cpp
+index e1e3e9f..af80d30 100644
+--- a/source/App/TAppEncoder/TAppEncTop.cpp
++++ b/source/App/TAppEncoder/TAppEncTop.cpp
+@@ -498,7 +498,9 @@ Void TAppEncTop::xInitLibCfg()
+     Int&           m_iIntraPeriod                               = m_apcLayerCfg[layer]->m_iIntraPeriod;
+     Int&           m_iQP                                        = m_apcLayerCfg[layer]->m_iQP;
+     Int           *m_aiPad                                      = m_apcLayerCfg[layer]->m_aiPad;
+-
++#if SLICE_CONTROL
++    Int&           m_iDispQP                                    = m_apcLayerCfg[layer]->m_iDispQP;
++#endif
+     Int&           m_iMaxCuDQPDepth                             = m_apcLayerCfg[layer]->m_iMaxCuDQPDepth;
+     ChromaFormat&  m_chromaFormatIDC                            = m_apcLayerCfg[layer]->m_chromaFormatIDC;
+     Int           *m_aidQP                                      = m_apcLayerCfg[layer]->m_aidQP;
+@@ -587,7 +589,9 @@ Void TAppEncTop::xInitLibCfg()
+   m_cTEncTop.setIntraQpFactor                                     ( m_dIntraQpFactor );
+ 
+   m_cTEncTop.setQP                                                ( m_iQP );
+-
++#if SLICE_CONTROL
++  m_cTEncTop.setDispQP                                            ( m_iDispQP );
++#endif
+   m_cTEncTop.setPad                                               ( m_aiPad );
+ 
+   m_cTEncTop.setAccessUnitDelimiter                               ( m_AccessUnitDelimiter );
+diff --git a/source/Lib/TLibCommon/TComSlice.cpp b/source/Lib/TLibCommon/TComSlice.cpp
+index 0824c00..08891df 100644
+--- a/source/Lib/TLibCommon/TComSlice.cpp
++++ b/source/Lib/TLibCommon/TComSlice.cpp
+@@ -1062,13 +1062,11 @@ Void TComSlice::decodingRefreshMarking(Int& pocCRA, Bool& bRefreshPending, TComL
+     }
+   }
+ }
+-
+ Void TComSlice::copySliceInfo(TComSlice *pSrc)
+ {
+   assert( pSrc != NULL );
+ 
+   Int i, j, k;
+-
+   m_iPOC                 = pSrc->m_iPOC;
+   m_eNalUnitType         = pSrc->m_eNalUnitType;
+   m_eSliceType           = pSrc->m_eSliceType;
+diff --git a/source/Lib/TLibCommon/TypeDef.h b/source/Lib/TLibCommon/TypeDef.h
+index 332be55..b9cac46 100644
+--- a/source/Lib/TLibCommon/TypeDef.h
++++ b/source/Lib/TLibCommon/TypeDef.h
+@@ -43,7 +43,7 @@
+ #endif
+ 
+ #include <vector>
+-
++#define SLICE_CONTROL                    1
+ #define SVC_EXTENSION                    1
+ 
+ #if SVC_EXTENSION
+@@ -216,6 +216,7 @@ enum AuxType
+ #define W0038_DB_OPT                                      1 ///< adaptive DB parameter selection, LoopFilterOffsetInPPS and LoopFilterDisable are set to 0 and DeblockingFilterMetric=2;
+ #define W0038_CQP_ADJ                                     1 ///< chroma QP adjustment based on TL, CQPTLAdjustEnabled is set to 1;
+ 
++
+ // ====================================================================================================================
+ // Derived macros
+ // ====================================================================================================================
+diff --git a/source/Lib/TLibDecoder/TDecCAVLC.cpp b/source/Lib/TLibDecoder/TDecCAVLC.cpp
+index 9538247..d4551da 100644
+--- a/source/Lib/TLibDecoder/TDecCAVLC.cpp
++++ b/source/Lib/TLibDecoder/TDecCAVLC.cpp
+@@ -1774,7 +1774,6 @@ Void TDecCavlc::parseSliceHeader (TComSlice* pcSlice, ParameterSetManager *param
+     {
+       READ_FLAG( uiCode, "mvd_l1_zero_flag" );       pcSlice->setMvdL1ZeroFlag( (uiCode ? true : false) );
+     }
+-
+     pcSlice->setCabacInitFlag( false ); // default
+     if(pps->getCabacInitPresentFlag() && !pcSlice->isIntra())
+     {
+diff --git a/source/Lib/TLibEncoder/TEncCfg.h b/source/Lib/TLibEncoder/TEncCfg.h
+index df3161d..37f5ca1 100644
+--- a/source/Lib/TLibEncoder/TEncCfg.h
++++ b/source/Lib/TLibEncoder/TEncCfg.h
+@@ -148,7 +148,9 @@ protected:
+   Int       m_numReorderPics[MAX_TLAYER];
+ 
+   Int       m_iQP;                              //  if (AdaptiveQP == OFF)
+-
++#if SLICE_CONTROL
++  Int       m_iDispQP;
++#endif
+   Int       m_aiPad[2];
+ 
+   Bool      m_AccessUnitDelimiter;               ///< add Access Unit Delimiter NAL units
+@@ -373,6 +375,9 @@ protected:
+   Double    m_RCInitialCpbFullness;
+ #endif
+   Bool      m_TransquantBypassEnabledFlag;                    ///< transquant_bypass_enabled_flag setting in PPS.
++#if SLICE_CONTROL  
++  Bool      m_TransquantBypassEnabledFlagCtl;                 ///< transquant_bypass_enabled_flag control in PPS.
++#endif
+   Bool      m_CUTransquantBypassFlagForce;                    ///< if transquant_bypass_enabled_flag, then, if true, all CU transquant bypass flags will be set to true.
+ 
+   CostMode  m_costMode;                                       ///< The cost function to use, primarily when considering lossless coding.
+@@ -566,7 +571,9 @@ public:
+   Void      setNumReorderPics               ( Int  i, UInt tlayer ) { m_numReorderPics[tlayer] = i;    }
+ 
+   Void      setQP                           ( Int   i )      { m_iQP = i; }
+-
++#if SLICE_CONTROL
++  Void      setDispQP                       ( Int   i )      { m_iDispQP = i; }
++#endif
+   Void      setPad                          ( Int*  iPad                   )      { for ( Int i = 0; i < 2; i++ ) m_aiPad[i] = iPad[i]; }
+ 
+   Int       getMaxRefPicNum                 ()                              { return m_iMaxRefPicNum;           }
+@@ -662,7 +669,9 @@ public:
+   Int       getMaxDecPicBuffering           (UInt tlayer) { return m_maxDecPicBuffering[tlayer]; }
+   Int       getNumReorderPics               (UInt tlayer) { return m_numReorderPics[tlayer]; }
+   Int       getQP                           ()      { return  m_iQP; }
+-
++#if SLICE_CONTROL
++  Int       getDispQP                       ()      { return  m_iDispQP; }
++#endif
+   Int       getPad                          ( Int i )      { assert (i < 2 );                      return  m_aiPad[i]; }
+ 
+   Bool      getAccessUnitDelimiter() const  { return m_AccessUnitDelimiter; }
+@@ -1010,6 +1019,10 @@ public:
+ #endif
+   Bool         getTransquantBypassEnabledFlag()                      { return m_TransquantBypassEnabledFlag; }
+   Void         setTransquantBypassEnabledFlag(Bool flag)             { m_TransquantBypassEnabledFlag = flag; }
++#if SLICE_CONTROL
++  Bool         getTransquantBypassEnabledFlagCtl()                   { return m_TransquantBypassEnabledFlagCtl; }
++  Void         setTransquantBypassEnabledFlagCtl(Bool flag)          { m_TransquantBypassEnabledFlagCtl = flag; }
++#endif
+   Bool         getCUTransquantBypassFlagForceValue()                 { return m_CUTransquantBypassFlagForce; }
+   Void         setCUTransquantBypassFlagForceValue(Bool flag)        { m_CUTransquantBypassFlagForce = flag; }
+   CostMode     getCostMode( )                                        { return m_costMode; }
+diff --git a/source/Lib/TLibEncoder/TEncCu.cpp b/source/Lib/TLibEncoder/TEncCu.cpp
+index 344e5c3..bbd61fa 100644
+--- a/source/Lib/TLibEncoder/TEncCu.cpp
++++ b/source/Lib/TLibEncoder/TEncCu.cpp
+@@ -414,8 +414,11 @@ Void TEncCu::xCompressCU( TComDataCU*& rpcBestCU, TComDataCU*& rpcTempCU, const
+   // transquant-bypass (TQB) processing loop variable initialisation ---
+ 
+   const Int lowestQP = iMinQP; // For TQB, use this QP which is the lowest non TQB QP tested (rather than QP'=0) - that way delta QPs are smaller, and TQB can be tested at all CU levels.
+-
++#if SLICE_CONTROL
++  if ( (pps.getTransquantBypassEnabledFlag()) &&( (!m_pcEncCfg->getSliceMode() || m_pcEncCfg->getTransquantBypassEnabledFlagCtl()) ))
++#else
+   if ( (pps.getTransquantBypassEnabledFlag()) )
++#endif
+   {
+     isAddLowestQP = true; // mark that the first iteration is to cost TQB mode.
+     iMinQP = iMinQP - 1;  // increase loop variable range by 1, to allow testing of TQB mode along with other QPs
+diff --git a/source/Lib/TLibEncoder/TEncGOP.cpp b/source/Lib/TLibEncoder/TEncGOP.cpp
+index 27594be..eb28c98 100644
+--- a/source/Lib/TLibEncoder/TEncGOP.cpp
++++ b/source/Lib/TLibEncoder/TEncGOP.cpp
+@@ -1472,7 +1472,6 @@ Void TEncGOP::compressGOP( Int iPOCLast, Int iNumPicRcvd, TComList<TComPic*>& rc
+ #if SVC_EXTENSION
+     pcPic->setLayerId( m_layerId );
+ #endif
+-
+     m_pcSliceEncoder->initEncSlice ( pcPic, iPOCLast, pocCurr, iGOPid, pcSlice, isField );
+ 
+     //Set Frame/Field coding
+@@ -2448,8 +2447,18 @@ Void TEncGOP::compressGOP( Int iPOCLast, Int iNumPicRcvd, TComList<TComPic*>& rc
+       for(UInt nextCtuTsAddr = 0; nextCtuTsAddr < numberOfCtusInFrame; )
+       {
+         m_pcSliceEncoder->precompressSlice( pcPic );
++#if SLICE_CONTROL
++      if(m_pcCfg->getSliceMode() != 0){
++        if (m_pcSliceEncoder->getSliceIdx() % 2 == 1){
++          m_pcSliceEncoder->resetQP_sliceN(pcPic,m_pcCfg->getDispQP(),lambda, 1);
++          m_pcCfg->setTransquantBypassEnabledFlagCtl(1);
++        }else{
++          m_pcCfg->setTransquantBypassEnabledFlagCtl(0);
++        }
++        std::cout << "m_pcSliceEncoder->getSliceIdx() = " << m_pcSliceEncoder->getSliceIdx() << "\n" << std::endl;
++      }
++#endif
+         m_pcSliceEncoder->compressSlice   ( pcPic, false, false );
+-
+         const UInt curSliceSegmentEnd = pcSlice->getSliceSegmentCurEndCtuTsAddr();
+         if (curSliceSegmentEnd < numberOfCtusInFrame)
+         {
+@@ -2555,10 +2564,7 @@ Void TEncGOP::compressGOP( Int iPOCLast, Int iNumPicRcvd, TComList<TComPic*>& rc
+ 
+     /* use the main bitstream buffer for storing the marshalled picture */
+     m_pcEntropyCoder->setBitstream(NULL);
+-
+     pcSlice = pcPic->getSlice(0);
+-
+-
+ #if HIGHER_LAYER_IRAP_SKIP_FLAG
+     if ( pcSlice->getSPS()->getUseSAO() && !( m_pcEncTop->getSkipPictureAtArcSwitch() && m_pcEncTop->getAdaptiveResolutionChange() > 0 && pcSlice->getLayerId() == 1 && pcSlice->getPOC() == m_pcEncTop->getAdaptiveResolutionChange()) )
+ #else
+diff --git a/source/Lib/TLibEncoder/TEncSampleAdaptiveOffset.cpp b/source/Lib/TLibEncoder/TEncSampleAdaptiveOffset.cpp
+index 38d0e46..96038bd 100644
+--- a/source/Lib/TLibEncoder/TEncSampleAdaptiveOffset.cpp
++++ b/source/Lib/TLibEncoder/TEncSampleAdaptiveOffset.cpp
+@@ -274,7 +274,6 @@ Void TEncSampleAdaptiveOffset::SAOProcess(TComPic* pPic, Bool* sliceEnabled, con
+   decideBlkParams(pPic, sliceEnabled, m_statData, srcYuv, resYuv, reconParams, pPic->getPicSym()->getSAOBlkParam(), bTestSAODisableAtPictureLevel, saoEncodingRate, saoEncodingRateChroma);
+   delete[] reconParams;
+ }
+-
+ Void TEncSampleAdaptiveOffset::getPreDBFStatistics(TComPic* pPic)
+ {
+   getStatistics(m_preDBFstatData, pPic->getPicYuvOrg(), pPic->getPicYuvRec(), pPic, true);
+@@ -367,17 +366,16 @@ Void TEncSampleAdaptiveOffset::decidePicParams(Bool* sliceEnabled, Int picTempLa
+ #endif
+ 
+   //decide sliceEnabled[compIdx]
++
+   const Int numberOfComponents = getNumberValidComponents(m_chromaFormatIDC);
+   for (Int compIdx = 0; compIdx < MAX_NUM_COMPONENT; compIdx++)
+   {
+     sliceEnabled[compIdx] = false;
+   }
+-
+   for (Int compIdx = 0; compIdx < numberOfComponents; compIdx++)
+   {
+     // reset flags & counters
+     sliceEnabled[compIdx] = true;
+-
+     if (saoEncodingRate>0.0)
+     {
+       if (saoEncodingRateChroma>0.0)
+@@ -794,7 +792,6 @@ Void TEncSampleAdaptiveOffset::deriveModeMergeRDO(const BitDepths &bitDepths, In
+ 
+   m_pcRDGoOnSbacCoder->load(cabacCoderRDO[SAO_CABACSTATE_BLK_TEMP]);
+ }
+-
+ Void TEncSampleAdaptiveOffset::decideBlkParams(TComPic* pic, Bool* sliceEnabled, SAOStatData*** blkStats, TComPicYuv* srcYuv, TComPicYuv* resYuv,
+                                                SAOBlkParam* reconParams, SAOBlkParam* codedParams, const Bool bTestSAODisableAtPictureLevel,
+                                                const Double saoEncodingRate, const Double saoEncodingRateChroma)
+diff --git a/source/Lib/TLibEncoder/TEncSlice.cpp b/source/Lib/TLibEncoder/TEncSlice.cpp
+index ff5060a..ef69844 100644
+--- a/source/Lib/TLibEncoder/TEncSlice.cpp
++++ b/source/Lib/TLibEncoder/TEncSlice.cpp
+@@ -176,8 +176,6 @@ TEncSlice::setUpLambda(TComSlice* slice, const Double dLambda, Int iQP)
+   slice->setLambdas( dLambdas );
+ }
+ 
+-
+-
+ /**
+  - non-referenced frame marking
+  - QP computation based on temporal structure
+@@ -529,8 +527,13 @@ Void TEncSlice::initEncSlice( TComPic* pcPic, const Int pocLast, const Int pocCu
+ 
+   pcPic->setPicYuvPred( &m_picYuvPred );
+   pcPic->setPicYuvResi( &m_picYuvResi );
++
+   rpcSlice->setSliceMode            ( m_pcCfg->getSliceMode()            );
++#if SLICE_CONTROL
++  rpcSlice->setSliceArgument(m_pcCfg->getSliceArgument() * pow(4, layerId));
++#else
+   rpcSlice->setSliceArgument        ( m_pcCfg->getSliceArgument()        );
++#endif
+   rpcSlice->setSliceSegmentMode     ( m_pcCfg->getSliceSegmentMode()     );
+   rpcSlice->setSliceSegmentArgument ( m_pcCfg->getSliceSegmentArgument() );
+   rpcSlice->setMaxNumMergeCand        ( m_pcCfg->getMaxNumMergeCand()        );
+@@ -571,7 +574,18 @@ Void TEncSlice::resetQP( TComPic* pic, Int sliceQP, Double lambda )
+ #endif
+   setUpLambda(slice, lambda, sliceQP);
+ }
++#if SLICE_CONTROL
++Void TEncSlice::resetQP_sliceN( TComPic* pic, Int sliceQP, Double lambda, Int sliceN){
++  TComSlice* slice = pic->getSlice(sliceN);//wdy
+ 
++  // store lambda
++  slice->setSliceQp( sliceQP );
++#if ADAPTIVE_QP_SELECTION
++  slice->setSliceQpBase ( sliceQP );
++#endif
++  setUpLambda(slice, lambda, sliceQP);
++}
++#endif
+ // ====================================================================================================================
+ // Public member functions
+ // ====================================================================================================================
+@@ -1312,8 +1326,13 @@ Void TEncSlice::xDetermineStartAndBoundingCtuTsAddr  ( UInt& startCtuTsAddr, UIn
+   UInt startCtuTsAddrSlice           = pcSlice->getSliceCurStartCtuTsAddr();
+   Bool haveReachedTileBoundarySlice  = false;
+   UInt boundingCtuTsAddrSlice;
++#if SLICE_CONTROL
++  calculateBoundingCtuTsAddrForSlice(startCtuTsAddrSlice, boundingCtuTsAddrSlice, haveReachedTileBoundarySlice, pcPic,
++                                     pcSlice->getSliceMode(), pcSlice->getSliceArgument());
++#else
+   calculateBoundingCtuTsAddrForSlice(startCtuTsAddrSlice, boundingCtuTsAddrSlice, haveReachedTileBoundarySlice, pcPic,
+                                      m_pcCfg->getSliceMode(), m_pcCfg->getSliceArgument());
++#endif
+   pcSlice->setSliceCurEndCtuTsAddr(   boundingCtuTsAddrSlice );
+   pcSlice->setSliceCurStartCtuTsAddr( startCtuTsAddrSlice    );
+ 
+diff --git a/source/Lib/TLibEncoder/TEncSlice.h b/source/Lib/TLibEncoder/TEncSlice.h
+index 9fdfc20..54053a9 100644
+--- a/source/Lib/TLibEncoder/TEncSlice.h
++++ b/source/Lib/TLibEncoder/TEncSlice.h
+@@ -121,6 +121,9 @@ public:
+   /// preparation of slice encoding (reference marking, QP and lambda)
+   Void    initEncSlice        ( TComPic*  pcPic, const Int pocLast, const Int pocCurr,
+                                 const Int iGOPid,   TComSlice*& rpcSlice, const Bool isField );
++#if SLICE_CONTROL
++  Void    resetQP_sliceN             ( TComPic* pic, Int sliceQP, Double lambda, Int sliceN);
++#endif
+   Void    resetQP             ( TComPic* pic, Int sliceQP, Double lambda );
+   // compress and encode slice
+   Void    precompressSlice    ( TComPic* pcPic                                     );      ///< precompress slice for multi-loop slice-level QP opt.
+-- 
+2.25.1
+

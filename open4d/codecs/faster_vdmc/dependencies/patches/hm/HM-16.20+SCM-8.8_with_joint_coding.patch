@@ -1,0 +1,183 @@
+From c0c33b70e1378278bf4c351160c283c25e92c8c3 Mon Sep 17 00:00:00 2001
+From: "wangdanying.a" <wangdanying.a@bytedance.com>
+Date: Wed, 14 Feb 2024 11:24:29 +0800
+Subject: [PATCH] use TransquantBypassEnableCtl for joint coding
+
+---
+ source/Lib/TLibCommon/TypeDef.h      |  1 +
+ source/Lib/TLibEncoder/TEncCfg.h     | 25 ++++++++++++++++++++++++-
+ source/Lib/TLibEncoder/TEncCu.cpp    |  5 ++++-
+ source/Lib/TLibEncoder/TEncGOP.cpp   | 19 ++++++++++++++++++-
+ source/Lib/TLibEncoder/TEncSlice.cpp | 12 ++++++++++++
+ source/Lib/TLibEncoder/TEncSlice.h   |  3 +++
+ 6 files changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/source/Lib/TLibCommon/TypeDef.h b/source/Lib/TLibCommon/TypeDef.h
+index f72e00b..7b54448 100644
+--- a/source/Lib/TLibCommon/TypeDef.h
++++ b/source/Lib/TLibCommon/TypeDef.h
+@@ -62,6 +62,7 @@ namespace pcc_hm {
+ #define PCC_ME_NUM_LAYERS_ACTIVE                          2
+ #endif
+ 
++#define USE_JOINT_CODING                                  1
+ // ====================================================================================================================
+ // Debugging
+ // ====================================================================================================================
+diff --git a/source/Lib/TLibEncoder/TEncCfg.h b/source/Lib/TLibEncoder/TEncCfg.h
+index 7b305cc..9d7c126 100644
+--- a/source/Lib/TLibEncoder/TEncCfg.h
++++ b/source/Lib/TLibEncoder/TEncCfg.h
+@@ -195,6 +195,10 @@ protected:
+   Int       m_numReorderPics[MAX_TLAYER];
+ 
+   Int       m_iQP;                              //  if (AdaptiveQP == OFF)
++#if USE_JOINT_CODING  
++  Int       m_iQPTex;                           //  texture slice, if (AdaptiveQP == OFF)
++  Int       m_iQPGeo;                           //  displacement slice, if (AdaptiveQP == OFF)
++# endif
+ #if X0038_LAMBDA_FROM_QP_CAPABILITY
+   Int       m_intraQPOffset;                    ///< QP offset for intra slice (integer)
+   Int       m_lambdaFromQPEnable;               ///< enable lambda derivation from QP
+@@ -494,6 +498,9 @@ protected:
+   UInt      m_RCCpbSize;
+   Double    m_RCInitialCpbFullness;
+   Bool      m_TransquantBypassEnabledFlag;                    ///< transquant_bypass_enabled_flag setting in PPS.
++#if USE_JOINT_CODING  
++  Bool      m_TransquantBypassEnabledFlagCtl;                 ///< transquant_bypass_enabled_flag control in PPS.
++#endif
+   Bool      m_CUTransquantBypassFlagForce;                    ///< if transquant_bypass_enabled_flag, then, if true, all CU transquant bypass flags will be set to true.
+ 
+   CostMode  m_costMode;                                       ///< The cost function to use, primarily when considering lossless coding.
+@@ -652,6 +659,10 @@ public:
+   Void      setNumReorderPics               ( Int  i, UInt tlayer ) { m_numReorderPics[tlayer] = i;    }
+ 
+   Void      setQP                           ( Int   i )      { m_iQP = i; }
++#if USE_JOINT_CODING
++  Void      setQPTex                        ( Int   i )      { m_iQPTex = i; }
++  Void      setQPGeo                        ( Int   i )      { m_iQPGeo = i; }
++#endif
+ #if X0038_LAMBDA_FROM_QP_CAPABILITY
+   Void      setIntraQPOffset                ( Int   i )         { m_intraQPOffset = i; }
+   Void      setLambdaFromQPEnable           ( Bool  b )         { m_lambdaFromQPEnable = b; }
+@@ -756,12 +767,20 @@ public:
+ #if X0038_LAMBDA_FROM_QP_CAPABILITY
+   Int       getIntraQPOffset                () const    { return  m_intraQPOffset; }
+   Int       getLambdaFromQPEnable           () const    { return  m_lambdaFromQPEnable; }
+-protected:
++// protected:
+   Int       getBaseQP                       () const { return  m_iQP; } // public should use getQPForPicture.
++#if USE_JOINT_CODING
++  Int       getBaseQPTex                    () const { return  m_iQPTex; } // public should use getQPForPicture.
++  Int       getBaseQPGeo                    () const { return  m_iQPGeo; } // public should use getQPForPicture.
++#endif
+ public:
+   Int       getQPForPicture                 (const UInt gopIndex, const TComSlice *pSlice) const; // Function actually defined in TEncTop.cpp
+ #else
+   Int       getQP                           ()      { return  m_iQP; }
++#if USE_JOINT_CODING
++  Int       getQPTex                        ()      { return  m_iQPTex; }
++  Int       getQPGeo                        ()      { return  m_iQPGeo; }
++#endif
+ #endif
+   Int       getPad                          ( Int i )      { assert (i < 2 );                      return  m_aiPad[i]; }
+ 
+@@ -1244,6 +1263,10 @@ public:
+   Void         setInitialCpbFullness  (Double f)                     { m_RCInitialCpbFullness = f;     }
+   Bool         getTransquantBypassEnabledFlag()                      { return m_TransquantBypassEnabledFlag; }
+   Void         setTransquantBypassEnabledFlag(Bool flag)             { m_TransquantBypassEnabledFlag = flag; }
++#if USE_JOINT_CODING
++  Bool         getTransquantBypassEnabledFlagCtl()                   { return m_TransquantBypassEnabledFlagCtl; }
++  Void         setTransquantBypassEnabledFlagCtl(Bool flag)          { m_TransquantBypassEnabledFlagCtl = flag; }
++#endif
+   Bool         getCUTransquantBypassFlagForceValue()                 { return m_CUTransquantBypassFlagForce; }
+   Void         setCUTransquantBypassFlagForceValue(Bool flag)        { m_CUTransquantBypassFlagForce = flag; }
+   CostMode     getCostMode( ) const                                  { return m_costMode; }
+diff --git a/source/Lib/TLibEncoder/TEncCu.cpp b/source/Lib/TLibEncoder/TEncCu.cpp
+index eec2fec..71eb3dc 100644
+--- a/source/Lib/TLibEncoder/TEncCu.cpp
++++ b/source/Lib/TLibEncoder/TEncCu.cpp
+@@ -571,8 +571,11 @@ Void TEncCu::xCompressCU( TComDataCU*& rpcBestCU, TComDataCU*& rpcTempCU, const
+   // transquant-bypass (TQB) processing loop variable initialisation ---
+ 
+   const Int lowestQP = iMinQP; // For TQB, use this QP which is the lowest non TQB QP tested (rather than QP'=0) - that way delta QPs are smaller, and TQB can be tested at all CU levels.
+-
++#if USE_JOINT_CODING
++  if ( (pps.getTransquantBypassEnabledFlag()) &&( (!m_pcEncCfg->getSliceMode() || m_pcEncCfg->getTransquantBypassEnabledFlagCtl()) ))
++#else
+   if ( (pps.getTransquantBypassEnabledFlag()) )
++#endif
+   {
+     isAddLowestQP = true; // mark that the first iteration is to cost TQB mode.
+     iMinQP = iMinQP - 1;  // increase loop variable range by 1, to allow testing of TQB mode along with other QPs
+diff --git a/source/Lib/TLibEncoder/TEncGOP.cpp b/source/Lib/TLibEncoder/TEncGOP.cpp
+index e1d4d4f..1548aaa 100644
+--- a/source/Lib/TLibEncoder/TEncGOP.cpp
++++ b/source/Lib/TLibEncoder/TEncGOP.cpp
+@@ -1847,7 +1847,24 @@ Void TEncGOP::compressGOP( Int iPOCLast, Int iNumPicRcvd, TComList<TComPic*>& rc
+ 			}
+ 		}
+ #endif
+-        
++#if USE_JOINT_CODING
++      if(m_pcCfg->getSliceMode() != 0){
++        if (m_pcSliceEncoder->getSliceIdx() % 2 == 1){
++          m_pcSliceEncoder->resetQP_sliceN(pcPic,m_pcCfg->getBaseQPGeo(),lambda, 1);
++          m_pcCfg->setTransquantBypassEnabledFlagCtl(1);
++        }else{
++          // m_pcSliceEncoder->resetQP_sliceN(pcPic,m_pcCfg->getBaseQPTex(),lambda, 0);
++          m_pcCfg->setTransquantBypassEnabledFlagCtl(0);
++        }
++        std::cout << "m_pcSliceEncoder->getSliceIdx() = " << m_pcSliceEncoder->getSliceIdx() << "\n" << std::endl;
++        // std::cout << "m_pcCfg->getBaseQPGeo/Tex/Now() = " 
++        //           << m_pcCfg->getBaseQPGeo() << '/' 
++        //           << m_pcCfg->getBaseQPTex() << '/'
++        //           << m_pcCfg->getBaseQP() << ", "
++        //           <<"m_iSliceQp = " << pcSlice->getSliceQp() << ", "
++        //           <<"m_iSliceQpBase = " << pcSlice->getSliceQpBase() << "\n" << std::endl;      
++      }
++# endif        
+         
+ #if PCC_RDO_EXT
+     if (usePCCRDO)
+diff --git a/source/Lib/TLibEncoder/TEncSlice.cpp b/source/Lib/TLibEncoder/TEncSlice.cpp
+index b277642..f5221a8 100644
+--- a/source/Lib/TLibEncoder/TEncSlice.cpp
++++ b/source/Lib/TLibEncoder/TEncSlice.cpp
+@@ -558,7 +558,19 @@ Void TEncSlice::resetQP( TComPic* pic, Int sliceQP, Double lambda )
+ #endif
+   setUpLambda(slice, lambda, sliceQP);
+ }
++#if USE_JOINT_CODING
++Void TEncSlice::resetQP_sliceN( TComPic* pic, Int sliceQP, Double lambda, Int sliceN){
++  // TComSlice* slice = pic->getSlice(0);
++  TComSlice* slice = pic->getSlice(sliceN);//wdy
+ 
++  // store lambda
++  slice->setSliceQp( sliceQP );
++#if ADAPTIVE_QP_SELECTION
++  slice->setSliceQpBase ( sliceQP );
++#endif
++  setUpLambda(slice, lambda, sliceQP);
++}
++#endif
+ // ====================================================================================================================
+ // Public member functions
+ // ====================================================================================================================
+diff --git a/source/Lib/TLibEncoder/TEncSlice.h b/source/Lib/TLibEncoder/TEncSlice.h
+index 3516595..7b34c68 100644
+--- a/source/Lib/TLibEncoder/TEncSlice.h
++++ b/source/Lib/TLibEncoder/TEncSlice.h
+@@ -123,6 +123,9 @@ public:
+   Void    initEncSlice        ( TComPic*  pcPic, const Int pocLast, const Int pocCurr,
+                                 const Int iGOPid,   TComSlice*& rpcSlice, const Bool isField );
+   Void    resetQP             ( TComPic* pic, Int sliceQP, Double lambda );
++#if USE_JOINT_CODING
++  Void    resetQP_sliceN             ( TComPic* pic, Int sliceQP, Double lambda, Int sliceN);
++#endif
+   Void    setGopID( Int iGopID )      { m_gopID = iGopID; }
+   Int     getGopID() const            { return m_gopID;   }
+   Void    updateLambda(TComSlice* pSlice, Double dQP);
+-- 
+2.25.1
+

@@ -1,0 +1,98 @@
+From 4098e672d4b997057010f630dc1225844e35c346 Mon Sep 17 00:00:00 2001
+From: David Flynn <david.flynn@apple.com>
+Date: Fri, 22 Jul 2022 14:55:36 +0200
+Subject: [PATCH] uvatlas: enhanced eigenvalues precision
+
+This patch is licensed as follows:
+
+The copyright in this software is being made available under the BSD
+Licence, included below.  This software may be subject to other third
+party and contributor rights, including patent rights, and no such
+rights are granted under this licence.
+
+Copyright (c) 2022, ISO/IEC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the ISO/IEC nor the names of its contributors
+  may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+---
+ UVAtlas/isochart/isomap.cpp | 23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
+
+diff --git a/UVAtlas/isochart/isomap.cpp b/UVAtlas/isochart/isomap.cpp
+index ba85d77..0211376 100644
+--- a/UVAtlas/isochart/isomap.cpp
++++ b/UVAtlas/isochart/isomap.cpp
+@@ -136,13 +136,17 @@ HRESULT CIsoMap::ComputeLargestEigen(
+     assert(dwSelectedDimension <= m_dwMatrixDimension);
+     _Analysis_assume_(dwSelectedDimension <= m_dwMatrixDimension);
+ 
+-    std::unique_ptr<float[]> pfEigenValue(new (std::nothrow) float[m_dwMatrixDimension]);
+-    std::unique_ptr<float[]> pfEigenVector(new (std::nothrow) float[m_dwMatrixDimension * m_dwMatrixDimension]);
+-    if (!pfEigenValue || !pfEigenVector)
++    std::unique_ptr<double[]> pdEigenValue(new (std::nothrow) double[m_dwMatrixDimension]);
++    std::unique_ptr<double[]> pdEigenVector(new (std::nothrow) double[m_dwMatrixDimension * m_dwMatrixDimension]);
++    std::unique_ptr<double[]> pdMatrixB(new (std::nothrow) double[m_dwMatrixDimension * m_dwMatrixDimension]);
++
++    if (!pdEigenValue || !pdEigenVector || !pdMatrixB)
+     {
+         return E_OUTOFMEMORY;
+     }
+ 
++    std::copy_n(m_pfMatrixB, m_dwMatrixDimension * m_dwMatrixDimension, pdMatrixB.get());
++
+     m_pfEigenValue = new (std::nothrow) float[dwSelectedDimension];
+     m_pfEigenVector = new (std::nothrow) float[m_dwMatrixDimension * dwSelectedDimension];
+ 
+@@ -151,20 +155,17 @@ HRESULT CIsoMap::ComputeLargestEigen(
+         return E_OUTOFMEMORY;
+     }
+ 
+-    if (!CSymmetricMatrix<float>::GetEigen(
+-        m_dwMatrixDimension, m_pfMatrixB,
+-        pfEigenValue.get(), pfEigenVector.get(),
++    if (!CSymmetricMatrix<double>::GetEigen(
++        m_dwMatrixDimension, pdMatrixB.get(),
++        pdEigenValue.get(), pdEigenVector.get(),
+         dwSelectedDimension))
+     {
+         return E_OUTOFMEMORY;
+     }
+ 
+-    memcpy(m_pfEigenValue, pfEigenValue.get(), dwSelectedDimension * sizeof(float));
+-    memcpy(
+-        m_pfEigenVector,
+-        pfEigenVector.get(),
+-        m_dwMatrixDimension * dwSelectedDimension * sizeof(float));
++    std::copy_n(pdEigenValue.get(), dwSelectedDimension, m_pfEigenValue);
++    std::copy_n(pdEigenVector.get(), m_dwMatrixDimension * dwSelectedDimension, m_pfEigenVector);
+
+     m_fSumOfEigenValue = 0;
+     dwCalculatedDimension = 0;
+     for (size_t i = 0; i < dwSelectedDimension; i++)
+-- 
+2.35.1.windows.2
+
