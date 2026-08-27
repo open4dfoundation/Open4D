@@ -5,11 +5,14 @@ The detailed [component register](status.md) is the immutable audit of commit
 and the [90-day roadmap](roadmap.md). It must be updated when roadmap work is
 merged; planned or locally reverted work must not be reported as implemented.
 
+Last reconciled with `94ae714` (`origin/main`) on 2026-08-27. Test counts below
+retain their own earlier snapshot date.
+
 ## Current platform graph
 
 ```mermaid
 flowchart TB
-    Handbook["v0.2-dev handbook<br/>LOCAL DRAFT"]
+    Handbook["v0.2-dev handbook<br/>MERGED SOURCE"]
     P0["Packaging / CI / governance<br/>VERIFIED-PARTIAL"]
     Core["Core model<br/>VERIFIED-PARTIAL"]
     Examples["Public I/O / reference codec / viewer<br/>VERIFIED-PARTIAL"]
@@ -26,12 +29,12 @@ flowchart TB
 
 | Work item | Current state | Next evidence required |
 | --- | --- | --- |
-| Versioned handbook | Source and root README link prepared; Wiki export committed locally with validated links | Initialize the enabled GitHub Wiki, push the prepared export, review, and merge this branch |
-| Explicit lightweight package allowlist | Implemented for exactly seven packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
-| Exact distribution assertion | Wheel and source archive inventories pass locally | Confirm the packaging job on Blacksmith for this pull request |
+| Versioned handbook | Source and root README link are merged; local links are validated | Decide whether to publish and maintain a separate Wiki copy |
+| Explicit lightweight package allowlist | Implemented for exactly eight packages; namespace discovery removed | Keep the provenance and archive assertions required in CI |
+| Exact distribution assertion | Wheel and source archive inventories pass locally and are required by CI | Record any release-boundary change in the ledger and archive assertions |
 | Third-party/provenance ledger | Root ledger covers the high-risk research, data, model, binary, paper, and submodule areas | Resolve each entry with immutable provenance and reviewed distribution terms |
 | License/distribution gate | Supported release workflow fails while `BLOCK` entries remain | Resolve TVMC, QNDF, copied-upstream, binary, dataset, checkpoint, and paper scope |
-| Continuous integration | Blacksmith-backed GitHub Actions workflow, Python/Open3D matrices, packaging smoke test, links, syntax, provenance, and release checks prepared | Verify all GitHub checks on this pull request |
+| Continuous integration | Blacksmith-backed GitHub Actions workflow on `main` contains Python/Open3D matrices, research-codec CPU contracts, packaging smoke tests, links, syntax, provenance, and release checks | Keep required jobs green and record any runner-specific exceptions |
 | CodeRabbit | Repository features disabled in version-controlled configuration | Remove this repository from the CodeRabbit GitHub App installation to revoke access |
 | Protected merge policy | No repository ruleset recorded at the audit point | Require the verified CI checks after their exact GitHub check names exist |
 
@@ -45,12 +48,18 @@ flowchart TB
 - Independent codec and reconstruction research trees, with public adapters
   for KLT, N4MC, QNDF/QNDF-int8, temporal mesh experiments, and V-Mesh; they
   do not yet form a complete end-to-end application.
+- The restored `gs_tools` directory holds the shared Gaussian environment,
+  rasterizers, GLM, simple-knn, and SIBR viewer used by QUEEN and 3DGStream. It
+  remains in Ryan's ownership lane and outside the lightweight distribution.
+- Both the pinned MPEG V-DMC reference tree and the `faster_vdmc` fork are
+  registered as submodules; their public adapters require configured native
+  executables and neither clears the release-provenance block.
 - Checksum-based artifact-fetching policy and the component-specific mechanics
   explicitly identified in the handbook as worth preserving.
 
 ## Local verification snapshot
 
-Snapshot taken 2026-08-25 on macOS:
+Latest recorded test snapshot taken 2026-08-25 on macOS:
 
 - A clean Python 3.13 environment installed with `uv pip install -e '.[dev]'`
   and run with `python -m pytest -q` reports 233 passed and 26 explicit
@@ -73,15 +82,16 @@ Draco, and V-Mesh adapters, and the public Qt visualizer. It does **not** contai
 TVMC/TSMC shared adapters, an RGB-D finite replay adapter, or a live-stream
 contract implementation. These remain roadmap items.
 
-Blacksmith is an automation surface, not evidence by itself. Its pull-request
-results must still prove the tests, packaging boundary, provenance containment,
-and release block implemented in this branch.
+Blacksmith is an automation surface, not evidence by itself. Its workflow
+results must prove the tests, packaging boundary, provenance containment, and
+release block for each protected change.
 
 ## Immediate order of work
 
-1. Initialize and publish the enabled Wiki, then review and merge the handbook.
-2. Remove this repository from the CodeRabbit GitHub App installation.
-3. Verify the complete Blacksmith matrix on the pull request.
-4. Configure protected-merge checks using the stable check names from that run.
-5. Resolve the provenance ledger's `BLOCK` entries; do not publish meanwhile.
-6. Begin P1 only after P0 acceptance criteria are green.
+1. Resolve the provenance ledger's `BLOCK` entries; do not publish meanwhile.
+2. Record and require the stable CI check names in protected-merge rules.
+3. Remove this repository from the CodeRabbit GitHub App installation.
+4. Decide whether the repository handbook or a separately maintained Wiki is
+   the public source of truth.
+5. Finish the public metrics and USD contracts, then build the first complete
+   reference application in `apps/`.

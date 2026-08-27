@@ -1,9 +1,9 @@
 # Core, I/O, OpenUSD, and metrics
 
-This chapter distinguishes the supported v0.2-dev core from working example
-code and from the next public APIs. That distinction matters when you build a
-codec adapter: importing an example by modifying `sys.path` is not a stable
-platform interface.
+This chapter records the supported core, example code, and planned public APIs
+at commit `96b8c7b`. It is historical. See
+[current implementation status](implementation-status.md) and the root README
+for APIs promoted after the audit.
 
 ## Public core model
 
@@ -38,9 +38,8 @@ The object is structurally immutable, but its NumPy buffers are not forced
 read-only. Canonical arrays may be shared zero-copy with the caller. Preserve
 this policy unless a measured need and migration plan justify changing it.
 
-The current gap is integer attribute narrowing: indices are range-checked before
-conversion, but generic integer attributes also need an explicit `int32` range
-check so a large value cannot wrap silently.
+At the audited revision, generic integer attributes lacked an explicit `int32`
+range check. That check and its boundary tests have since been implemented.
 
 ### Frame
 
@@ -73,7 +72,7 @@ constant topology, vertex count, and correspondence unless the provider makes a
 more specific declaration; `UNKNOWN` correctly returns `None` when evidence is
 insufficient.
 
-## Working example I/O
+## Example I/O at the audited revision
 
 `examples/visualization/frame_sources.py` currently provides the one-call loader:
 
@@ -104,14 +103,16 @@ Important limitations:
   sorts on 9 and can silently misalign comparisons.
 - zero-face geometry stands in for point clouds because core has no point type.
 
-The P1 public interface is:
+The planned P1 public interface was:
 
 ```python
 open4d.io.open_sequence(path, fps=None) -> Sequence
 open4d.io.write_usd_container(path, frames, ...) -> pathlib.Path
 ```
 
-Examples should become thin clients of those functions. Promotion must keep
+`open4d.io.open_sequence` and the mesh-file writers now exist. USD remains
+example-local. Examples should become thin clients of public functions;
+promotion must keep
 construction lazy, add cleanup and malformed-source tests, and use actionable
 optional-dependency errors.
 

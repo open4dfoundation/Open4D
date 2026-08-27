@@ -1,4 +1,4 @@
-# One environment for every Open4D codec.
+# Shared environment for Open4D codec Python stages.
 #
 #   conda env create -f environment.yml
 #   conda activate open4d

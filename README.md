@@ -75,8 +75,13 @@ dependency-ordered roadmap.
 Open4D/
 ├── open4d/
 │   ├── core/          shared temporal geometry and sequence abstractions
+│   ├── io/            public mesh-file and manifested-directory I/O
+│   ├── codec/         shared sequence codec API and adapters
+│   ├── visualization/ public viewer and GIF renderer
+│   ├── torch_ops/      optional Torch geometry helpers
 │   ├── codecs/
 │   │   ├── draco/
+│   │   ├── faster_vdmc/
 │   │   ├── klt/
 │   │   ├── n4mc/
 │   │   ├── qndf/
@@ -85,7 +90,10 @@ Open4D/
 │   │   ├── tvmc/
 │   │   └── vdmc/
 │   └── reconstruction/
-│       └── rgbd/
+│       ├── rgbd/
+│       ├── queen/
+│       ├── 3dgstream/
+│       └── gs_tools/
 ├── integrations/
 │   ├── open3d/
 │   └── unity/
@@ -129,9 +137,13 @@ Open4D/
   video-based dynamic mesh coding. The `open4d/codecs/vdmc` submodule provides
   the standard's reference encoder, decoder, metric tools, and unit tests; it is
   separate from Open4D's TVMC research pipeline.
+- **Faster V-DMC** — a pinned performance-oriented fork of the same test model,
+  with exact-output and higher-throughput modes recorded in the
+  [benchmark report](docs/benchmarks/faster-vdmc.md).
 
-Each component has its own README and environment. See
-[Requirements](#requirements) for what each one adds on top of the baseline.
+Each component has its own README and may add native tools, GPU extensions, or
+hardware requirements to the shared Python baseline. See
+[Requirements](#requirements) for those additions.
 
 ## Requirements
 
@@ -153,9 +165,9 @@ dependencies. Extras add optional readers and viewers — see
 which the `[player]` extra installs, for its nearest-neighbour search — the same
 `cKDTree` query TVMC's own evaluation uses.
 
-### One environment for the codecs
+### One Python dependency set for the codecs
 
-Every codec runs in a single environment, described by
+The supported baseline for codec Python stages is described by
 [`environment.yml`](environment.yml) at the repository root:
 
 ```bash
@@ -164,12 +176,17 @@ conda activate open4d
 pip install -e .
 ```
 
-That is Python 3.12, NumPy 1.26.4, Open3D 0.19, PyTorch 2.7.0, and .NET 10 — one
-of each, where there used to be three Python versions, two Open3D versions, two
-PyTorch versions, and three .NET SDKs. The pins themselves live in
+The Python set is Python 3.12, NumPy 1.26.4, Open3D 0.19, and PyTorch 2.7.0.
+Native projects use one external .NET 10 SDK. This replaces three Python
+versions, two Open3D versions, two PyTorch versions, and three .NET targets. The
+Python pins themselves live in
 [`requirements-codecs.txt`](requirements-codecs.txt), which `environment.yml`
 installs; it lists direct dependencies only, so inside an existing Python 3.12
 environment `pip install -r requirements-codecs.txt` is equivalent.
+
+Codec-local setup scripts may create a convenience virtual environment, but
+they must use these same Python and package pins rather than defining a second
+dependency baseline. Native tools and GPU extensions remain separate.
 
 One trap worth naming, because its error message points the wrong way. The .NET
 projects target `net10.0`, and a distribution's own `dotnet` under
@@ -203,7 +220,7 @@ What each module needs beyond that shared environment:
 | `codecs/qndf`, `codecs/qndf_int8` | An NVIDIA GPU for training. Evaluation (`mesh_errors.py`) runs on CPU. Building the `ssp_remesh` preprocessor needs CMake and Eigen (`libeigen3-dev`/`brew install eigen`), plus the pinned libigl submodule |
 | `codecs/klt` | `kaolin` and an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
 | `codecs/draco` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
-| `codecs/vdmc` | The MPEG reference test model's own build requirements |
+| `codecs/vdmc`, `codecs/faster_vdmc` | The MPEG reference and optimized test models' own build requirements |
 | `reconstruction/rgbd` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
 | `integrations/unity` | Unity, plus a C++ toolchain to rebuild the backend for anything other than the prebuilt macOS and Android/Quest 3 plugins |
 
@@ -324,10 +341,11 @@ Playback uses `open4d.visualization`'s PyQt6 window: drag to orbit, scroll to zo
 to scrub, space to pause, left/right to step a frame. `--save out.gif` writes an
 animated GIF through the same renderer.
 
-A source is either a folder holding one mesh file per frame — `.obj` and `.ply`
-need no extra dependencies to read — or a single time-sampled USD file. `--info`
-reports frame count, duration, topology and bounds without decoding geometry,
-which is the quickest way to check a dataset loads.
+A viewer source may be one mesh file, a folder holding one mesh file per frame,
+or a single time-sampled USD file. OBJ and PLY need no extra dependency; the
+`[tools]` extra adds OFF, STL, GLB, and glTF, while `[usd]` adds USD files and
+folders. `--info` reports frame count, duration, topology and bounds without
+decoding geometry, which is the quickest way to check a dataset loads.
 
 The public Python loader handles local mesh files and frame folders in one call;
 frames are decoded on access:

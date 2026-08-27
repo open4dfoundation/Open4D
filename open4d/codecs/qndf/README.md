@@ -16,12 +16,13 @@ conda env create -f ../../../environment.yml   # or: conda activate open4d
 pip install -e ../../..
 ```
 
-Step 3. Install `dahuffman` and `tqdm` using `pip`
+Step 3. No additional Python install is required; `dahuffman` and `tqdm` are in
+the shared codec environment.
 
 Step 4. Create `objs_original/` and place the `.obj` files to be compressed in
-it. No meshes ship with the repository — this codec's `.gitignore` excludes
-`*.obj`, so source your own or point `--source-dir` at a vendored sequence as
-the basketball recipe below does.
+it. QNDF does not ship its own input meshes — this codec's `.gitignore` excludes
+`*.obj` — so source your own or point `--source-dir` at another repository
+fixture, such as the TVMC basketball sequence used below.
 
 Step 5. Run:
 
@@ -47,7 +48,7 @@ vertices can be restored to the input coordinate system.
 Run the complete basketball sequence with:
 
 ```bash
-conda activate pytorch
+conda activate open4d
 mkdir -p outputs/basketball_sequence_qndf
 nohup python run_basketball_sequence.py \
   --source-dir ../tvmc/arap-volume-tracking/data/basketball_player \

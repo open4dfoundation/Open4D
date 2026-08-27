@@ -1,4 +1,4 @@
-# The shared pip set for every Open4D codec. Installed by the root
+# The shared pip set for Open4D codec Python stages. Installed by the root
 # environment.yml; also usable on its own inside an existing Python 3.12 venv.
 #
 # These are direct dependencies only. The per-codec environment.yml files used to

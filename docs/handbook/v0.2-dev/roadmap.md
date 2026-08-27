@@ -1,5 +1,9 @@
 # Dependency-ordered roadmap and TODO list
 
+Checklist status was reconciled with the repository on 2026-08-27. A checked
+box means the named repository change exists; it does not waive the release
+block or make a research pipeline complete.
+
 This list is ordered by dependency and risk, not by how exciting the demo looks.
 P0 prevents unsafe releases and false status claims; P1 creates reusable
 contracts; P2 proves them on a CPU codec; P3 applies them to temporal capture
@@ -26,31 +30,31 @@ flowchart LR
 
 - [x] Publish this versioned `v0.2-dev` handbook and link it from the root
   README.
-- [ ] Replace namespace auto-discovery with an explicit lightweight package
+- [x] Replace namespace auto-discovery with an explicit lightweight package
   allowlist.
-- [ ] Build a clean wheel and assert its exact file list; ensure no research
+- [x] Build a clean wheel and assert its exact file list; ensure no research
   codec, Gaussian, dataset, paper, or Unity binary ships accidentally.
-- [ ] Create a root third-party/provenance ledger covering code, submodules,
+- [x] Create a root third-party/provenance ledger covering code, submodules,
   models, datasets, binaries, papers, copied helpers, and licenses.
 - [ ] Resolve TVMC, QNDF, copied-upstream, binary, and dataset distribution
   scope. Block releases until this gate passes.
-- [ ] Record Ryan's ownership of QUEEN/3DGStream in contribution/ownership
+- [x] Record Ryan's ownership of QUEEN/3DGStream in contribution/ownership
   guidance and exclude those paths from unrelated refactors.
 
 ### CI and tests
 
-- [ ] Add Python 3.10–3.13 core build/install/import/test jobs.
-- [ ] Add Python 3.10–3.12 Open3D jobs.
-- [ ] Add clean packaging smoke tests and exact wheel-content checks.
-- [ ] Add Python syntax, shell syntax, Markdown-link, provenance, and license
+- [x] Add Python 3.10–3.13 core build/install/import/test jobs.
+- [x] Add Python 3.10–3.12 Open3D jobs.
+- [x] Add clean packaging smoke tests and exact wheel-content checks.
+- [x] Add Python syntax, shell syntax, Markdown-link, provenance, and license
   validation.
-- [ ] Configure root pytest markers: `cpu`, `open3d`, `torch`, `gpu`,
-  `hardware`, and `slow`.
-- [ ] Keep research experiment scripts out of default test collection without
+- [x] Configure root pytest markers: `cpu`, `open3d`, `torch`, `gpu`,
+  `hardware`, `slow`, and `player`.
+- [x] Keep research experiment scripts out of default test collection without
   deleting their documented workflows.
-- [ ] Restore comprehensive Frame/provider/Sequence/view tests: empty,
+- [x] Restore comprehensive Frame/provider/Sequence/view tests: empty,
   timestamps, slices, topology, metadata, cleanup, laziness, failures.
-- [ ] Reject integer named attributes outside the canonical `int32` range.
+- [x] Reject integer named attributes outside the canonical `int32` range.
 
 ### P0 acceptance
 
