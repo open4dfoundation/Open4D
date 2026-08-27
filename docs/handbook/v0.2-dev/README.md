@@ -19,7 +19,9 @@ version of the audit is:
 
 That audit remains frozen for reproducibility. The live gap between the
 audited baseline and the roadmap is tracked in
-[current implementation status](implementation-status.md).
+[current implementation status](implementation-status.md). The roadmap and the
+“First commands” section below are maintained with the live branch; the
+technical chapters and component register remain audit records.
 
 > **Complete means:** setup is reproducible, a licensed sample runs end to end,
 > automated tests pass, outputs are documented, and the component works through
@@ -56,14 +58,16 @@ triangle mesh. A Gaussian-splat renderer is not a mesh viewer. The project will
 become coherent by giving these jobs explicit boundaries, not by forcing every
 method into one data structure.
 
-## Current maturity
+## Maturity at the audited revision
 
-The strongest verified pieces are the NumPy-backed `TriangleMesh`, `Frame`,
-finite lazy `Sequence`, example loaders/comparison tools/viewers, and the
-Open3D adapter. The recorded audit has 106 passing core/visualization tests and
-5 passing Open3D tests on Python 3.12. The codec and RGB-D trees contain useful
-standalone pipelines, but none consumes and produces the shared `Sequence`
-interface. `apps/` is still a README-only scaffold.
+At commit `96b8c7b`, the strongest verified pieces were the NumPy-backed
+`TriangleMesh`, `Frame`, finite lazy `Sequence`, example loaders/comparison
+tools/viewers, and the Open3D adapter. The recorded audit has 106 passing
+core/visualization tests and 5 passing Open3D tests on Python 3.12. The codec
+and RGB-D trees contained useful standalone pipelines, but none consumed and
+produced the shared `Sequence` interface. `apps/` was a README-only scaffold.
+Several public codec adapters were added after this audit; use
+[current implementation status](implementation-status.md) for present behavior.
 
 Important cautions before publishing or redistributing anything:
 

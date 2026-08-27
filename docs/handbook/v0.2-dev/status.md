@@ -104,15 +104,15 @@ flowchart TB
 - **Audit:** `96b8c7b`, 2026-08-13.
 - **Research/upstream capability:** lazy folders/single files for OBJ, PLY, USD,
   and optional trimesh formats.
-- **Open4D integration:** local mesh files and folders are public through
-  `open4d.io`; USD remains example-local.
-- **Verification:** public I/O has focused CPU tests; USD retains example tests.
+- **Open4D integration:** returns the core `Sequence`, but the API lives under
+  `examples/visualization`, not `open4d.io`.
+- **Verification:** included in the recorded 106-test Python 3.12 run.
 - **Input/output:** mesh directory or file -> lazy `Sequence[Frame[TriangleMesh]]`.
 - **Owner lane:** shared platform I/O.
-- **Known blockers:** filename-last-number ordering remains a convention;
-  limited OBJ/PLY attributes and the point-cloud placeholder remain.
-- **Smallest useful next contribution:** promote the USD backend with explicit
-  schema, point-cloud, and lossy-write decisions.
+- **Known blockers:** filename-last-number ordering trap, mixed-format skipping,
+  limited OBJ/PLY attributes, point-cloud placeholder, no supported public API.
+- **Smallest useful next contribution:** promote `open_sequence` with its
+  registry/providers to `open4d.io` behind parity and cleanup tests.
 
 ### Example OpenUSD container — `VERIFIED-PARTIAL`
 
