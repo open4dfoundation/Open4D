@@ -9,7 +9,7 @@ The directory names are stable, lowercase identifiers:
 - `draco`, `klt`, `n4mc`, `qndf`, and `qndf_int8`
 - `tsmc` and `tvmc`
 - `vdmc`, the pinned MPEG V-DMC test-model submodule
-- `faster_vdmc`, Open4D's vendored performance-oriented V-DMC fork; see its
+- `faster_vdmc`, Open4D's performance-oriented V-DMC fork; see its
   [benchmark report](../../docs/benchmarks/faster-vdmc.md)
 
 Implementations are imported lazily only when their public codec is selected,
