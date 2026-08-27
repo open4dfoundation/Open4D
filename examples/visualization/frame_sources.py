@@ -288,7 +288,8 @@ def open_sequence(path: Path | str, fps: float | None = None) -> Sequence:
     kind = source_kind(path)
 
     if kind == "folder":
-        return Sequence(FolderFrameProvider(path, fps=fps or DEFAULT_FPS))
+        folder_fps = DEFAULT_FPS if fps is None else fps
+        return Sequence(FolderFrameProvider(path, fps=folder_fps))
     if kind == "sequence-file":
         return SEQUENCE_OPENERS[path.suffix.lower()](path, fps)
     return Sequence(SingleFrameProvider(path))
