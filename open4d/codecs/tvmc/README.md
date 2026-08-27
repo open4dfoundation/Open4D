@@ -1,7 +1,8 @@
 # TVMC Quick Start
 
-TVMC supports Homebrew macOS and Ubuntu Linux. It requires Python 3.8–3.11,
-CMake, Git, and the .NET 10 SDK.
+TVMC supports Homebrew macOS and Ubuntu Linux. It uses Open4D's shared Python
+3.12 codec environment and additionally requires CMake, Git, and the .NET 10
+SDK.
 
 ## 1. Install system dependencies
 
@@ -11,21 +12,20 @@ Install [Homebrew](https://brew.sh/) if it is not already available, then run:
 
 ```bash
 brew update
-brew install cmake python@3.11 dotnet git
+brew install cmake python@3.12 dotnet git
 ```
 
 Verify the required tools:
 
 ```bash
-python3.11 --version
+python3.12 --version
 dotnet --version
 cmake --version
 ```
 
 ### Ubuntu Linux
 
-Ubuntu 22.04 includes Python 3.10, which is supported by TVMC. Install the
-system packages:
+On Ubuntu 24.04, install the system packages:
 
 ```bash
 sudo apt update
@@ -54,7 +54,21 @@ dotnet --version
 cmake --version
 ```
 
-## 2. Enter the TVMC directory
+## 2. Create the shared Python environment
+
+From the Open4D repository root:
+
+```bash
+conda env create -f environment.yml
+conda activate open4d
+python -m pip install -e .
+```
+
+This is the same Python 3.12 dependency set used by the other codecs. TVMC's
+local `requirements.txt` mirrors the relevant pins but is not a second supported
+dependency baseline.
+
+## 3. Enter the TVMC directory
 
 From the Open4D repository root:
 
@@ -64,17 +78,19 @@ cd open4d/codecs/tvmc
 
 The ten basketball sample meshes are included in the repository.
 
-## 3. Set up TVMC
+## 4. Build TVMC's native dependencies
 
 Run the setup script once:
 
 ```bash
-./setup.sh
+./setup.sh --build-only
 ```
 
-This creates `.venv`, installs the Python packages, builds the .NET projects, initializes Draco, and builds the Draco encoder and decoder.
+This builds the .NET projects, initializes Draco, and builds the Draco encoder
+and decoder. Running `./setup.sh` without `--build-only` remains a convenience
+for creating a component-local `.venv`, but it uses the same Python 3.12 pins.
 
-## 4. Run the pipeline
+## 5. Run the pipeline
 
 ```bash
 ./run_pipeline.sh basketball
@@ -143,15 +159,13 @@ TVMC/basketball_player_outputs/metrics.json
 
 ## View the outputs
 
-TVMC produces a sequence of decoded OBJ meshes. From `open4d/codecs/tvmc`, use the
-Open4D OBJ-sequence player to view them:
+TVMC produces a sequence of decoded OBJ meshes. From `open4d/codecs/tvmc`, use
+the public Open4D sequence viewer:
 
 ```bash
-.venv/bin/python ../tsmc/tsmc/player.py \
-  --mesh-dir TVMC/basketball_player_outputs \
-  --pattern 'decoded_*.obj' \
-  --fps 10 \
-  --loop
+python -m pip install -e '../../..[player]'
+python ../../../examples/visualization/visualize_sequence.py \
+  TVMC/basketball_player_outputs/ --fps 10
 ```
 
 ### Outputs generated on an SSH machine
@@ -170,11 +184,10 @@ Then enter the local TVMC directory and launch the player:
 ```bash
 cd /path/to/local/Open4D/open4d/codecs/tvmc
 
-.venv/bin/python ../tsmc/tsmc/player.py \
-  --mesh-dir TVMC/basketball_player_outputs \
-  --pattern 'decoded_*.obj' \
-  --fps 10 \
-  --loop
+python -m pip install -e '../../..[player]'
+python ../../../examples/visualization/visualize_sequence.py \
+  TVMC/basketball_player_outputs/ --fps 10
 ```
 
-Run `./setup.sh` in the local TVMC directory first if `.venv` does not exist.
+The root Open4D viewer is documented in the project README and does not require
+a TVMC-local `.venv`.

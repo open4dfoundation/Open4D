@@ -135,11 +135,13 @@ contract through the old raw transport by default.
 
 ## Gaussian splats: Ryan's ownership boundary
 
-The audited tree contains full sibling directories
+The following describes commit `96b8c7b`, not the current tree. The audited
+tree contained full sibling directories
 `open4d/reconstruction/queen/` and `open4d/reconstruction/3dgstream/`.
-`open4d/reconstruction/gs_tools/` is only a placeholder README. Documentation
-that says QUEEN and 3DGStream live under `gs_tools` is stale; the deleted design
-must not be recreated without Ryan's agreement.
+`open4d/reconstruction/gs_tools/` was only a placeholder README. Documentation
+that said QUEEN and 3DGStream lived under `gs_tools` was stale at that revision.
+After the audit, `gs_tools` was restored as their shared environment and tooling
+directory. The ownership and review boundary below still applies.
 
 ### QUEEN
 

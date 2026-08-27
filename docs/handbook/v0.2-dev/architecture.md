@@ -37,10 +37,13 @@ The important contracts are:
 The existing geometry/frame/provider/sequence separation and canonical NumPy
 dtypes should be preserved.
 
-## The actual v0.2-dev architecture
+## The architecture at the audited v0.2-dev revision
 
-The public core exists, but most useful I/O and measurement code is in examples,
-and every research pipeline uses its own file/tensor/Open3D conventions:
+At commit `96b8c7b`, the public core existed, but most useful I/O and measurement
+code was in examples, and every research pipeline used its own
+file/tensor/Open3D conventions. This diagram is historical; see
+[current implementation status](implementation-status.md) for adapters and
+public APIs added after the audit.
 
 ```mermaid
 flowchart TB

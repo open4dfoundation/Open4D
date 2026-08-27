@@ -17,8 +17,9 @@ is not legal approval to publish.
 - **Lightweight platform:** `open4d.core`, `open4d.torch_ops`, the Open3D
   adapter, examples, documentation, and CPU tests.
 - **Research codecs:** each directory under `open4d/codecs/` is an independent
-  experimental environment. Preserve the paper implementation and integrate
-  through narrow adapters.
+  experimental workflow. Its Python stages use the shared Python 3.12 codec
+  dependency set; native and GPU requirements remain component-specific.
+  Preserve the paper implementation and integrate through narrow adapters.
 - **RGB-D reconstruction and transport:** hardware, CUDA, and network work
   under `open4d/reconstruction/rgbd/`. Prefer synthetic or recorded tests.
 - **Gaussian reconstruction:** treat the imported research directories as
@@ -50,8 +51,8 @@ python -m pip install -e '.[dev,torch]'
 python -m pytest -m 'torch and not open3d' open4d/torch_ops/tests
 ```
 
-Registered markers are `cpu`, `open3d`, `torch`, `gpu`, `hardware`, and
-`slow`. Tests needing GPUs, physical hardware, local datasets, or graphical
+Registered markers are `cpu`, `open3d`, `torch`, `gpu`, `hardware`, `slow`, and
+`player`. Tests needing GPUs, physical hardware, local datasets, or graphical
 sessions must not run in the default tier.
 
 ## Required checks
