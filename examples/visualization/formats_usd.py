@@ -46,6 +46,8 @@ with no faces) as a `UsdGeom.Points`. Both are read back the same way.
 from __future__ import annotations
 
 import datetime as _datetime
+import math
+from numbers import Real
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -72,6 +74,15 @@ _STREAM_TYPES = {
 }
 
 _NO_TRIANGLES = np.empty((0, 3), dtype=np.uint32)
+
+
+def _positive_fps(value: float) -> float:
+    if not isinstance(value, Real) or isinstance(value, bool):
+        raise TypeError("fps must be a real number")
+    result = float(value)
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError("fps must be finite and greater than zero")
+    return result
 
 
 def _pxr() -> tuple[Any, Any, Any, Any]:
@@ -183,7 +194,7 @@ class UsdSequenceProvider:
         }
 
         stage_fps = self._stage.GetTimeCodesPerSecond() or 24.0
-        self.fps = float(fps) if fps else float(stage_fps)
+        self.fps = _positive_fps(stage_fps if fps is None else fps)
 
         container = dict(
             (self._stage.GetRootLayer().customLayerData or {}).get("open4d", {})
@@ -336,6 +347,33 @@ def write_usd_container(
     Connectivity is written once when every frame shares it, and time-sampled
     only where it changes. The frames where it changes are the key frames.
     """
+    fps = _positive_fps(fps)
+    if not isinstance(up_axis, str) or up_axis.lower() not in {"y", "z"}:
+        raise ValueError("up_axis must be 'y' or 'z' for an OpenUSD stage")
+    up_axis = up_axis.lower()
+
+    # USD prim schemas and primvars must be chosen before samples are authored.
+    # Reiterable sequences are scanned without retaining their geometry; only a
+    # one-shot iterator needs materialization so it can survive the write pass.
+    iterator = iter(frames)
+    if iterator is frames:
+        frames = tuple(iterator)
+
+    frame_count = 0
+    has_triangles = False
+    has_colors = False
+    for index, frame in enumerate(frames):
+        frame_count = index + 1
+        has_triangles = has_triangles or len(frame.geometry.triangles) > 0
+        has_colors = has_colors or frame.geometry.colors is not None
+        if len(frame.geometry.positions) == 0:
+            raise ValueError(
+                f"frame {index} contains no positions; "
+                "USD containers require non-empty geometry"
+            )
+    if frame_count == 0:
+        raise ValueError("cannot write a container with no frames")
+
     Sdf, Usd, UsdGeom, Vt = _pxr()
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -370,10 +408,30 @@ def write_usd_container(
     stage.SetTimeCodesPerSecond(fps)
     stage.SetFramesPerSecond(fps)
 
-    geometry_prim: Any = None
-    points_attr = counts_attr = indices_attr = extent_attr = None
+    if has_triangles:
+        schema = UsdGeom.Mesh.Define(stage, PRIM_PATH)
+        counts_attr = schema.CreateFaceVertexCountsAttr()
+        indices_attr = schema.CreateFaceVertexIndicesAttr()
+    else:
+        schema = UsdGeom.Points.Define(stage, PRIM_PATH)
+        counts_attr = indices_attr = None
+    geometry_prim = schema.GetPrim()
+    points_attr = schema.CreatePointsAttr()
+    extent_attr = schema.CreateExtentAttr()
     color_primvar = None
+    if has_colors:
+        color_primvar = UsdGeom.PrimvarsAPI(geometry_prim).CreatePrimvar(
+            "displayColor",
+            Sdf.ValueTypeNames.Color3fArray,
+            UsdGeom.Tokens.vertex,
+        )
     streams: dict[str, Any] = {}
+    for name, type_name in _STREAM_TYPES.items():
+        streams[name] = geometry_prim.CreateAttribute(
+            f"open4d:{name}",
+            getattr(Sdf.ValueTypeNames, type_name),
+            custom=True,
+        )
 
     previous_triangles: np.ndarray | None = None
     first_triangles: np.ndarray | None = None
@@ -387,31 +445,6 @@ def write_usd_container(
         triangles = np.asarray(mesh.triangles, dtype=np.int32)
         time = Usd.TimeCode(index)
 
-        if geometry_prim is None:
-            # The first frame decides the prim type: a sequence with no faces
-            # is a point cloud, not a mesh with nothing in it.
-            if len(triangles) > 0:
-                schema = UsdGeom.Mesh.Define(stage, PRIM_PATH)
-                counts_attr = schema.CreateFaceVertexCountsAttr()
-                indices_attr = schema.CreateFaceVertexIndicesAttr()
-            else:
-                schema = UsdGeom.Points.Define(stage, PRIM_PATH)
-            geometry_prim = schema.GetPrim()
-            points_attr = schema.CreatePointsAttr()
-            extent_attr = schema.CreateExtentAttr()
-            if mesh.colors is not None:
-                color_primvar = UsdGeom.PrimvarsAPI(geometry_prim).CreatePrimvar(
-                    "displayColor",
-                    Sdf.ValueTypeNames.Color3fArray,
-                    UsdGeom.Tokens.vertex,
-                )
-            for name, type_name in _STREAM_TYPES.items():
-                streams[name] = geometry_prim.CreateAttribute(
-                    f"open4d:{name}",
-                    getattr(Sdf.ValueTypeNames, type_name),
-                    custom=True,
-                )
-
         points_attr.Set(Vt.Vec3fArray.FromNumpy(positions), time)
         extent_attr.Set(
             Vt.Vec3fArray.FromNumpy(
@@ -420,16 +453,15 @@ def write_usd_container(
             time,
         )
 
-        if color_primvar is not None and mesh.colors is not None:
-            colors = np.asarray(mesh.colors)
-            if np.issubdtype(colors.dtype, np.integer):
-                colors = colors / 255.0
-            color_primvar.Set(
-                Vt.Vec3fArray.FromNumpy(
-                    np.ascontiguousarray(colors[:, :3], dtype=np.float32)
-                ),
-                time,
-            )
+        if color_primvar is not None:
+            if mesh.colors is None:
+                colors = np.empty((0, 3), dtype=np.float32)
+            else:
+                colors = np.asarray(mesh.colors)
+                if np.issubdtype(colors.dtype, np.integer):
+                    colors = colors / 255.0
+                colors = np.ascontiguousarray(colors[:, :3], dtype=np.float32)
+            color_primvar.Set(Vt.Vec3fArray.FromNumpy(colors), time)
 
         is_key_frame = previous_triangles is None or not np.array_equal(
             previous_triangles, triangles
@@ -458,9 +490,6 @@ def write_usd_container(
         previous_triangles = triangles
         timestamps.append(timestamp)
         count = index + 1
-
-    if count == 0:
-        raise ValueError("cannot write a container with no frames")
 
     # Only frame 0 is a key frame, so connectivity never changed: replace the
     # single time sample with an unvarying value, which USD stores far more
