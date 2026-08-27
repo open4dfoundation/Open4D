@@ -173,25 +173,78 @@ def test_explicit_format_can_open_an_extensionless_file(tmp_path):
     assert len(frame.geometry.triangles) == 1
 
 
-def test_unusual_ply_face_layout_uses_the_trimesh_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "face_properties, face_row",
+    (
+        (
+            "property uchar material\n"
+            "property list uchar int vertex_indices\n",
+            "7 3 0 1 2\n",
+        ),
+        (
+            "property list uchar int vertex_indices\n"
+            "property uchar material\n",
+            "3 0 1 2 7\n",
+        ),
+    ),
+)
+def test_ascii_ply_face_list_respects_declared_property_order(
+    tmp_path, monkeypatch, face_properties, face_row
+):
     path = tmp_path / "frame.ply"
     path.write_text(
-        "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\n"
-        "property float y\nproperty float z\nelement face 1\n"
-        "property list uchar int vertex_indices\nproperty uchar material\n"
-        "end_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2 7\n",
+        (
+            "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\n"
+            "property float y\nproperty float z\nelement face 1\n"
+        )
+        + face_properties
+        + "end_header\n0 0 0\n1 0 0\n0 1 0\n"
+        + face_row,
         encoding="ascii",
     )
-    calls = []
 
     def fallback(fallback_path):
-        calls.append(fallback_path)
-        return ([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [[0, 1, 2]], None)
+        pytest.fail(f"valid face properties should not need trimesh: {fallback_path}")
 
     monkeypatch.setattr("open4d.io._mesh.read_with_trimesh", fallback)
 
-    assert len(open_sequence(path)[0].geometry.triangles) == 1
-    assert calls == [path]
+    triangles = open_sequence(path)[0].geometry.triangles
+    np.testing.assert_array_equal(triangles, [[0, 1, 2]])
+
+
+def test_binary_ply_face_list_respects_declared_property_order(tmp_path, monkeypatch):
+    path = tmp_path / "frame.ply"
+    header = (
+        "ply\nformat binary_little_endian 1.0\nelement vertex 3\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "element face 1\nproperty uchar material\n"
+        "property list uchar int vertex_indices\n"
+        "property float confidence\nend_header\n"
+    ).encode("ascii")
+    vertices = np.array(
+        [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+        dtype=np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4")]),
+    )
+    face = np.array(
+        [(7, 3, [0, 1, 2], 0.5)],
+        dtype=np.dtype(
+            [
+                ("material", "u1"),
+                ("count", "u1"),
+                ("indices", "<i4", 3),
+                ("confidence", "<f4"),
+            ]
+        ),
+    )
+    path.write_bytes(header + vertices.tobytes() + face.tobytes())
+
+    def fallback(fallback_path):
+        pytest.fail(f"valid face properties should not need trimesh: {fallback_path}")
+
+    monkeypatch.setattr("open4d.io._mesh.read_with_trimesh", fallback)
+
+    triangles = open_sequence(path)[0].geometry.triangles
+    np.testing.assert_array_equal(triangles, [[0, 1, 2]])
 
 
 def test_malformed_ply_is_a_decode_error_not_a_missing_dependency(tmp_path):
