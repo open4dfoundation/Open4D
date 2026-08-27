@@ -145,7 +145,92 @@ def _parse_ply_header(stream) -> tuple[str, list[dict[str, Any]], int]:
 def _ply_dtype(name: str) -> np.dtype:
     if name not in _PLY_DTYPES:
         raise UnsupportedPlyVariant(f"unsupported PLY property type {name!r}")
-    return np.dtype(_PLY_DTYPES[name])
+    return np.dtype(_PLY_DTYPES[name]).newbyteorder("<")
+
+
+def _ascii_face_indices(
+    row: list[bytes], properties: list[dict[str, Any]], path: Path
+) -> list[int]:
+    """Read the first face list while consuming every property in order."""
+    if len(properties) == 1 and properties[0]["list"] and row:
+        declared = int(row[0])
+        if len(row) != declared + 1:
+            raise ValueError(
+                f"{path} face declares {declared} indices "
+                f"but contains {len(row) - 1}"
+            )
+
+    cursor = 0
+    selected: list[int] | None = None
+    for prop in properties:
+        if cursor >= len(row):
+            raise ValueError(f"{path} contains a truncated ASCII face")
+        if not prop["list"]:
+            cursor += 1
+            continue
+
+        value_count = int(row[cursor])
+        cursor += 1
+        if value_count < 0 or cursor + value_count > len(row):
+            available = max(0, len(row) - cursor)
+            raise ValueError(
+                f"{path} face declares {value_count} values for "
+                f"{prop['name']!r} but contains {available}"
+            )
+        values = row[cursor : cursor + value_count]
+        cursor += value_count
+        if selected is None:
+            selected = [int(value) for value in values]
+
+    if cursor != len(row):
+        raise ValueError(
+            f"{path} face contains {len(row) - cursor} undeclared value(s)"
+        )
+    assert selected is not None
+    return selected
+
+
+def _read_exact(stream: Any, byte_count: int, path: Path) -> bytes:
+    data = stream.read(byte_count)
+    if len(data) != byte_count:
+        raise ValueError(f"{path} contains a truncated binary PLY element")
+    return data
+
+
+def _binary_face_indices(
+    stream: Any, properties: list[dict[str, Any]], path: Path
+) -> np.ndarray:
+    """Read the first face list while consuming every binary property."""
+    selected: np.ndarray | None = None
+    for prop in properties:
+        if not prop["list"]:
+            dtype = _ply_dtype(prop["type"])
+            _read_exact(stream, dtype.itemsize, path)
+            continue
+
+        count_dtype = _ply_dtype(prop["count_type"])
+        value_count = int(
+            np.frombuffer(
+                _read_exact(stream, count_dtype.itemsize, path),
+                dtype=count_dtype,
+                count=1,
+            )[0]
+        )
+        if value_count < 0:
+            raise ValueError(
+                f"{path} face declares a negative list count for {prop['name']!r}"
+            )
+        value_dtype = _ply_dtype(prop["value_type"])
+        values = np.frombuffer(
+            _read_exact(stream, value_dtype.itemsize * value_count, path),
+            dtype=value_dtype,
+            count=value_count,
+        )
+        if selected is None:
+            selected = values
+
+    assert selected is not None
+    return selected
 
 
 def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
@@ -231,39 +316,22 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
             elif name == "face":
                 corners: list[tuple[int, int, int]] = []
                 list_properties = [prop for prop in properties if prop["list"]]
-                if len(list_properties) != 1 or len(properties) != 1:
+                if not list_properties:
                     raise UnsupportedPlyVariant(
-                        f"{path} face elements must contain exactly one list property"
+                        f"{path} face elements must contain a list property"
                     )
-                list_property = list_properties[0]
 
                 if ascii_mode:
                     for row in rows:
-                        vertices_in_face = int(row[0])
-                        if len(row) != vertices_in_face + 1:
-                            raise ValueError(
-                                f"{path} face declares {vertices_in_face} indices "
-                                f"but contains {len(row) - 1}"
-                            )
-                        indices = [int(value) for value in row[1:]]
+                        indices = _ascii_face_indices(row, properties, path)
                         for corner in range(1, len(indices) - 1):
                             corners.append(
                                 (indices[0], indices[corner], indices[corner + 1])
                             )
                 else:
-                    count_dtype = _ply_dtype(list_property["count_type"])
-                    value_dtype = _ply_dtype(list_property["value_type"])
                     for _ in range(count):
-                        vertices_in_face = int(
-                            np.frombuffer(
-                                stream.read(count_dtype.itemsize), dtype=count_dtype
-                            )[0]
-                        )
-                        indices = np.frombuffer(
-                            stream.read(value_dtype.itemsize * vertices_in_face),
-                            dtype=value_dtype,
-                        )
-                        for corner in range(1, vertices_in_face - 1):
+                        indices = _binary_face_indices(stream, properties, path)
+                        for corner in range(1, len(indices) - 1):
                             corners.append(
                                 (
                                     int(indices[0]),
