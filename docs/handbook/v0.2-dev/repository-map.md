@@ -3,6 +3,11 @@
 This map describes what is physically present at the audited revision and how
 each area should align with the platform.
 
+It is not a current tree listing. In particular, `gs_tools` was restored after
+the audit and public I/O, visualization, and codec adapters were added. See
+[current implementation status](implementation-status.md) and the root README
+for the live inventory.
+
 ## Top-level map
 
 ```text
@@ -67,7 +72,7 @@ of each method.
 | MRD3 | continuous Draco/JPEG mesh frames | successive reconstruction results | live frame messages and receive statistics | label experimental; supersede only after live contract |
 | QUEEN | trains and quantizes dynamic 3D Gaussians for free-viewpoint video | calibrated multi-view images/COLMAP | initial/delta Gaussian artifacts and rendered views | Ryan-owned handoff contract only |
 | 3DGStream | initial 3DGS plus per-frame neural transformation cache/new Gaussians | calibrated multi-view images and initial 3DGS | per-frame NTC/new Gaussian data and renders | Ryan-owned handoff contract only |
-| `gs_tools` | currently a one-heading placeholder | none | none | correct stale descriptions; do not resurrect deleted design |
+| `gs_tools` | one-heading placeholder at the audit | none | none | historical state; the directory was restored after the audit |
 
 See [reconstruction and streaming](reconstruction-streaming.md) for data and
 protocol details.

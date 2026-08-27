@@ -75,14 +75,16 @@ The intended root markers are:
 - `torch`: Torch CPU or GPU-aware behavior;
 - `gpu`: requires a suitable GPU/driver/toolkit;
 - `hardware`: cameras, headset, or other physical device;
-- `slow`: unsuitable for normal per-change feedback.
+- `slow`: unsuitable for normal per-change feedback;
+- `player`: requires the optional Qt/OpenGL player and a display.
 
-Root collection contains only the lightweight core, headless visualization,
-and validation-script suites. Optional Open3D and Torch suites use the explicit
-commands above. Several research scripts are named `test.py`,
-`decoder_test.py`, or `model_test.py` but perform local-dataset/GPU experiments
-and must not be collected by default. Rename or configure them only after
-preserving their intended commands.
+Root collection contains the public core, codec contracts, I/O, Torch helpers,
+headless visualization, examples, and validation-script suites named in
+`pyproject.toml`. Optional dependencies are skipped unless installed; focused
+Open3D and Torch commands are shown above. Several research scripts are named
+`test.py`, `decoder_test.py`, or `model_test.py` but perform local-dataset/GPU
+experiments and must not be collected by default. Rename or configure them only
+after preserving their intended commands.
 
 For a new feature, cover at least:
 

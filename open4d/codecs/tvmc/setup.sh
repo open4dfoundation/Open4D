@@ -44,16 +44,16 @@ fi
 if [[ "$BUILD_ONLY" -eq 0 ]]; then
   PYTHON_BIN="${PYTHON:-}"
   if [[ -z "$PYTHON_BIN" ]]; then
-    for candidate in python3.10 python3.11 python3.9 python3.8 python3 python; do
+    for candidate in python python3.12 python3; do
       if command -v "$candidate" >/dev/null 2>&1; then
         PYTHON_BIN="$candidate"
         break
       fi
     done
   fi
-  [[ -n "$PYTHON_BIN" ]] || { echo "error: Python 3.8-3.11 is required" >&2; exit 1; }
-  "$PYTHON_BIN" -c 'import sys; raise SystemExit(not ((3, 8) <= sys.version_info[:2] < (3, 12)))' || {
-    echo "error: Open3D 0.18 requires Python 3.8-3.11; found $($PYTHON_BIN --version)" >&2
+  [[ -n "$PYTHON_BIN" ]] || { echo "error: Python 3.12 is required" >&2; exit 1; }
+  "$PYTHON_BIN" -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' || {
+    echo "error: the shared codec environment requires Python 3.12; found $($PYTHON_BIN --version)" >&2
     exit 1
   }
   if [[ ! -x "$ROOT/.venv/bin/python" && ! -x "$ROOT/.venv/Scripts/python.exe" ]]; then
@@ -64,6 +64,10 @@ if [[ "$BUILD_ONLY" -eq 0 ]]; then
   else
     VENV_PYTHON="$ROOT/.venv/bin/python"
   fi
+  "$VENV_PYTHON" -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' || {
+    echo "error: $ROOT/.venv is not Python 3.12; remove it and rerun setup" >&2
+    exit 1
+  }
   "$VENV_PYTHON" -m pip install --upgrade pip
   "$VENV_PYTHON" -m pip install -r "$ROOT/requirements.txt"
 fi

@@ -1,8 +1,9 @@
 # Codecs
 
 This directory contains Open4D's compression implementations and reference
-codec integrations. Each codec owns its environment, build instructions, data,
-and generated outputs; consult the codec's README before running it.
+codec integrations. The Python codecs share the root Python 3.12 dependency
+set, while each codec owns its native build instructions, optional GPU extras,
+data, and generated outputs. Consult the codec's README before running it.
 
 The directory names are stable, lowercase identifiers:
 

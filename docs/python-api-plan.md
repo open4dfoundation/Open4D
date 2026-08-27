@@ -44,7 +44,7 @@ with open_sequence("capture/", fps=30.0) as sequence:
     mesh = sequence[0].geometry
 ```
 
-The proposed first public surface is:
+The implemented mesh-I/O surface is:
 
 ```python
 def open_sequence(
@@ -68,7 +68,6 @@ def write_sequence(
     format: str | None = None,
     overwrite: bool = False,
     allow_lossy: bool = False,
-    options: Mapping[str, object] | None = None,
 ) -> Path: ...
 
 def available_formats() -> tuple[FormatInfo, ...]: ...
@@ -279,6 +278,9 @@ be updated alongside the new package.
 
 ## Implementation slices
 
+Slices 1 and the manifested-directory portion of slice 3 are implemented.
+Public USD, TVMC/RGB-D providers, and representation expansion remain open.
+
 ### Slice 1: public mesh loading
 
 - Move the built-in OBJ/PLY and folder providers out of
@@ -388,19 +390,16 @@ wall-clock timing runs separately from memory tracing to avoid instrumentation
 bias. These reference-codec measurements are in-process, and source parsing is
 reported separately. V-DMC is a separate native-process backend.
 
-## Questions to settle with the first implementation
+## Remaining design questions
 
-1. Should the manifest filename be fixed (for example,
-   `open4d.sequence.json`) or discovered by schema content?
-2. Which coordinate-system declarations are required in v1, and which may be
+1. Which coordinate-system declarations are required in v1, and which may be
    unknown rather than guessed?
-3. Should `write_sequence` initially expose only USD, or also a manifested
-   OBJ/PLY directory writer for a dependency-free round trip?
-4. Does `inspect_sequence` guarantee zero geometry decode, or report an
-   `inspection_cost` capability for formats that require it?
-5. Which format-specific settings have proved common enough to promote out of
+2. Which format-specific settings have proved common enough to promote out of
    `options` into typed arguments after the first two readers?
 
-These questions can be answered with the small OBJ/PLY and USD slices. They do
-not need to block the central architecture: storage remains replaceable,
-providers remain lazy, and `Sequence` remains the Python contract.
+The manifest name is now fixed as `open4d.sequence.json`, dependency-free
+manifested OBJ/PLY directory writing is implemented, and
+`inspect_sequence` guarantees metadata inspection without geometry decode for
+the supported mesh storage forms. The remaining questions do not block the
+central architecture: storage remains replaceable, providers remain lazy, and
+`Sequence` remains the Python contract.

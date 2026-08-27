@@ -35,10 +35,13 @@ This produces `draco/build/draco_encoder` and `draco/build/draco_decoder`. If yo
 already built Draco elsewhere (e.g. `tvmc/draco/build`), point the scripts at it
 with `--draco_bin_dir` or `export DRACO_BIN_DIR=/path/to/build`.
 
-For the Python evaluation dependencies:
+For the Python evaluation dependencies, use the repository-wide codec
+environment:
 
 ```bash
-python -m pip install -r requirements.txt
+conda env create -f ../../../environment.yml
+conda activate open4d
+python -m pip install -e ../../..
 ```
 
 ## Usage

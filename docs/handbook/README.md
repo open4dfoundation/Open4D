@@ -8,11 +8,13 @@ is useful only when it names the revision it describes.
 
 | Snapshot | Repository revision | Audit date | State |
 | --- | --- | --- | --- |
-| [`v0.2-dev`](v0.2-dev/README.md) | `96b8c7bbb48e2a8d231684639cfc57799ca6666d` | 2026-08-13 | Current development baseline |
+| [`v0.2-dev`](v0.2-dev/README.md) | `96b8c7bbb48e2a8d231684639cfc57799ca6666d` | 2026-08-13 | Historical audit baseline with a separately maintained live-status page |
 
-Start with the current snapshot's [orientation and learning path](v0.2-dev/README.md).
-Then read its [current implementation status](v0.2-dev/implementation-status.md)
-for the live gap between the audited baseline and the roadmap.
+Start with the snapshot's [orientation and learning path](v0.2-dev/README.md).
+The technical chapters and component register describe the audited commit, not
+today's tree. The [current implementation status](v0.2-dev/implementation-status.md),
+[roadmap](v0.2-dev/roadmap.md), and orientation page's first commands are the
+maintained exceptions.
 When `v0.2` is released, this directory should be copied to `v0.2/` and frozen;
 future audits should create a new snapshot rather than rewriting history.
 

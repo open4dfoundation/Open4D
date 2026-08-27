@@ -1,8 +1,13 @@
 # Shared temporal geometry design
 
-For the proposed public loading, format detection, directory manifest, and
-writer API built on this model, see [Python API plan for heterogeneous 3D
-sequences](python-api-plan.md).
+Status: historical design record. `TriangleMesh`, `Frame`, `FrameProvider`, and
+`Sequence` are implemented, as are public mesh I/O and selected codec adapters.
+Use the root README and the handbook's current implementation status for the
+live feature list.
+
+For the implemented public loading, format detection, directory manifest, and
+writer API, plus the remaining design work, see the
+[Python API plan for heterogeneous 3D sequences](python-api-plan.md).
 
 ## Purpose
 
@@ -20,8 +25,8 @@ value and provider boundaries before codec APIs are changed.
 
 ## Existing representations
 
-The repository currently has no shared frame value. The main paths use these
-representations:
+When this design was written, the repository had no shared frame value. The
+research paths used these representations:
 
 | Path | Geometry and attributes | Time and sequence state | Topology |
 |---|---|---|---|

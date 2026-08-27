@@ -37,9 +37,10 @@ KLT/
 ## Setup
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+conda env create -f ../../../environment.yml
+conda activate open4d
+python -m pip install -e ../../..
+python -m pip install -r ../../../requirements-gpu.txt  # kaolin, for evaluation
 ```
 
 `kaolin`, `point_cloud_utils`, and `pymeshlab` are only needed for the optional
