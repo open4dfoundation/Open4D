@@ -1,11 +1,10 @@
 # Faster V-DMC benchmark report
 
 This report records the August 2026 performance study behind
-`open4d/codecs/faster_vdmc`. The optimized codec's complete source is vendored
-directly in Open4D, not represented by a submodule pointer. It is an exact
-snapshot of the `cicm4/mpeg-vdmc-tm` fork at
-`93cdd5e1367b0f9f81c251ef89255bcb2f0d2d3f`, derived from MPEG V-DMC Test
-Model v14.0 at `ecffe4212e5e956761c4fa14a17c453ae916b0b1`. The original
+`open4d/codecs/faster_vdmc`. The optimized codec is a complete-source Git
+submodule, not a partial wrapper: it forks MPEG V-DMC Test Model v14.0 at
+`ecffe4212e5e956761c4fa14a17c453ae916b0b1` and is pinned by Open4D at
+`93cdd5e1367b0f9f81c251ef89255bcb2f0d2d3f`. The original
 `open4d/codecs/vdmc` submodule remains unchanged as the reference.
 
 The machine-readable record is
@@ -176,11 +175,11 @@ warm-up, and confidence intervals.
 
 ## Reproduction outline
 
-The optimized source is present after a normal Open4D clone. Initialize only
-the MPEG reference tree used for before/after comparisons:
+Initialize both complete source trees:
 
 ```bash
-git submodule update --init --recursive open4d/codecs/vdmc
+git submodule update --init --recursive \
+  open4d/codecs/vdmc open4d/codecs/faster_vdmc
 ```
 
 Build the reference normally. To include the opt-in x265 adapter in the fork,
