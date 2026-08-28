@@ -108,7 +108,6 @@ one and say so.
 | Source | Needs |
 | --- | --- |
 | Folder of `.obj` or `.ply` frames | nothing |
-| Folder of `.usd` frames | `.[usd]` |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
 | One mesh file | as above |

@@ -102,8 +102,8 @@ flowchart TB
 ### Example mesh/folder loaders — `VERIFIED-PARTIAL`
 
 - **Audit:** `96b8c7b`, 2026-08-13.
-- **Research/upstream capability:** lazy folders/single files for OBJ, PLY, USD,
-  and optional trimesh formats.
+- **Research/upstream capability:** lazy folders/single files for OBJ, PLY, and
+  optional trimesh formats, plus time-sampled USD sequence files.
 - **Open4D integration:** `open4d.load` and `open4d.io.open_sequence` return the
   shared lazy `Sequence`.
 - **Verification:** public I/O and unified-dispatch tests cover lazy imports,
