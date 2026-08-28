@@ -62,7 +62,7 @@ def check_available(*, gif: bool = False) -> None:
 class Scene:
     """A GL view holding one sequence, with the frame it shows swappable."""
 
-    def __init__(self, frames: list, args) -> None:
+    def __init__(self, frames, args) -> None:
         QtWidgets, _QtCore, gl = _qt()
         from pyqtgraph import Vector
         from pyqtgraph.opengl import shaders
@@ -85,7 +85,10 @@ class Scene:
             tuple(int(255 * channel) for channel in args.background)
         )
 
-        lower, upper = render_frames.bounds(frames)
+        # Framing from the first displayed frame keeps opening lazy. A complete
+        # sequence-wide bounds scan would decode every frame before playback.
+        first = frames[0]
+        lower, upper = render_frames.bounds([first])
         center = (lower + upper) / 2.0
         span = float(np.max(upper - lower)) or 1.0
         # pyqtgraph keeps the orbit centre in opts and measures distance in world
@@ -99,7 +102,6 @@ class Scene:
 
         # Both item kinds exist from the start and visibility is switched per
         # frame, so a folder mixing meshes and point clouds still draws.
-        first = frames[0]
         self.mesh_item = gl.GLMeshItem(
             meshdata=self._mesh_data(first) if first.is_mesh else gl.MeshData(),
             smooth=False,
@@ -201,7 +203,7 @@ class Scene:
             draw.text((12, 10 + 16 * row), line, fill=(70, 70, 78), font=font)
 
 
-def play(frames: list, args) -> None:
+def play(frames, args) -> None:
     """Open the window and run until it is closed."""
     QtWidgets, QtCore, _gl = _qt()
     scene = Scene(frames, args)
@@ -274,6 +276,10 @@ def play(frames: list, args) -> None:
                 self.slider.blockSignals(True)
                 self.slider.setValue(scene.index)
                 self.slider.blockSignals(False)
+            prefetch = getattr(frames, "prefetch", None)
+            if callable(prefetch):
+                target = (scene.index + 1) % len(frames)
+                QtCore.QTimer.singleShot(0, lambda: prefetch(target))
 
         def advance(self) -> None:
             if self.playing:
@@ -312,7 +318,7 @@ def play(frames: list, args) -> None:
     scene.application.exec()
 
 
-def record(frames: list, args, output: Path) -> None:
+def record(frames, args, output: Path) -> None:
     """Render every frame to an animated GIF, without opening a window."""
     image_module = require("PIL.Image", "player")
     if output.suffix.lower() != ".gif":

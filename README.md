@@ -21,7 +21,7 @@ point-cloud sequences into one open-source research project. In this project,
 ### What works today
 
 - A small Python model for triangle meshes, frames, and finite sequences.
-- Loaders for folders of `.obj` or `.ply` frames, with optional OpenUSD support.
+- One-file OpenUSD and Open4D codec sequences, plus `.obj`/`.ply` import paths.
 - A viewer for inspecting, playing, scrubbing, and exporting mesh sequences.
 - A comparison tool that measures a decoded sequence against its reference and
   displays both under one camera.
@@ -32,16 +32,16 @@ point-cloud sequences into one open-source research project. In this project,
 ### Try the sequence viewer
 
 The lightweight viewer runs on macOS, Linux, and Windows and does not need a
-GPU. Point it at a folder containing one `.obj` or `.ply` mesh per frame:
+GPU. Its normal input is one 4D sequence file:
 
 ```bash
 git clone https://github.com/open4dfoundation/Open4D.git
 cd Open4D
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[player]'
-python examples/visualization/visualize_sequence.py /path/to/frames/ --info
-python examples/visualization/visualize_sequence.py /path/to/frames/
+python -m pip install -e '.[player,usd]'
+python examples/visualization/visualize_sequence.py capture.usdc --info
+python examples/visualization/visualize_sequence.py capture.usdc
 ```
 
 On Windows, activate the environment with `.venv\Scripts\activate` instead.
@@ -279,19 +279,24 @@ the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 
 ## Sequence viewer details
 
-The public Python API loads, encodes, decodes, and visualizes finite
-triangle-mesh sequences independently of their supported file formats:
+The public Python API loads, saves, unloads, and visualizes whole finite
+triangle-mesh sequences independently of their storage format:
 
 ```python
-from open4d.codec import decode_sequence, encode_sequence
-from open4d.io import open_sequence
-from open4d.visualization import visualize
+import open4d
 
-sequence = open_sequence("path/to/frames", fps=30)
-artifact = encode_sequence(sequence, "sequence.o4d", codec="lzma")
-decoded = decode_sequence(artifact)
-visualize(decoded, up="y")
+with open4d.load("capture.usdc") as sequence:
+    open4d.save(sequence, "capture.o4d")
+    open4d.visualize(sequence)
+
+# A path can go straight to the lazy viewer; it is closed when the window exits.
+open4d.visualize("capture.o4d")
 ```
+
+`.usd`, `.usda`, `.usdc`, and `.usdz` are OpenUSD interchange containers.
+`.o4d` and the registered codec suffixes are codec artifacts. Both carry whole
+sequences and use the same `Sequence` interface. `open4d.unload(sequence)` is an
+explicit, idempotent alternative to the context manager.
 
 `write_sequence(sequence, "frames/", format="ply")` writes a versioned
 `open4d.sequence.json` beside the frame files, so reopening the directory keeps
@@ -323,7 +328,7 @@ notebook selection with `OPEN4D_NOTEBOOK_DEVICE=mps` when needed.
 
 This API slice standardizes files around `Sequence[Frame[TriangleMesh]]`; it is
 not yet representation-independent. First-class point-cloud, volume, Gaussian,
-USD-sequence, and live-stream values require separate contracts.
+and live-stream values require separate contracts.
 
 Normal CI runs dependency-complete CPU encode/fresh-decode contracts for KLT,
 N4MC, QNDF, and QNDF-int8. The larger two-format Rafa quality/export matrix is
@@ -341,14 +346,14 @@ Playback uses `open4d.visualization`'s PyQt6 window: drag to orbit, scroll to zo
 to scrub, space to pause, left/right to step a frame. `--save out.gif` writes an
 animated GIF through the same renderer.
 
-A viewer source may be one mesh file, a folder holding one mesh file per frame,
-or a single time-sampled USD file. OBJ and PLY need no extra dependency; the
-`[tools]` extra adds OFF, STL, GLB, and glTF, while `[usd]` adds USD files and
-folders. `--info` reports frame count, duration, topology and bounds without
-decoding geometry, which is the quickest way to check a dataset loads.
+A viewer source may be a single OpenUSD or codec sequence file, one mesh file,
+or a folder holding one mesh file per frame. OBJ and PLY need no extra dependency;
+the `[tools]` extra adds OFF, STL, GLB, and glTF, while `[usd]` adds OpenUSD
+sequence files. `--info` reports frame count, timing, and topology without decoding
+geometry, which is the quickest way to check a dataset loads.
 
-The public Python loader handles local mesh files and frame folders in one call;
-frames are decoded on access:
+Frame folders and individual meshes remain supported as import paths; frames
+are decoded on access:
 
 ```python
 from open4d.io import open_sequence
@@ -358,10 +363,7 @@ with open_sequence("path/to/frames", fps=30.0) as sequence:
     mesh = sequence[0].geometry          # TriangleMesh: positions, triangles
 ```
 
-The viewer additionally retains its example-local OpenUSD sequence reader while
-that backend is promoted to the public API.
-
-OpenUSD is the container the example writes. `--pack-usd out.usdc` packs any
+OpenUSD is the public interchange container. `--pack-usd out.usdc` packs any
 source into one compressed `.usdc` file carrying the frame rate, the key-frame
 index, and per-frame streams alongside the geometry:
 

@@ -7,7 +7,7 @@ Two programs on one loader:
 | `visualize_sequence.py` | Play one 4D sequence |
 | `compare_sequences.py` | Put a decoded sequence beside its reference and colour it by error |
 
-Both read a folder of per-frame meshes or a single time-sampled USD file, and
+Both read a single sequence file or an imported folder of per-frame meshes, and
 either one run with no arguments lists every format it accepts.
 
 ## Quick start
@@ -108,7 +108,6 @@ one and say so.
 | Source | Needs |
 | --- | --- |
 | Folder of `.obj` or `.ply` frames | nothing |
-| Folder of `.usd` frames | `.[usd]` |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
 | One mesh file | as above |
@@ -141,23 +140,24 @@ slightly by default: the ramp is monotone in lightness, so brightness already
 carries the magnitude and at full shading a dark patch is ambiguous between deep
 shadow and large error. That is also why the comparison background is dark.
 
-Every frame you display is decoded and measured up front, so reach for
-`--stride N` above a few hundred frames.
+Single-sequence playback decodes on demand with a bounded cache. Comparison
+still measures both complete sequences up front, so reach for `--stride N`
+above a few hundred frames there.
 
 ## In your own code
 
 ```python
-from open4d.io import open_sequence
-from open4d.visualization import visualize
+import open4d
 
-with open_sequence("frames/") as sequence:
+with open4d.load("capture.usdc") as sequence:
     print(len(sequence), sequence.duration, sequence.fps)
-    visualize(sequence, up="y")
+    open4d.visualize(sequence)
+
+open4d.visualize("capture.o4d")
 ```
 
-Loading is lazy — frames decode on access. Measuring needs no viewer. To add a
-format, add one entry to `FRAME_READERS` or `SEQUENCE_OPENERS` in
-`frame_sources.py`.
+Loading and playback are lazy — frames decode on access. Frame directories and
+single mesh files remain supported as ingestion paths. Measuring needs no viewer.
 
 ## The OpenUSD container
 
@@ -173,9 +173,9 @@ frames.
 | --- | --- |
 | `visualize_sequence.py` | The single-sequence program |
 | `compare_sequences.py` | The comparison program |
-| `frame_sources.py` | Format registry and `open_sequence()` |
+| `frame_sources.py` | Thin CLI inspection helpers over `open4d.io` |
 | `open4d.io._mesh` | `.obj` and `.ply`, trimesh fallback |
-| `formats_usd.py` | USD container read and write |
+| `formats_usd.py` | Compatibility wrappers over the public USD backend |
 | `open4d.visualization` | Public viewer, renderer-neutral frames, rotation, shading |
 | `mesh_metrics.py` | Nearest-neighbour search, point-to-point/plane, RMS and PSNR |
 | `compare_frames.py` | Frame pairing, per-frame error, error colours |

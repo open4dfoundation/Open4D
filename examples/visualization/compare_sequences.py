@@ -6,8 +6,8 @@
         --metric plane --csv error.csv --save compare.gif
 
 This is the comparison viewer; `visualize_sequence.py` is the plain one. Both
-read the same sources — a folder of per-frame meshes or a time-sampled USD
-container — through the same loader, so anything one can open the other can too.
+read the same sources — `.o4d` codec artifacts, time-sampled USD files, frame
+directories, or standalone mesh imports — through the same loader.
 
 Two synchronized panes: the reference as geometry, the decoded mesh coloured by
 its distance to that reference. One camera drives both, because comparing two
