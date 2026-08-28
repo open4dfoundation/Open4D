@@ -121,11 +121,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install player tier
-        run: python -m pip install -e '.[dev,player]'
+      - name: Install player and OpenUSD tier
+        run: python -m pip install -e '.[dev,player,usd]'
       - name: Test public visualizer and dependency imports
         run: |
           python -c "import PyQt6, pyqtgraph, OpenGL, PIL, open4d.visualization"
+          python -c "from pxr import Usd; print(Usd.GetVersion())"
           python -m pytest open4d/visualization/tests examples/visualization/tests
 
   package:
