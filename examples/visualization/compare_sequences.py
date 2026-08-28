@@ -7,7 +7,8 @@
 
 This is the comparison viewer; `visualize_sequence.py` is the plain one. Both
 read the same sources — `.o4d` codec artifacts, time-sampled USD files, frame
-directories, or standalone mesh imports — through the same loader.
+directories, raw V-DMC `.vmesh` bitstreams, or standalone mesh imports —
+through the same loader.
 
 Two synchronized panes: the reference as geometry, the decoded mesh coloured by
 its distance to that reference. One camera drives both, because comparing two
@@ -35,6 +36,8 @@ from pathlib import Path
 from _common import existing_source
 import compare_frames
 from frame_sources import DEFAULT_FPS, describe_source, open_sequence, supported_formats
+from open4d.codec import CodecError
+from open4d.io import Open4DError
 from open4d.visualization._frames import UP_AXES, UP_TO_Z
 
 CSV_COLUMNS = (
@@ -80,7 +83,7 @@ def report_sources(reference, decoded, reference_path, decoded_path, fps) -> Non
         ("decoded", decoded, decoded_path),
     ):
         print(f"\n{label}: {path}")
-        print(f"  {describe_source(path)}")
+        print(f"  {describe_source(path, sequence)}")
         print(f"  frames     : {len(sequence)}")
         print(f"  topology   : {sequence.topology.value}")
     print(f"\nplaying at   : {fps:.2f} fps")
@@ -339,7 +342,7 @@ def run(args) -> int:
                 progress=progress,
             )
             print()
-    except (ValueError, TypeError, OSError) as error:
+    except (Open4DError, CodecError, ValueError, TypeError, OSError) as error:
         raise SystemExit(f"\nfailed to compare the sequences:\n  {error}") from None
 
     report_error(comparison)

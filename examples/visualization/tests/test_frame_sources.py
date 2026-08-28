@@ -43,3 +43,11 @@ def test_documentation_does_not_advertise_usd_frame_directories():
     )
 
     assert "Folder of `.usd` frames" not in readme
+
+
+def test_example_helpers_advertise_raw_vdmc_as_a_sequence_source(tmp_path):
+    bitstream = tmp_path / "capture.vmesh"
+    bitstream.write_bytes(b"raw bitstream")
+
+    assert frame_sources.source_kind(bitstream) == "sequence-file"
+    assert ".vmesh" in frame_sources.supported_formats()

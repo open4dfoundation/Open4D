@@ -11,6 +11,7 @@ from .core import Sequence
 from .io import open_sequence, write_sequence
 
 _USD_SUFFIXES = frozenset((".usd", ".usda", ".usdc", ".usdz"))
+_RAW_VMESH_SUFFIX = ".vmesh"
 
 
 def _options(value: Mapping[str, object] | None) -> dict[str, object]:
@@ -37,15 +38,27 @@ def load(
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
 ) -> Sequence:
-    """Open a complete sequence artifact or an importable geometry source."""
+    """Open a sequence artifact, raw V-DMC bitstream, or geometry source."""
     if format is not None and codec is not None:
         raise TypeError("format and codec are mutually exclusive")
     values = _options(options)
     path = Path(source)
     if codec is not None:
-        if fps is not None:
+        if fps is not None and path.suffix.lower() != _RAW_VMESH_SUFFIX:
             raise TypeError("fps applies to I/O sources, not codec artifacts")
+        if fps is not None:
+            if "fps" in values:
+                raise TypeError("fps was passed both by name and in options")
+            values["fps"] = fps
         return decode_sequence(path, codec=codec, **values)
+    if not path.is_dir() and path.suffix.lower() == _RAW_VMESH_SUFFIX:
+        if format is not None:
+            raise TypeError("format cannot select a raw V-DMC bitstream")
+        if fps is not None:
+            if "fps" in values:
+                raise TypeError("fps was passed both by name and in options")
+            values["fps"] = fps
+        return decode_sequence(path, codec="vdmc", **values)
     if not path.is_dir() and path.suffix.lower() in _codec_suffixes():
         if format is not None:
             raise TypeError("format cannot select a codec artifact")
