@@ -57,7 +57,35 @@ def test_top_level_load_rejects_conflicting_dispatch_overrides(tmp_path):
         open4d.load(path, format="obj", codec="npz")
 
 
-@pytest.mark.parametrize("name", ("capture", "frame.obj", "capture.unknown"))
+def test_top_level_load_dispatches_raw_vmesh_to_the_read_only_vdmc_decoder(
+    tmp_path, monkeypatch
+):
+    import open4d._api as implementation
+
+    path = tmp_path / "capture.vmesh"
+    path.write_bytes(b"raw bitstream")
+    expected = sequence()
+    received = {}
+
+    def decode(source, *, codec=None, **options):
+        received.update(source=source, codec=codec, options=options)
+        return expected
+
+    monkeypatch.setattr(implementation, "decode_sequence", decode)
+
+    assert open4d.load(
+        path, fps=24, options={"decoder": "/native/decoder"}
+    ) is expected
+    assert received == {
+        "source": path,
+        "codec": "vdmc",
+        "options": {"decoder": "/native/decoder", "fps": 24},
+    }
+
+
+@pytest.mark.parametrize(
+    "name", ("capture", "frame.obj", "capture.unknown", "capture.vmesh")
+)
 def test_top_level_save_requires_a_sequence_file_extension(tmp_path, name):
     with pytest.raises(ValueError, match="sequence-file extension"):
         open4d.save(sequence(), tmp_path / name)

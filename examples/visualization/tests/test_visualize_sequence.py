@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import visualize_sequence as cli
-from open4d import Frame, Sequence, TriangleMesh
+from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from open4d.visualization._frames import LazyRenderSequence
 
 pytestmark = pytest.mark.cpu
@@ -66,7 +66,9 @@ def test_single_sequence_cli_reaches_playback_without_eager_decoding(
     path.touch()
     captured = {}
     monkeypatch.setattr(cli, "open_sequence", lambda *args, **kwargs: sequence)
-    monkeypatch.setattr(cli, "describe_source", lambda path: "test sequence")
+    monkeypatch.setattr(
+        cli, "describe_source", lambda path, sequence=None: "test sequence"
+    )
     monkeypatch.setattr(sys, "argv", ["visualize_sequence.py", str(path)])
     from open4d.visualization import _qt
 
@@ -83,4 +85,45 @@ def test_single_sequence_cli_reaches_playback_without_eager_decoding(
     assert captured["closed_during_playback"] is False
     assert captured["calls_at_playback"] == [0]
     assert calls == [0]
+    assert sequence.closed is True
+
+
+def test_raw_vmesh_cli_uses_requested_fps_for_manifest_free_timestamps(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "capture.vmesh"
+    path.write_bytes(b"raw bitstream")
+    sequence = Sequence(
+        MemoryFrameProvider(
+            [
+                Frame(
+                    0,
+                    0.0,
+                    TriangleMesh(
+                        [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]
+                    ),
+                )
+            ],
+            metadata={"fps": 24.0},
+        )
+    )
+    calls = []
+
+    def load(source, *, fps=None):
+        calls.append((source, fps))
+        return sequence
+
+    monkeypatch.setattr(cli, "open_sequence", load)
+    monkeypatch.setattr(
+        cli, "describe_source", lambda path, sequence=None: "raw V-DMC"
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["visualize_sequence.py", str(path), "--fps", "24", "--info"],
+    )
+
+    cli.main()
+
+    assert calls == [(path, 24.0)]
     assert sequence.closed is True

@@ -110,12 +110,36 @@ one and say so.
 | Folder of `.obj` or `.ply` frames | nothing |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
+| Raw MPEG V-DMC bitstream (`.vmesh`) | a compatible native V-DMC decoder |
 | One mesh file | as above |
 
 Frames are ordered by **the last number in the filename**, so `frame_2.obj` comes
 before `frame_10.obj` — but `frame_003_qp9.obj` sorts on 9, not 3. A codec that
 puts a parameter last will silently misalign every frame and look far worse than
 it is; rename before comparing. A frame with no faces is drawn as a point cloud.
+
+### Raw V-DMC bitstreams
+
+The viewer reads a `.vmesh` produced by the MPEG V-DMC reference codec (or a
+compatible implementation) directly. Point it at the native decoder first:
+
+```bash
+export OPEN4D_VDMC_DECODER=/path/to/vmesh-decoder
+python examples/visualization/visualize_sequence.py capture.vmesh --info
+python examples/visualization/visualize_sequence.py capture.vmesh
+```
+
+If that bitstream needs an external decoder configuration, also set
+`OPEN4D_VDMC_DECODER_CONFIG=/path/to/decoder.cfg`. Raw bitstreams do not carry
+Open4D's timestamps, metadata, or original coordinate bounds, so they default
+to 30 fps and display the coordinates emitted by the decoder. Pass `--fps N`
+to supply the real capture rate. The current adapter imports decoded surface
+geometry only; it does not attach decoded texture images to the mesh.
+
+The native decoder materializes its OBJ output in a temporary directory. The
+viewer then parses frames on demand with its bounded cache and removes the
+temporary files when the sequence closes. This path is read-only: Open4D still
+uses `.v4d` for self-describing V-DMC output and does not write raw `.vmesh`.
 
 ## Flags
 
@@ -154,6 +178,17 @@ with open4d.load("capture.usdc") as sequence:
     open4d.visualize(sequence)
 
 open4d.visualize("capture.o4d")
+
+# Raw V-DMC; decoder_config is optional and environment variables work too.
+with open4d.load(
+    "capture.vmesh",
+    fps=30,
+    options={
+        "decoder": "/path/to/vmesh-decoder",
+        "decoder_config": "/path/to/decoder.cfg",
+    },
+) as sequence:
+    print(len(sequence))
 ```
 
 Loading and playback are lazy — frames decode on access. Frame directories and
