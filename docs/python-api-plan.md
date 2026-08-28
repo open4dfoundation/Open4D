@@ -1,9 +1,9 @@
 # Python API plan for heterogeneous 3D sequences
 
-Status: implementation in progress. Mesh loading and geometry-only file export
-are implemented. Directory exports use `open4d.sequence.json` to preserve frame
-identity, timing, metadata, and topology declarations. USD promotion, richer
-manifest fields, additional representations, and plugins remain proposals.
+Status: implementation in progress. Unified top-level load/save/unload/view,
+mesh imports, directory manifests, codec-artifact dispatch, and public OpenUSD
+schema v1 are implemented. Additional representations and plugins remain
+proposals.
 
 ## The central decision
 
@@ -34,15 +34,19 @@ core, in `open4d.io`; file-format details should not leak into `Sequence`.
 
 ## User-facing API
 
-The common path should remain one call:
+The common path is one whole-sequence call:
 
 ```python
-from open4d.io import open_sequence
+import open4d
 
-with open_sequence("capture/", fps=30.0) as sequence:
+with open4d.load("capture.usdc") as sequence:
     print(len(sequence), sequence.duration, sequence.topology)
-    mesh = sequence[0].geometry
+    open4d.visualize(sequence)
+    open4d.save(sequence, "capture.o4d")
 ```
+
+Frame directories and static mesh files remain import sources accepted by
+`open4d.load`; OpenUSD and codec artifacts are the normal retained 4D forms.
 
 The implemented mesh-I/O surface is:
 
@@ -291,13 +295,13 @@ Public USD, TVMC/RGB-D providers, and representation expansion remain open.
 - Test static files, numbered directories, missing timing, mixed-directory
   ambiguity, malformed frames, and optional-dependency messages.
 
-### Slice 2: USD round trip
+### Slice 2: USD round trip — implemented
 
 - Move the existing USD reader/writer behind the public registry.
-- Ratify the USD schema described in the roadmap.
+- Ratify `open4d.usd-sequence/v1`.
 - Round-trip every supported mesh field, source index, timestamp, topology
   declaration, and sequence metadata.
-- Add preflight reporting for unsupported/lossy fields.
+- Add atomic writes and preflight reporting for unsupported metadata.
 
 ### Slice 3: manifested directories
 

@@ -47,6 +47,15 @@ class Sequence:
         return self._frame_count
 
     @property
+    def closed(self) -> bool:
+        """Whether this sequence has released its provider resources."""
+        return self._closed
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("sequence is closed")
+
+    @property
     def frame_count(self) -> int:
         return len(self)
 
@@ -70,6 +79,7 @@ class Sequence:
             TypeError: If `index` is not an integer or slice, or if the provider returns an invalid frame.
             IndexError: If an integer index is outside the sequence bounds.
         """
+        self._ensure_open()
         if isinstance(index, slice):
             return SequenceView(self, range(len(self))[index])
         if isinstance(index, bool):
@@ -92,6 +102,7 @@ class Sequence:
         return self[index]
 
     def __iter__(self) -> Iterator[Frame]:
+        self._ensure_open()
         for index in range(len(self)):
             yield self[index]
 
@@ -111,6 +122,7 @@ class Sequence:
         	TypeError: If timestamps or the provider's monotonicity setting have an invalid type.
         	ValueError: If timestamps have an invalid length, contain non-finite values, or decrease when nonmonotonic timestamps are disallowed.
         """
+        self._ensure_open()
         if self._timestamps_cache is None:
             provided = getattr(self._provider, "timestamps", None)
             values = provided if provided is not None else (
@@ -212,6 +224,7 @@ class Sequence:
 
     def __enter__(self) -> "Sequence":
         """Enter the sequence's context-manager scope and return the sequence."""
+        self._ensure_open()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:

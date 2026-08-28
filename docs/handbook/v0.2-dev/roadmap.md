@@ -71,11 +71,12 @@ flowchart LR
 
 - [x] Add `open4d.io.open_sequence(path, fps=None) -> Sequence` for local mesh
   files and frame folders.
-- [ ] Add `open4d.io.write_usd_container(path, frames, ...) -> Path`.
+- [x] Add public whole-sequence OpenUSD writing through `open4d.save` and
+  `open4d.io.write_sequence`.
 - [ ] Add `open4d.metrics.compare_meshes(...)`.
 - [ ] Add `open4d.metrics.compare_sequences(..., allow_truncate=False)`.
 - [x] Keep the base NumPy-only and lazily load SciPy/OpenUSD/Open3D/viewers.
-- [ ] Convert examples into thin clients of the public functions.
+- [x] Convert sequence loading and USD example code into thin public-API clients.
 
 ### Correctness and interchange
 
@@ -84,10 +85,10 @@ flowchart LR
   frame indices.
 - [ ] Publish metric identifier `open4d.vertex-nearest/v1` and clearly label
   vertex-set, non-area-weighted limitations.
-- [ ] Ratify OpenUSD schema v1 as primary offline interchange.
-- [ ] Round-trip positions, triangles, colors, normals, UVs, named attributes,
+- [x] Ratify `open4d.usd-sequence/v1` as offline interchange.
+- [x] Round-trip positions, triangles, colors, normals, UVs, named attributes,
   timestamps, frame indices, sequence metadata, and topology declarations.
-- [ ] Support Y-up/Z-up, reject X-up, reject mixed Mesh/Points, and handle empty
+- [x] Support Y-up/Z-up, reject X-up, retain zero-face frames, and handle empty
   extents explicitly.
 - [ ] Add a generated or redistributable two-to-three-frame fixture.
 - [ ] Implement and validate `open4d.run-manifest/v1`.

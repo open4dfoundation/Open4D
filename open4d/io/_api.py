@@ -1,4 +1,4 @@
-"""Public sequence loading over heterogeneous per-frame mesh storage."""
+"""Public sequence loading over containers and per-frame mesh storage."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 
-from . import _mesh
+from . import _mesh, _usd
 from ._errors import (
     AmbiguousFormatError,
     DecodeError,
@@ -59,7 +59,7 @@ _OUTPUT_FIELDS = {
 
 @dataclass(frozen=True)
 class FormatInfo:
-    """A per-frame format understood by the installed Open4D package."""
+    """A storage format understood by the installed Open4D package."""
 
     id: str
     suffixes: tuple[str, ...]
@@ -83,10 +83,13 @@ class SequenceInfo:
 
 
 def available_formats() -> tuple[FormatInfo, ...]:
-    """Return the per-frame formats supported by the public loader."""
-    return tuple(
+    """Return the geometry and sequence formats supported by the public loader."""
+    mesh_formats = tuple(
         FormatInfo(identifier, (suffix,), _FORMAT_DEPENDENCIES[suffix])
         for identifier, suffix in sorted(_FORMAT_IDS.items())
+    )
+    return mesh_formats + (
+        FormatInfo("usd", _usd.USD_SUFFIXES, "usd"),
     )
 
 
@@ -94,13 +97,36 @@ def _supported_formats() -> str:
     """Return supported formats as concise CLI help text."""
     lines = ["per-frame mesh files (one file or a directory of frames):"]
     for info in available_formats():
+        if info.id == "usd":
+            continue
         extra = (
             f"  needs the [{info.dependency_extra}] extra"
             if info.dependency_extra
             else ""
         )
         lines.append(f"  {info.suffixes[0]:<7}{extra}".rstrip())
+    lines.append("sequence containers:")
+    lines.append("  .usd/.usda/.usdc/.usdz  needs the [usd] extra")
     return "\n".join(lines)
+
+
+def _is_usd_request(path: Path, format: str | None) -> bool:
+    if path.suffix.lower() in _usd.USD_SUFFIXES and not path.is_dir():
+        if format is None:
+            return True
+        if not isinstance(format, str) or not format.strip():
+            raise TypeError("format must be a non-empty string or None")
+        requested = format.strip().lower().lstrip(".")
+        if requested not in {"usd", path.suffix.lower().lstrip(".")}:
+            raise UnsupportedFormatError(
+                f"requested format {format!r} does not match {path.suffix!r}"
+            )
+        return True
+    if isinstance(format, str) and format.strip().lower().lstrip(".") in {
+        "usd", "usda", "usdc", "usdz"
+    }:
+        return True
+    return False
 
 
 def _suffix_for(format: str | None) -> str | None:
@@ -390,6 +416,21 @@ def inspect_sequence(
     source: str | os.PathLike[str], *, format: str | None = None
 ) -> SequenceInfo:
     """Inspect a local mesh file or frame directory without decoding geometry."""
+    candidate = Path(source).absolute()
+    if not candidate.exists():
+        raise SourceNotFoundError(f"Sequence source does not exist: {candidate}")
+    if _is_usd_request(candidate, format):
+        details = _usd.inspect_usd_sequence(candidate)
+        return SequenceInfo(
+            source=candidate,
+            storage="container",
+            format="usd",
+            frame_count=details["frame_count"],
+            geometry_kind="triangle_mesh",
+            fps=details["fps"],
+            timing_source="container",
+            topology=details["topology"],
+        )
     path, storage, files, suffix, manifest = _resolve(source, format)
     is_directory = storage == "directory"
     timestamps = tuple(record["timestamp"] for record in manifest["frames"]) if manifest else ()
@@ -421,11 +462,18 @@ def open_sequence(
     if options is not None:
         if not isinstance(options, Mapping):
             raise TypeError("options must be a mapping or None")
-        if options:
-            names = ", ".join(sorted(str(name) for name in options))
-            raise UnsupportedFeatureError(
-                f"This reader has no options; received: {names}"
-            )
+    candidate = Path(source).absolute()
+    if not candidate.exists():
+        raise SourceNotFoundError(f"Sequence source does not exist: {candidate}")
+    if _is_usd_request(candidate, format):
+        return _usd.open_usd_sequence(
+            candidate, fps=fps, options=options
+        )
+    if options:
+        names = ", ".join(sorted(str(name) for name in options))
+        raise UnsupportedFeatureError(
+            f"This reader has no options; received: {names}"
+        )
     path, storage, files, suffix, manifest = _resolve(source, format)
     if storage == "directory":
         if manifest is not None:
@@ -485,13 +533,44 @@ def write_sequence(
     format: str | None = None,
     overwrite: bool = False,
     allow_lossy: bool = False,
+    options: Mapping[str, object] | None = None,
 ) -> Path:
-    """Write a sequence, requiring ``allow_lossy`` for single mesh files."""
+    """Write a sequence container or explicitly export per-frame mesh files."""
     if not isinstance(sequence, Sequence):
         raise TypeError("sequence must be an open4d.Sequence")
     if not isinstance(allow_lossy, bool):
         raise TypeError("allow_lossy must be bool")
     destination = Path(destination).absolute()
+    if options is not None and not isinstance(options, Mapping):
+        raise TypeError("options must be a mapping or None")
+    values = dict(options or {})
+    usd_format = (
+        isinstance(format, str)
+        and format.strip().lower().lstrip(".") in {"usd", "usda", "usdc", "usdz"}
+    )
+    if destination.suffix.lower() in _usd.USD_SUFFIXES or usd_format:
+        if destination.suffix.lower() not in _usd.USD_SUFFIXES:
+            raise UnsupportedFormatError(
+                "OpenUSD sequence output requires a .usd, .usda, .usdc, or .usdz suffix"
+            )
+        requested = format.strip().lower().lstrip(".") if usd_format else None
+        if requested not in {None, "usd", destination.suffix.lower().lstrip(".")}:
+            raise UnsupportedFormatError(
+                f"destination suffix {destination.suffix!r} does not match "
+                f"format {format!r}"
+            )
+        unknown = set(values) - {"fps", "up_axis"}
+        if unknown:
+            raise UnsupportedFeatureError(
+                f"Unknown OpenUSD writer options: {', '.join(sorted(unknown))}"
+            )
+        return _usd.write_usd_sequence(
+            sequence, destination, overwrite=overwrite, **values
+        )
+    if values:
+        raise UnsupportedFeatureError(
+            f"This writer has no options; received: {', '.join(sorted(values))}"
+        )
     suffix = _suffix_for(format)
     file_output = destination.suffix.lower() in _FRAME_READERS
     if suffix is None:

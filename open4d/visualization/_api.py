@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
 
 from open4d.core import Sequence
 
-from ._frames import UP_AXES, UP_TO_Z, decode_all
+from ._frames import LazyRenderSequence, UP_AXES, UP_TO_Z
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,12 @@ class ViewerOptions:
 
 
 def _prepare(
-    sequence: Sequence, *, stride: int, fps: float | None, up: str
+    sequence: Sequence,
+    *,
+    stride: int,
+    fps: float | None,
+    up: str | None,
+    cache_size: int,
 ):
     if not isinstance(sequence, Sequence):
         raise TypeError("sequence must be an open4d.Sequence")
@@ -41,12 +47,34 @@ def _prepare(
         raise ValueError("cannot visualize an empty sequence")
     if not isinstance(stride, int) or isinstance(stride, bool) or stride < 1:
         raise ValueError("stride must be a positive integer")
-    if up not in UP_AXES:
+    selected_up = up
+    if selected_up is None:
+        recorded = str(sequence.metadata.get("up_axis", "")).lower()
+        selected_up = recorded if recorded in UP_AXES else "z"
+    if selected_up not in UP_AXES:
         raise ValueError(f"up must be one of {UP_AXES}")
-    playback_fps = float(fps if fps is not None else sequence.fps or 30.0)
+    declared_fps = sequence.metadata.get("fps")
+    playback_fps = float(
+        fps if fps is not None else declared_fps or sequence.fps or 30.0
+    )
     if not math.isfinite(playback_fps) or playback_fps <= 0:
         raise ValueError("fps must be finite and greater than zero")
-    return decode_all(sequence, stride, UP_TO_Z[up]), playback_fps
+    return LazyRenderSequence(
+        sequence,
+        stride=stride,
+        order=UP_TO_Z[selected_up],
+        cache_size=cache_size,
+    ), playback_fps
+
+
+def _open_source(source: Sequence | str | os.PathLike[str]) -> tuple[Sequence, bool]:
+    if isinstance(source, Sequence):
+        return source, False
+    if isinstance(source, (str, os.PathLike)):
+        from open4d import _api as public_api
+
+        return public_api.load(source), True
+    raise TypeError("source must be an open4d.Sequence or path-like sequence source")
 
 
 def _options(fps: float, values: dict) -> ViewerOptions:
@@ -68,31 +96,44 @@ def _options(fps: float, values: dict) -> ViewerOptions:
 
 
 def visualize(
-    sequence: Sequence,
+    source: Sequence | str | os.PathLike[str],
     *,
     stride: int = 1,
     fps: float | None = None,
-    up: str = "z",
+    up: str | None = None,
+    cache_size: int = 3,
     **viewer_options,
 ) -> None:
-    """Open an interactive Qt viewer for a sequence.
+    """Open an interactive Qt viewer for a sequence or sequence file.
 
     PyQt6, pyqtgraph, and PyOpenGL are imported only when this function runs.
     """
     from . import _qt
 
     _qt.check_available()
-    frames, playback_fps = _prepare(sequence, stride=stride, fps=fps, up=up)
-    _qt.play(frames, _options(playback_fps, viewer_options))
+    sequence, owned = _open_source(source)
+    try:
+        frames, playback_fps = _prepare(
+            sequence,
+            stride=stride,
+            fps=fps,
+            up=up,
+            cache_size=cache_size,
+        )
+        _qt.play(frames, _options(playback_fps, viewer_options))
+    finally:
+        if owned:
+            sequence.close()
 
 
 def render_gif(
-    sequence: Sequence,
+    source: Sequence | str | os.PathLike[str],
     output: str | Path,
     *,
     stride: int = 1,
     fps: float | None = None,
-    up: str = "z",
+    up: str | None = None,
+    cache_size: int = 3,
     **viewer_options,
 ) -> Path:
     """Render a sequence to an animated GIF and return its path."""
@@ -102,6 +143,17 @@ def render_gif(
     from . import _qt
 
     _qt.check_available(gif=True)
-    frames, playback_fps = _prepare(sequence, stride=stride, fps=fps, up=up)
-    _qt.record(frames, _options(playback_fps, viewer_options), path)
-    return path
+    sequence, owned = _open_source(source)
+    try:
+        frames, playback_fps = _prepare(
+            sequence,
+            stride=stride,
+            fps=fps,
+            up=up,
+            cache_size=cache_size,
+        )
+        _qt.record(frames, _options(playback_fps, viewer_options), path)
+        return path
+    finally:
+        if owned:
+            sequence.close()

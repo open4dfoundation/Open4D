@@ -89,9 +89,9 @@ steps disagree — one clipping an out-of-range color where another raises — a
 the shared model stops being shared.
 
 Positions are stored `float32` and *computed* in `float64` by metric code. That
-halves the footprint of a decoded sequence, which matters because the viewers
-decode every frame they intend to show up front, and it is what a GL buffer wants
-regardless. The cost is roughly 0.5 m of resolution at UTM magnitudes, so
+halves the footprint of decoded frames, which matters because the viewer keeps
+a bounded playback cache, and it is what a GL buffer wants regardless. The cost
+is roughly 0.5 m of resolution at UTM magnitudes, so
 positions are scene-local: a georeferenced capture carries its offset in a
 transform, not in the vertex buffer.
 

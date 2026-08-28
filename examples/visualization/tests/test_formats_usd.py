@@ -60,12 +60,12 @@ def test_usd_writer_rejects_x_up_without_mislabelling_geometry(tmp_path):
     assert not destination.exists()
 
 
-def test_usd_writer_rejects_empty_geometry_before_touching_destination(tmp_path):
+def test_usd_writer_round_trips_empty_geometry(tmp_path):
     destination = tmp_path / "frame.usdc"
-    destination.write_text("keep me", encoding="utf-8")
     empty = frame(0, positions=np.empty((0, 3), dtype=np.float32))
 
-    with pytest.raises(ValueError, match="frame 0.*no positions"):
-        formats_usd.write_usd_container(destination, [empty])
+    formats_usd.write_usd_container(destination, [empty])
+    decoded = formats_usd.open_usd_sequence(destination)
 
-    assert destination.read_text(encoding="utf-8") == "keep me"
+    assert decoded[0].geometry.positions.shape == (0, 3)
+    decoded.close()

@@ -72,24 +72,27 @@ constant topology, vertex count, and correspondence unless the provider makes a
 more specific declaration; `UNKNOWN` correctly returns `None` when evidence is
 insufficient.
 
-## Example I/O at the audited revision
+## Public sequence I/O
 
-`examples/visualization/frame_sources.py` currently provides the one-call loader:
+Whole-sequence files use the top-level API:
 
 ```python
-from frame_sources import open_sequence
+import open4d
 
-with open_sequence("frames/", fps=30.0) as sequence:
-    frame = sequence[0]
+with open4d.load("capture.usdc") as sequence:
+    open4d.save(sequence, "capture.o4d")
+
+open4d.visualize("capture.usdc")
 ```
 
 Supported sources are:
 
 | Source | Base/extra | Current behavior |
 | --- | --- | --- |
+| `.o4d` and registered codec artifacts | base or codec-specific | lazy whole-sequence decode |
+| one `.usd/.usda/.usdc/.usdz` | `.[usd]` | lazy OpenUSD sequence provider |
 | folder of `.obj`/`.ply` | base NumPy | lazy listing/provider; last filename number controls order |
 | one `.obj`/`.ply` | base NumPy | single fixed frame |
-| folder or one `.usd/.usda/.usdc/.usdz` | `.[usd]` | lazy USD provider |
 | `.off/.stl/.glb/.gltf` | `.[tools]` | trimesh fallback |
 
 Important limitations:
@@ -103,50 +106,36 @@ Important limitations:
   sorts on 9 and can silently misalign comparisons.
 - zero-face geometry stands in for point clouds because core has no point type.
 
-The planned P1 public interface was:
+The public whole-sequence interface is:
 
 ```python
-open4d.io.open_sequence(path, fps=None) -> Sequence
-open4d.io.write_usd_container(path, frames, ...) -> pathlib.Path
+open4d.load(path, fps=None) -> Sequence
+open4d.save(sequence, "capture.usdc") -> pathlib.Path
+open4d.visualize(path_or_sequence)
+open4d.unload(sequence)
 ```
 
-`open4d.io.open_sequence` and the mesh-file writers now exist. USD remains
-example-local. Examples should become thin clients of public functions;
-promotion must keep
-construction lazy, add cleanup and malformed-source tests, and use actionable
-optional-dependency errors.
+The existing `open4d.io` and `open4d.codec` entry points remain available and
+delegate to the same providers and writers. USD construction is lazy, cleanup
+is explicit, and a missing optional dependency reports the exact install extra.
 
 ## OpenUSD container
 
-OpenUSD is the selected primary **offline interchange container**, not a
-compression algorithm. The example writer already creates time-sampled
-`UsdGeom.Mesh` or `UsdGeom.Points` data with:
+OpenUSD is a public **offline interchange container**, not a compression
+algorithm. Schema `open4d.usd-sequence/v1` stores:
 
 - positions and bounds per frame;
 - triangle connectivity once for fixed topology or at key frames;
-- per-vertex display color when present;
-- custom frame index, timestamp, keyframe, vertex-count, and triangle-count
-  streams;
-- stage FPS/time range/up axis and `customLayerData["open4d"]` metadata.
+- RGB/RGBA, normals, vertex and face-varying UVs;
+- typed custom float, integer, and boolean arrays with exact shapes;
+- exact frame indices, timestamps, frame/sequence metadata, and topology
+  declarations;
+- stage FPS/time range and Y/Z up axis.
 
-The example format labels its container metadata version `1`, but it is not yet
-the ratified Open4D schema v1. Known fidelity and validation gaps are:
-
-- normals, UVs, named attributes, materials, and general frame metadata are not
-  round-tripped;
-- the reader places stored frame-index streams into metadata but constructs
-  frames with ordinal indices;
-- the first frame chooses Mesh versus Points, so a later mixed sequence is not
-  rejected explicitly and may lose connectivity;
-- an empty position array fails when the writer calculates min/max extent;
-- any `up_axis` other than `"z"` becomes Y; X is not explicitly rejected;
-- transform, units, and coordinate-frame semantics are not first-class.
-
-Schema v1 must preserve positions, triangles, colors, normals, UVs, named
-attributes, stored timestamps/frame indices, sequence metadata, and topology
-declarations. It must support Y-up and Z-up, reject X-up for now, omit extents
-safely for empty geometry, and reject mixed Mesh/Points sequences rather than
-silently dropping data. Unsupported values must fail explicitly.
+Writes are atomic, empty geometry omits its extent safely, and unsupported
+metadata fails before replacing an existing destination. `.usdc` is the
+recommended compact interchange extension; `.o4d` remains the default lossless
+Open4D codec artifact.
 
 ## Working example metrics
 
@@ -201,10 +190,11 @@ metric improves.
 
 ## Viewers and adapters
 
-The PyQt viewers decode and measure the selected display frames up front, then
-provide orbit, zoom, scrub, stepping, playback, GIF output, fixed sequence-wide
-error colors, and synchronized comparison cameras. Preserve existing comparison
-behavior while moving only stable loader/metric/container code into the package.
+The single-sequence PyQt viewer decodes strided frames on demand through a
+three-frame LRU and schedules one-frame lookahead on the Qt event loop. It
+frames the first displayed geometry instead of scanning the complete sequence.
+The comparison viewer still measures selected frames up front so it can provide
+fixed sequence-wide error colors and synchronized cameras.
 
 The Open3D integration converts Open4D geometry or compatible arrays into an
 Open3D `TriangleMesh` or `PointCloud`, preserving vertex colors/normals. It does
