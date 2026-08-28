@@ -126,13 +126,22 @@ The shared codec environment is Python 3.12 because Open3D 0.19 has no Python
 3.13 wheel. Install a viewer only when you have a graphical session:
 
 ```bash
-python -m pip install -e '.[player]'
-python examples/visualization/visualize_sequence.py path/to/frames --info
+python -m pip install -e '.[player,usd]'
+python examples/visualization/visualize_sequence.py capture.usdc --info
 ```
 
-`open4d.io.open_sequence` now loads local mesh files and frame folders. The
-OpenUSD sequence backend remains under `examples/visualization` pending public
-schema and loss-policy work.
+`open4d.load`, `save`, `unload`, and `visualize` now provide one whole-sequence
+workflow for OpenUSD and codec artifacts. Local mesh files and frame folders
+remain supported import paths through the same loader.
+
+```python
+import open4d
+
+with open4d.load("capture.usdc") as sequence:
+    open4d.save(sequence, "capture.o4d")
+
+open4d.visualize("capture.usdc")
+```
 
 ## How to choose a first contribution
 

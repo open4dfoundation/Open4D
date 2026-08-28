@@ -15,6 +15,8 @@ rotation, so geometry is reoriented without being mirrored.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+import operator
 from typing import NamedTuple
 
 import numpy as np
@@ -77,6 +79,66 @@ def to_render_frame(frame, order: list[int]) -> RenderFrame:
         frame_index=int(frame.frame_index),
         timestamp=float(frame.timestamp),
     )
+
+
+class LazyRenderSequence:
+    """Strided, bounded LRU view that converts core frames on demand."""
+
+    def __init__(
+        self,
+        sequence,
+        *,
+        stride: int,
+        order: list[int],
+        cache_size: int = 3,
+    ) -> None:
+        if not isinstance(stride, int) or isinstance(stride, bool) or stride < 1:
+            raise ValueError("stride must be a positive integer")
+        if (
+            not isinstance(cache_size, int)
+            or isinstance(cache_size, bool)
+            or cache_size < 1
+        ):
+            raise ValueError("cache_size must be a positive integer")
+        self.sequence = sequence
+        self.indices = range(0, len(sequence), stride)
+        self.order = order
+        self.cache_size = cache_size
+        self._cache: OrderedDict[int, RenderFrame] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    @property
+    def cached_indices(self) -> tuple[int, ...]:
+        """Displayed ordinals currently retained by the LRU cache."""
+        return tuple(self._cache)
+
+    def __getitem__(self, index: int) -> RenderFrame:
+        if isinstance(index, bool):
+            raise TypeError("render frame indices must be integers")
+        try:
+            ordinal = operator.index(index)
+        except TypeError as error:
+            raise TypeError("render frame indices must be integers") from error
+        if ordinal < 0:
+            ordinal += len(self)
+        if ordinal < 0 or ordinal >= len(self):
+            raise IndexError("render frame index out of range")
+        cached = self._cache.pop(ordinal, None)
+        if cached is None:
+            cached = to_render_frame(
+                self.sequence[self.indices[ordinal]], self.order
+            )
+        self._cache[ordinal] = cached
+        while len(self._cache) > self.cache_size:
+            self._cache.popitem(last=False)
+        return cached
+
+    def prefetch(self, index: int) -> None:
+        """Decode one valid future frame while retaining the cache bound."""
+        if 0 <= index < len(self) and index not in self._cache:
+            self[index]
 
 
 def decode_all(sequence, stride: int, order: list[int]) -> list[RenderFrame]:
