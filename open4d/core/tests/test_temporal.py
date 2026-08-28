@@ -369,3 +369,19 @@ def test_closing_a_view_does_not_close_its_parent():
     assert provider.closed is False
     parent.close()
     assert provider.closed is True
+
+
+def test_closed_sequence_rejects_frame_and_timing_access_but_keeps_declarations():
+    sequence = Sequence(MemoryFrameProvider(
+        frames(), metadata={"capture": "test"}, topology=TopologyMode.FIXED
+    ))
+    sequence.close()
+
+    assert sequence.closed is True
+    assert len(sequence) == 4
+    assert sequence.metadata == {"capture": "test"}
+    assert sequence.topology is TopologyMode.FIXED
+    with pytest.raises(RuntimeError, match="closed"):
+        _ = sequence[0]
+    with pytest.raises(RuntimeError, match="closed"):
+        _ = sequence.timestamps

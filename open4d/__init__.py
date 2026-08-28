@@ -17,6 +17,8 @@ from .core import (
     TriangleMesh,
     dtypes,
 )
+from ._api import load, save, unload
+from .visualization import visualize
 
 __all__ = [
     "ATTRIBUTE_FLOAT_DTYPE",
@@ -34,4 +36,8 @@ __all__ = [
     "TriangleMesh",
     "UV_DTYPE",
     "dtypes",
+    "load",
+    "save",
+    "unload",
+    "visualize",
 ]

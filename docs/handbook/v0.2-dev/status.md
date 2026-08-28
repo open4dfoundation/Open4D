@@ -102,33 +102,30 @@ flowchart TB
 ### Example mesh/folder loaders — `VERIFIED-PARTIAL`
 
 - **Audit:** `96b8c7b`, 2026-08-13.
-- **Research/upstream capability:** lazy folders/single files for OBJ, PLY, USD,
-  and optional trimesh formats.
-- **Open4D integration:** returns the core `Sequence`, but the API lives under
-  `examples/visualization`, not `open4d.io`.
-- **Verification:** included in the recorded 106-test Python 3.12 run.
+- **Research/upstream capability:** lazy folders/single files for OBJ, PLY, and
+  optional trimesh formats, plus time-sampled USD sequence files.
+- **Open4D integration:** `open4d.load` and `open4d.io.open_sequence` return the
+  shared lazy `Sequence`.
+- **Verification:** public I/O and unified-dispatch tests cover lazy imports,
+  manifests, and lifecycle behavior.
 - **Input/output:** mesh directory or file -> lazy `Sequence[Frame[TriangleMesh]]`.
 - **Owner lane:** shared platform I/O.
-- **Known blockers:** filename-last-number ordering trap, mixed-format skipping,
-  limited OBJ/PLY attributes, point-cloud placeholder, no supported public API.
-- **Smallest useful next contribution:** promote `open_sequence` with its
-  registry/providers to `open4d.io` behind parity and cleanup tests.
+- **Known blockers:** limited OBJ/PLY attributes and the point-cloud placeholder.
 
-### Example OpenUSD container — `VERIFIED-PARTIAL`
+### Public OpenUSD container — `VERIFIED`
 
 - **Audit:** `96b8c7b`, 2026-08-13.
 - **Research/upstream capability:** reads/writes time-sampled mesh or points
   stages, topology keyframes, colors, timing streams, and layer metadata.
-- **Open4D integration:** example provider returns `Sequence`; writer consumes
-  frames, but no ratified public schema/API exists.
-- **Verification:** USD behavior is represented in visualization tests; exact
-  supported-field round-trip is not complete.
+- **Open4D integration:** top-level and `open4d.io` APIs read and write the
+  ratified `open4d.usd-sequence/v1` schema.
+- **Verification:** `.usda`, `.usdc`, and `.usdz` golden round trips cover all
+  current mesh fields, typed attributes, identity, timing, metadata, and
+  declarations.
 - **Input/output:** frames or USD -> `.usd/.usda/.usdc/.usdz` or `Sequence`.
 - **Owner lane:** shared platform I/O/interchange.
-- **Known blockers:** normals/UVs/attributes/metadata fidelity, original index
-  restoration, mixed Mesh/Points handling, empty extent, and X-up validation.
-- **Smallest useful next contribution:** write schema-v1 golden tests for every
-  supported field plus explicit failure tests for mixed kinds/X-up.
+- **Known blockers:** transforms, units, materials, and a first-class point-cloud
+  representation remain separate contracts.
 
 ### Example comparison metrics — `VERIFIED-PARTIAL`
 

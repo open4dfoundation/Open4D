@@ -6,6 +6,7 @@ import tempfile
 
 import numpy as np
 
+import open4d
 from open4d.codec import CodecError, available_codecs, decode_sequence, encode_sequence
 from open4d.io import inspect_sequence, open_sequence
 from open4d.visualization import visualize
@@ -18,10 +19,13 @@ with tempfile.TemporaryDirectory() as directory:
     frame = open_sequence(path)[0]
     assert info.frame_count == 1 and info.format == "obj"
     np.testing.assert_array_equal(frame.geometry.triangles, [[0, 1, 2]])
-    artifact = encode_sequence(open_sequence(path), Path(directory) / "triangle.o4d")
-    decoded = decode_sequence(artifact)
+    artifact = open4d.save(open4d.load(path), Path(directory) / "triangle.o4d")
+    decoded = open4d.load(artifact)
     np.testing.assert_array_equal(decoded[0].geometry.positions, frame.geometry.positions)
     assert callable(visualize)
+    assert callable(open4d.visualize)
+    open4d.unload(decoded)
+    assert decoded.closed
     installed = {info.id for info in available_codecs()}
     for codec, suffix in (("temporal-delta", ".td4d"), ("temporal-pca", ".tp4d")):
         temporal_artifact = encode_sequence(
@@ -38,5 +42,4 @@ with tempfile.TemporaryDirectory() as directory:
         assert "source checkout" in str(error)
     else:
         raise AssertionError("source-only KLT was advertised by the installed wheel")
-    decoded.close()
     print(f"loaded and round-tripped {len(frame.geometry.positions)} vertices")

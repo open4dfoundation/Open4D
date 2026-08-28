@@ -5,14 +5,14 @@
     python examples/visualization/visualize_sequence.py my_capture/ --up y --save out.gif
     python examples/visualization/visualize_sequence.py my_capture.usdc
 
-Point it at your own data. A source is either a folder holding one mesh file per
-frame (`.obj`, `.ply`, `.usd`, or anything trimesh reads) or a single
-time-sampled USD file. Meshes and point clouds are both handled: a frame with no
-faces is drawn as a point cloud.
+Point it at your own data. A source is normally a whole-sequence file such as
+`.o4d` or a time-sampled `.usdc`. A folder holding one mesh per frame and a
+standalone mesh remain useful import paths. Meshes and point clouds are both
+handled: a frame with no faces is drawn as a point cloud.
 
-Start with `--info`. It reports frame count, duration, topology and bounds
-without decoding geometry or opening a window, which is the quickest way to see
-whether a dataset loads and what the loader made of it.
+Start with `--info`. It reports frame count, timing, and topology without
+decoding geometry or opening a window, which is the quickest way to see whether
+a dataset loads and what the loader made of it.
 
 In the window: drag to orbit, scroll to zoom, drag the slider to scrub, space to
 pause, left/right to step, q to quit. Frame number, timestamp and vertex/triangle
@@ -37,10 +37,17 @@ from _common import existing_source
 from frame_sources import (
     DEFAULT_FPS,
     describe_source,
-    open_sequence,
     supported_formats,
 )
-from open4d.visualization._frames import UP_AXES, UP_TO_Z, bounds, decode_all
+from open4d import load as open_sequence, save as save_sequence
+from open4d.codec import CodecError
+from open4d.io import Open4DError
+from open4d.visualization._frames import (
+    LazyRenderSequence,
+    UP_AXES,
+    UP_TO_Z,
+    bounds,
+)
 
 # pyqtgraph draws with +Z up, so the source's up axis is rotated onto Z and the
 # axis pointing up in the view is index 2.
@@ -89,37 +96,15 @@ def resolve_up(sequence, requested: str | None) -> str:
     return recorded if recorded in UP_TO_Z else "z"
 
 
-def report_geometry(frames: list, stride: int) -> None:
-    """Print what the decoded frames turned out to be.
+def report_geometry(frame, frame_count: int, stride: int) -> None:
+    """Describe the first display frame without forcing an eager bounds scan."""
+    lower, upper = bounds([frame])
 
-    Each frame is tested individually: a folder of `.ply` where some frames have
-    faces and some do not yields a mix of meshes and point clouds, and assuming
-    the whole sequence matches frame 0 raises AttributeError on the first
-    mismatch.
-    """
-    kinds = {frame.is_mesh for frame in frames}
-    counts = [len(frame.positions) for frame in frames]
-    faces = [len(frame.triangles) for frame in frames]
-    lower, upper = bounds(frames)
-
-    def summarize(values: list[int]) -> str:
-        unique = sorted(set(values))
-        if len(unique) == 1:
-            return str(unique[0])
-        return f"{unique[0]}..{unique[-1]} ({len(unique)} distinct)"
-
-    if kinds == {True}:
-        description = "triangle mesh"
-    elif kinds == {False}:
-        description = "point cloud"
-    else:
-        description = "mixed: some frames have faces, some do not"
-
-    print(f"\ndecoded {len(frames)} frames (stride {stride})")
-    print(f"  geometry   : {description}")
-    print(f"  vertices   : {summarize(counts)}")
-    if True in kinds:
-        print(f"  triangles  : {summarize(faces)}")
+    print(f"\nfirst decoded frame of {frame_count} (stride {stride})")
+    print(f"  geometry   : {'triangle mesh' if frame.is_mesh else 'point cloud'}")
+    print(f"  vertices   : {len(frame.positions)}")
+    if frame.is_mesh:
+        print(f"  triangles  : {len(frame.triangles)}")
     print(f"  bounds     : {lower.round(2)} .. {upper.round(2)}")
 
     # After reordering the up axis is PLOT_UP. A subject much longer along a
@@ -131,7 +116,7 @@ def report_geometry(frames: list, stride: int) -> None:
     if longest != PLOT_UP:
         runner_up = float(np.partition(extents, -2)[-2])
         if extents[longest] > 1.5 * max(runner_up, 1e-9):
-            print("  note: the sequence is longest across the view, not "
+            print("  note: the first frame is longest across the view, not "
                   "upright — the up axis may be wrong, try --up x/y/z")
 
 
@@ -145,8 +130,8 @@ def main() -> None:
         "path",
         type=Path,
         nargs="?",
-        help="your sequence: a folder of per-frame mesh files, or a USD "
-        "container",
+        help="your sequence: an .o4d or USD file, a frame directory, or a "
+        "standalone mesh import",
     )
     parser.add_argument(
         "--stride", type=int, default=1, help="keep every Nth frame"
@@ -155,8 +140,8 @@ def main() -> None:
         "--fps",
         type=float,
         default=None,
-        help="override the frame rate; by default a USD file's own stage rate "
-        "is used, and a folder gets 30",
+        help="override playback; for a manifest-free frame directory this also "
+        "defines imported timestamps (default: 30 fps)",
     )
     parser.add_argument(
         "--up",
@@ -239,7 +224,8 @@ def main() -> None:
     # A malformed frame in someone else's dataset is ordinary, not a crash, so
     # report it as an error naming the file rather than a traceback.
     try:
-        with open_sequence(path, fps=args.fps) as sequence:
+        import_fps = args.fps if path.is_dir() else None
+        with open_sequence(path, fps=import_fps) as sequence:
             # One rate, resolved once, used for reporting, playback, GIF timing
             # and any container we write.
             fps = resolve_fps(sequence, args.fps)
@@ -249,22 +235,11 @@ def main() -> None:
                 raise SystemExit(f"{path} contains no frames")
 
             if args.pack_usd:
-                from formats_usd import write_usd_container
-
-                # A folder reports its formats as a list, a container as one
-                # string; record either as a plain string.
-                source_format = sequence.metadata.get("format", "")
-                if isinstance(source_format, (list, tuple)):
-                    source_format = ", ".join(source_format)
-
-                written = write_usd_container(
-                    args.pack_usd,
+                written = save_sequence(
                     sequence,
                     fps=fps,
                     up_axis=resolve_up(sequence, args.up),
-                    source=str(path),
-                    source_format=str(source_format),
-                    generator="examples/visualization/visualize_sequence.py",
+                    destination=args.pack_usd,
                 )
                 print(f"\nwrote {written} "
                       f"({written.stat().st_size / 1e6:.2f} MB)")
@@ -273,18 +248,21 @@ def main() -> None:
                 return
 
             up = resolve_up(sequence, args.up)
-            frames = decode_all(sequence, args.stride, UP_TO_Z[up])
-    except (ValueError, TypeError, OSError) as error:
+            frames = LazyRenderSequence(
+                sequence,
+                stride=args.stride,
+                order=UP_TO_Z[up],
+            )
+            report_geometry(frames[0], len(frames), args.stride)
+
+            from open4d.visualization import _qt as viewer_qt
+
+            if args.save:
+                viewer_qt.record(frames, args, args.save)
+            else:
+                viewer_qt.play(frames, args)
+    except (Open4DError, CodecError, ValueError, TypeError, OSError) as error:
         raise SystemExit(f"\nfailed to read the sequence:\n  {error}") from None
-
-    report_geometry(frames, args.stride)
-
-    from open4d.visualization import _qt as viewer_qt
-
-    if args.save:
-        viewer_qt.record(frames, args, args.save)
-    else:
-        viewer_qt.play(frames, args)
 
 
 if __name__ == "__main__":
