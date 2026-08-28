@@ -66,7 +66,9 @@ def test_single_sequence_cli_reaches_playback_without_eager_decoding(
     path.touch()
     captured = {}
     monkeypatch.setattr(cli, "open_sequence", lambda *args, **kwargs: sequence)
-    monkeypatch.setattr(cli, "describe_source", lambda path: "test sequence")
+    monkeypatch.setattr(
+        cli, "describe_source", lambda path, frame_count=None: "test sequence"
+    )
     monkeypatch.setattr(sys, "argv", ["visualize_sequence.py", str(path)])
     from open4d.visualization import _qt
 

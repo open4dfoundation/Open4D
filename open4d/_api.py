@@ -11,6 +11,7 @@ from .core import Sequence
 from .io import open_sequence, write_sequence
 
 _USD_SUFFIXES = frozenset((".usd", ".usda", ".usdc", ".usdz"))
+_RAW_VMESH_SUFFIX = ".vmesh"
 
 
 def _options(value: Mapping[str, object] | None) -> dict[str, object]:
@@ -29,6 +30,14 @@ def _codec_suffixes() -> dict[str, list[str]]:
     return suffixes
 
 
+def _set_raw_fps(options: dict[str, object], fps: float | None) -> None:
+    if fps is None:
+        return
+    if "fps" in options:
+        raise TypeError("fps was passed both by name and in options")
+    options["fps"] = fps
+
+
 def load(
     source: str | os.PathLike[str],
     *,
@@ -37,15 +46,21 @@ def load(
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
 ) -> Sequence:
-    """Open a complete sequence artifact or an importable geometry source."""
+    """Open a sequence artifact, raw V-DMC bitstream, or geometry source."""
     if format is not None and codec is not None:
         raise TypeError("format and codec are mutually exclusive")
     values = _options(options)
     path = Path(source)
     if codec is not None:
-        if fps is not None:
+        if fps is not None and path.suffix.lower() != _RAW_VMESH_SUFFIX:
             raise TypeError("fps applies to I/O sources, not codec artifacts")
+        _set_raw_fps(values, fps)
         return decode_sequence(path, codec=codec, **values)
+    if not path.is_dir() and path.suffix.lower() == _RAW_VMESH_SUFFIX:
+        if format is not None:
+            raise TypeError("format cannot select a raw V-DMC bitstream")
+        _set_raw_fps(values, fps)
+        return decode_sequence(path, codec="vdmc", **values)
     if not path.is_dir() and path.suffix.lower() in _codec_suffixes():
         if format is not None:
             raise TypeError("format cannot select a codec artifact")
