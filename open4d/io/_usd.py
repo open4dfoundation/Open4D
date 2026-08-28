@@ -550,6 +550,8 @@ def _author_stage(
                 ),
                 time,
             )
+        else:
+            extent.Set(Vt.Vec3fArray(), time)
         triangles = np.asarray(mesh.triangles, dtype=np.int32)
         is_key = previous_triangles is None or not np.array_equal(previous_triangles, triangles)
         if is_key:

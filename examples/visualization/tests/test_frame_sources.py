@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import frame_sources
@@ -33,3 +35,11 @@ def test_example_helpers_treat_codec_artifacts_as_whole_sequences(tmp_path):
     # timestamp override for a self-describing sequence artifact.
     with frame_sources.open_sequence(artifact, fps=12) as sequence:
         assert len(sequence) == 1
+
+
+def test_documentation_does_not_advertise_usd_frame_directories():
+    readme = Path(frame_sources.__file__).with_name("README.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Folder of `.usd` frames" not in readme

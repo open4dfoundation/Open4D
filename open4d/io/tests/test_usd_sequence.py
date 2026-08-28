@@ -143,6 +143,30 @@ def test_usd_empty_geometry_omits_extent_and_round_trips(tmp_path):
     decoded.close()
 
 
+def test_usd_empty_frame_clears_the_previous_extent_sample(tmp_path):
+    from pxr import Usd, UsdGeom
+
+    positions = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32
+    )
+    triangles = np.array([[0, 1, 2]], dtype=np.uint32)
+    empty_positions = np.empty((0, 3), dtype=np.float32)
+    empty_triangles = np.empty((0, 3), dtype=np.uint32)
+    source = Sequence(MemoryFrameProvider([
+        Frame(0, 0.0, TriangleMesh(positions, triangles)),
+        Frame(1, 1.0, TriangleMesh(empty_positions, empty_triangles)),
+    ]))
+
+    path = open4d.save(source, tmp_path / "mixed-empty.usda")
+    stage = Usd.Stage.Open(str(path))
+    mesh = UsdGeom.Mesh(stage.GetPrimAtPath("/Open4D/Sequence"))
+    extent = mesh.GetExtentAttr()
+
+    assert extent.GetTimeSamples() == [0.0, 1.0]
+    assert len(extent.Get(0)) == 2
+    assert len(extent.Get(1)) == 0
+
+
 def test_usd_write_failure_preserves_an_existing_destination(tmp_path):
     destination = tmp_path / "capture.usdc"
     destination.write_bytes(b"keep me")
