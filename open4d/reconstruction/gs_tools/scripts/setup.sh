@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Fetch, patch, and build everything the two Gaussian-splatting methods need.
+# Verify the vendored trees and build everything the two Gaussian-splatting
+# methods need.
 #
 # Run from anywhere inside the checkout, with the open4d-gs environment active:
 #
-#   ./scripts/setup.sh                  # submodules, patches, extensions
+#   ./scripts/setup.sh                  # verify trees and patches, build extensions
 #   ./scripts/setup.sh --tinycudann     # also build 3DGStream's NTC dependency
 #   ./scripts/setup.sh --midas-weights  # also fetch the 1.5 GB MiDaS checkpoint
-#   ./scripts/setup.sh --no-build       # fetch and patch only
+#   ./scripts/setup.sh --no-build       # verify only
 #
 # Idempotent: every step checks whether it has already been done, so re-running
 # after a failure resumes rather than duplicating work.
@@ -14,9 +15,12 @@ set -euo pipefail
 
 module_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(git -C "$module_root" rev-parse --show-toplevel)"
-queen="$module_root/upstream/queen"
-gstream="$module_root/upstream/3dgstream"
-gstream_rast="$gstream/submodules/diff-gaussian-rasterization"
+# QUEEN and 3DGStream are siblings of this module, not children of it. `paths.py`
+# resolves them the same way; keep the two in step.
+queen="$module_root/../queen"
+gstream="$module_root/../3dgstream"
+rast="$module_root/rasterizers"
+simple_knn="$module_root/simple-knn"
 
 build=1
 tinycudann=0
@@ -33,40 +37,63 @@ done
 
 say() { printf '\n== %s\n' "$*"; }
 
-# --- upstream checkouts ---------------------------------------------------
+# --- vendored trees ------------------------------------------------------
 #
-# QUEEN vendors everything it needs as plain files at the pinned commit --
-# MiDaS, simple-knn, and both rasterizers -- so there is nothing nested to
-# initialize. 3DGStream uses real submodules, of which we want exactly one: its
-# rasterizer, recursively for third_party/glm. SIBR_viewers (both trees) and
-# 3DGStream's simple-knn are deliberately skipped: the viewer needs its own C++
-# toolchain and Open4D has examples/visualization/, and simple-knn is the same
-# inria source QUEEN already vendors, built once below.
-say "upstream checkouts"
-git -C "$repo_root" submodule update --init \
-  open4d/reconstruction/gs_tools/upstream/queen \
-  open4d/reconstruction/gs_tools/upstream/3dgstream
-git -C "$gstream" submodule update --init --recursive submodules/diff-gaussian-rasterization
+# These were pinned submodules under `upstream/` until they were vendored as
+# plain tracked files: the two methods now sit beside this module under
+# open4d/reconstruction/, and the three rasterizers, the single simple-knn, and
+# the single glm copy live inside it. So nothing is fetched here anymore -- a
+# checkout either has these trees or is not a complete checkout of this
+# repository. SIBR_viewers is tracked but deliberately never built: it needs its
+# own C++ toolchain and Open4D has examples/visualization/.
+say "vendored trees"
+for tree in "$queen" "$gstream" "$simple_knn" \
+  "$rast/gaussian-rasterization-grad" \
+  "$rast/diff-gaussian-rasterization" \
+  "$rast/gstream-rasterization"; do
+  if [ ! -d "$tree" ]; then
+    echo "  MISSING: $tree" >&2
+    echo "  this needs a complete checkout of the repository; see ../README.md" >&2
+    exit 1
+  fi
+  echo "  present: $(cd "$tree" && pwd | sed "s|^$repo_root/||")"
+done
 
 # --- patch series --------------------------------------------------------
 #
-# Upstream is modified only by these patches, applied here. `git apply
-# --check --reverse` is how the script tells "already applied" from "conflicts",
-# so a partially patched tree is a hard error rather than a silent skip.
-apply_patches() {
+# The vendored trees are committed in their patched state, so there is nothing to
+# apply: these files are tracked by Open4D itself now, and modifying them here
+# would leave the whole repository dirty rather than one submodule. The series is
+# still worth keeping and still worth running, as a detector -- `git apply
+# --check --reverse` succeeds only against a tree that already carries the patch,
+# so a failure here means a vendored tree drifted from what THIRD_PARTY.md
+# records, and no build should be trusted on top of it.
+verify_patches() {
   local tree="$1" series="$2"
   [ -d "$series" ] || return 0
+  # Run from the repository root with --directory, never `git -C "$tree" apply`.
+  # Paths in these patches are relative to the tree, but `git apply` invoked from
+  # a subdirectory resolves them against the repository root and silently ignores
+  # whatever falls outside the current directory -- so it matches no file and
+  # reports success for both polarities. That made this step a no-op from the
+  # moment the trees stopped being submodules, which is how the QUEEN patch below
+  # went missing unnoticed. The --numstat guard keeps that failure mode visible.
+  local prefix; prefix="$(cd "$tree" && pwd)"; prefix="${prefix#"$repo_root"/}"
   shopt -s nullglob
   for patch in "$series"/*.patch; do
     local name; name="$(basename "$patch")"
-    if git -C "$tree" apply --check --reverse "$patch" 2>/dev/null; then
-      echo "  already applied: $name"
-    elif git -C "$tree" apply --check "$patch" 2>/dev/null; then
-      git -C "$tree" apply "$patch"
-      echo "  applied: $name"
+    if [ "$(git -C "$repo_root" apply --numstat --directory="$prefix" "$patch" \
+              2>/dev/null | wc -l)" -eq 0 ]; then
+      echo "  BROKEN: $name names no file under $prefix" >&2
+      echo "  the patch series and the vendored layout disagree" >&2
+      exit 1
+    fi
+    if git -C "$repo_root" apply --check --reverse --directory="$prefix" \
+         "$patch" 2>/dev/null; then
+      echo "  present: $name"
     else
-      echo "  FAILED: $name does not apply to $tree" >&2
-      echo "  the pin moved, or the tree was edited by hand; see THIRD_PARTY.md" >&2
+      echo "  MISSING: $name is not applied in $prefix" >&2
+      echo "  the vendored tree drifted from THIRD_PARTY.md; do not build on it" >&2
       exit 1
     fi
   done
@@ -74,9 +101,9 @@ apply_patches() {
 }
 
 say "patches"
-apply_patches "$queen" "$module_root/patches/queen"
-apply_patches "$gstream" "$module_root/patches/3dgstream"
-apply_patches "$gstream_rast" "$module_root/patches/3dgstream-rasterizer"
+verify_patches "$queen" "$module_root/patches/queen"
+verify_patches "$gstream" "$module_root/patches/3dgstream"
+verify_patches "$rast/gstream-rasterization" "$module_root/patches/3dgstream-rasterizer"
 
 if [ "$build" -eq 0 ]; then
   say "done (--no-build)"
@@ -94,6 +121,13 @@ if ! command -v nvcc >/dev/null 2>&1; then
   exit 1
 fi
 
+# Without build isolation the build backend runs in this environment, so what it
+# imports has to be here. tiny-cuda-nn's setup.py imports pkg_resources, which
+# setuptools 81 deprecated and 82 removed -- so a current setuptools is present
+# and the build still dies on `No module named 'pkg_resources'`, which reads like
+# a missing package rather than one that is too new.
+python -c "import pkg_resources" 2>/dev/null || pip install "setuptools<81"
+
 install_ext() {
   local import_name="$1" source_dir="$2"
   if python -c "import $import_name" 2>/dev/null; then
@@ -105,18 +139,18 @@ install_ext() {
 }
 
 say "CUDA extensions"
-# One simple-knn for both methods; QUEEN's vendored copy is the same inria source
-# 3DGStream pins.
-install_ext simple_knn "$queen/submodules/simple-knn"
+# One simple-knn for both methods: QUEEN's copy, whose added <float.h>/<cfloat>
+# includes are what let it compile here at all.
+install_ext simple_knn "$simple_knn"
 # The intended survivor: QUEEN's grad fork, already a functional superset of
 # 3DGStream's. Phase 2 of docs/plan.md repoints 3DGStream at it and deletes the
-# two below.
-install_ext gaussian_rasterization_grad "$queen/submodules/gaussian-rasterization-grad"
+# two below. All three find glm through ../../glm/ in their own setup.py.
+install_ext gaussian_rasterization_grad "$rast/gaussian-rasterization-grad"
 # Kept until the parity test passes: QUEEN's plain rasterizer (inria's, plus a
-# different in_frustum near plane) and 3DGStream's, renamed by our patch so both
-# can be installed at once.
-install_ext diff_gaussian_rasterization "$queen/submodules/diff-gaussian-rasterization"
-install_ext gstream_rasterization "$gstream_rast"
+# different in_frustum near plane) and 3DGStream's, renamed by the vendored
+# patch so both can be installed at once.
+install_ext diff_gaussian_rasterization "$rast/diff-gaussian-rasterization"
+install_ext gstream_rasterization "$rast/gstream-rasterization"
 
 if [ "$tinycudann" -eq 1 ]; then
   say "tiny-cuda-nn (3DGStream NTC)"
