@@ -26,11 +26,16 @@ PathType = Union[Text, pathlib.PurePosixPath]
 
 from pathlib import PurePosixPath as GPath
 from arguments import ModelParams
-from MiDaS.midas.model_loader import default_models, load_model
 
 
 def get_depth_model(args: ModelParams):
     """Load MiDaS depth estimation model and preprocessing transforms."""
+    # Imported here rather than at module scope: MiDaS pulls in timm==0.6.13,
+    # which Open4D keeps in a separate environment so that depth-prior
+    # generation cannot constrain the training environment. Training that reads
+    # cached depth maps never reaches this function.
+    from MiDaS.midas.model_loader import default_models, load_model
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, transform, net_w, net_h = load_model(device, args.depth_model_ckpt, 'dpt_beit_large_512', 
                                                 optimize=False, height=None, square=False)

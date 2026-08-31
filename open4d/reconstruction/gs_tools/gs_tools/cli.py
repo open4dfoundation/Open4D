@@ -57,6 +57,8 @@ def _cmd_train(args: argparse.Namespace) -> int:
         init_dir=Path(args.init).expanduser() if args.init else None,
         images=args.images,
         first_load_iteration=args.first_load_iteration,
+        frame_start=args.frame_start,
+        frame_end=args.frame_end,
         ntc_path=Path(args.ntc_path).expanduser() if args.ntc_path else None,
         ntc_conf_path=Path(args.ntc_conf).expanduser() if args.ntc_conf else None,
     )
@@ -123,8 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="3DGStream only: 'init' trains the timestep-0 model first",
     )
     train.add_argument("--init", help="3DGStream only: initial 3DGS dir (default <run>/init)")
-    train.add_argument("--images", default="images", help="3DGStream only: image subdirectory")
+    train.add_argument("--images", help="3DGStream only: image subdirectory inside each timestep")
     train.add_argument("--first-load-iteration", type=int, default=15000, dest="first_load_iteration")
+    train.add_argument("--frame-start", type=int, dest="frame_start", help="3DGStream only: first timestep")
+    train.add_argument("--frame-end", type=int, dest="frame_end", help="3DGStream only: last timestep")
     train.add_argument("--ntc-path", dest="ntc_path", help="3DGStream only: warmed NTC parameters")
     train.add_argument("--ntc-conf", dest="ntc_conf", help="3DGStream only: NTC config")
     train.add_argument(
