@@ -30,7 +30,8 @@ import importlib
 #: Extension import names, in the order the unification will collapse them.
 KNOWN = (
     "gaussian_rasterization_grad",  # QUEEN's superset fork; the intended survivor
-    "diff_gaussian_rasterization",  # inria's, or 3DGStream's -- same import name
+    "diff_gaussian_rasterization",  # inria's, as vendored by QUEEN
+    "gstream_rasterization",  # 3DGStream's, renamed by our patch to avoid the clash
 )
 
 

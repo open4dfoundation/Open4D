@@ -1,16 +1,11 @@
 diff --git a/gaussian_renderer/__init__.py b/gaussian_renderer/__init__.py
-index d5c542c..0f3838d 100644
 --- a/gaussian_renderer/__init__.py
 +++ b/gaussian_renderer/__init__.py
-@@ -11,7 +11,11 @@
+@@ -11,7 +11,7 @@
  
  import torch
  import math
 -from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-+# Renamed by Open4D from diff_gaussian_rasterization: QUEEN's checkout installs
-+# inria's fork under that import name, and one environment cannot hold two
-+# extensions with the same name. Phase 2 replaces this import with the unified
-+# rasterizer entirely. See gs_tools/docs/plan.md.
 +from gstream_rasterization import GaussianRasterizationSettings, GaussianRasterizer
  from scene.gaussian_model import GaussianModel
  from utils.sh_utils import eval_sh
