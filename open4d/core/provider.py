@@ -81,27 +81,9 @@ class MemoryFrameProvider:
 
     @property
     def timestamps(self) -> tuple[float, ...]:
-        """Return the timestamps of all stored frames in frame order.
-        
-        Returns:
-        	tuple[float, ...]: The timestamp for each stored frame.
-        """
         return tuple(frame.timestamp for frame in self._frames)
 
     def get_frame(self, index: int) -> Frame:
-        """
-        Retrieve a frame by its nonnegative ordinal index.
-        
-        Parameters:
-            index (int): An integer-like frame index.
-        
-        Returns:
-            Frame: The frame at the specified index.
-        
-        Raises:
-            TypeError: If `index` is not integer-like.
-            IndexError: If `index` is negative or outside the available frame range.
-        """
         if isinstance(index, bool):
             raise TypeError("frame index must be an integer")
         try:
