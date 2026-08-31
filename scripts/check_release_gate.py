@@ -13,12 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def blockers() -> list[str]:
-    """
-    Collect unresolved release blockers from the third-party ledger.
-    
-    Returns:
-    	list[str]: Blocker descriptions found in matching ledger rows, or a release-decision message when the ledger remains blocked without matching rows.
-    """
     ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
     rows: list[str] = []
     for line in ledger.splitlines():
@@ -31,15 +25,6 @@ def blockers() -> list[str]:
 
 
 def main() -> int:
-    """
-    Run the release gate and report whether unresolved release blockers remain.
-    
-    With ``--expect-blocked``, succeeds only when at least one blocker exists.
-    Otherwise, succeeds when the release ledger has no unresolved blockers.
-    
-    Returns:
-        int: ``0`` when the release state matches the selected mode, otherwise ``1``.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--expect-blocked",
