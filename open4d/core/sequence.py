@@ -17,12 +17,6 @@ class Sequence:
     """A lazy, random-access temporal geometry sequence."""
 
     def __init__(self, provider: FrameProvider) -> None:
-        """
-        Initialize a sequence from a frame provider.
-        
-        Parameters:
-            provider (FrameProvider): Provider supplying the sequence frames, metadata, and topology.
-        """
         if not isinstance(provider, FrameProvider):
             raise TypeError("provider must implement FrameProvider")
         count = provider.frame_count
@@ -66,19 +60,6 @@ class Sequence:
     def __getitem__(self, index: slice) -> "SequenceView": ...
 
     def __getitem__(self, index: int | slice) -> Frame | "SequenceView":
-        """
-        Retrieve a frame by ordinal index or create a view for a slice.
-        
-        Parameters:
-            index (int | slice): The frame index or slice of frame indices.
-        
-        Returns:
-            Frame | SequenceView: The selected frame or a view containing the selected frames.
-        
-        Raises:
-            TypeError: If `index` is not an integer or slice, or if the provider returns an invalid frame.
-            IndexError: If an integer index is outside the sequence bounds.
-        """
         self._ensure_open()
         if isinstance(index, slice):
             return SequenceView(self, range(len(self))[index])
@@ -112,16 +93,7 @@ class Sequence:
 
     @property
     def timestamps(self) -> tuple[float, ...]:
-        """
-        Provide the sequence timestamps, validating and caching them on first access.
-        
-        Returns:
-        	tuple[float, ...]: Finite timestamp values for the sequence.
-        
-        Raises:
-        	TypeError: If timestamps or the provider's monotonicity setting have an invalid type.
-        	ValueError: If timestamps have an invalid length, contain non-finite values, or decrease when nonmonotonic timestamps are disallowed.
-        """
+        """Return ordered timestamps, decoding frames only if required."""
         self._ensure_open()
         if self._timestamps_cache is None:
             provided = getattr(self._provider, "timestamps", None)
@@ -152,22 +124,11 @@ class Sequence:
 
     @property
     def duration(self) -> float:
-        """
-        Calculate the elapsed time between the first and last timestamps.
-        
-        Returns:
-        	float: The absolute difference between the first and last timestamps, or 0.0 for a sequence with fewer than two timestamps.
-        """
         timestamps = self.timestamps
         return abs(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
 
     @property
     def fps(self) -> float | None:
-        """Compute the average frame rate from the sequence duration.
-        
-        Returns:
-        	float | None: The frames per second, or `None` when the sequence has fewer than two frames or no positive duration.
-        """
         duration = self.duration
         return (len(self) - 1) / duration if len(self) > 1 and duration > 0 else None
 
@@ -207,12 +168,7 @@ class Sequence:
         return value
 
     def close(self) -> None:
-        """
-        Close the sequence's provider resources once.
-        
-        Raises:
-        	TypeError: If the provider defines a non-callable `close` attribute.
-        """
+        """Close provider resources when the provider supports it."""
         if self._closed:
             return
         close = getattr(self._provider, "close", None)
@@ -223,7 +179,6 @@ class Sequence:
         self._closed = True
 
     def __enter__(self) -> "Sequence":
-        """Enter the sequence's context-manager scope and return the sequence."""
         self._ensure_open()
         return self
 
@@ -233,12 +188,6 @@ class Sequence:
 
 class _ViewProvider:
     def __init__(self, parent: Sequence, indices: range) -> None:
-        """Initialize a sequence view over selected indices of a parent sequence.
-        
-        Parameters:
-        	parent (Sequence): The sequence providing the view's data and metadata.
-        	indices (range): The parent sequence indices included in the view.
-        """
         self.parent = parent
         self.indices = indices
         self.metadata = parent.metadata
@@ -253,23 +202,9 @@ class _ViewProvider:
 
     @property
     def timestamps(self) -> tuple[float, ...]:
-        """Return the timestamps corresponding to the selected frames.
-        
-        Returns:
-            tuple[float, ...]: The selected frame timestamps in view order.
-        """
         return tuple(self.parent.timestamps[index] for index in self.indices)
 
     def get_frame(self, index: int) -> Frame:
-        """
-        Retrieve a frame by its ordinal index within the view.
-        
-        Parameters:
-        	index (int): Ordinal index of the frame in the view.
-        
-        Returns:
-        	Frame: The frame at the specified view index.
-        """
         return self.parent[self.indices[index]]
 
 
