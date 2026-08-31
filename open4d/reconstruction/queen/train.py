@@ -47,7 +47,6 @@ from utils.loader_utils import SequentialMultiviewSampler, MultiViewVideoDataset
 from arguments import ModelParams, PipelineParams, OptimizationParams, QuantizeParams, OptimizationParamsInitial, OptimizationParamsRest
 from scene.utils import get_depth_model, get_depth_poses
 from torchmetrics.functional.regression import pearson_corrcoef
-from MiDaS.run import process
 from scene.decoders import LatentDecoder, LatentDecoderRes, Gate
 from generate_video_all import symlink
 
@@ -169,6 +168,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     if opt.lambda_depth>0.0 or dataset.depth_init:
 
         ## MiDas model for monocular depth estimation
+        # Imported here, not at module scope: MiDaS needs timm==0.6.13, which
+        # Open4D installs in a separate environment. See gs_tools/README.md.
+        from MiDaS.run import process
+
         depth_model, transform, net_w, net_h = get_depth_model(dataset)
         for camera in train_cameras:
             gt_image = camera.original_image.permute(1,2,0).detach().cpu().numpy()
