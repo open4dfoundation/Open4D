@@ -1,0 +1,17 @@
+Nan Wu, Bo Chen, Ruizhi Cheng, Klara Nahrstedt, and Bo Han.
+"NeVo: Advancing Volumetric Video Streaming with Neural Content Representation."
+The 31st Annual International Conference on Mobile Computing and Networking
+(ACM MobiCom '25), November 4-8, 2025, Hong Kong, China. pp. 267-282.
+https://doi.org/10.1145/3680207.3723473
+
+The content representation it streams, vendored under rerf/:
+
+Liao Wang, Qiang Hu, Qihan He, Ziyu Wang, Jingyi Yu, Tinne Tuytelaars,
+Lan Xu, and Minye Wu.
+"Neural Residual Radiance Fields for Streamably Free-Viewpoint Videos."
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR 2023),
+pp. 76-87. https://github.com/aoliao12138/ReRF
+
+ReRF is released for non-commercial use only. Its code base derives from DVGO
+(Sun et al., "Direct Voxel Grid Optimization", CVPR 2022) and borrows from NHR
+(Wu et al., "Multi-view Neural Human Rendering", CVPR 2020) and torch-dct.
