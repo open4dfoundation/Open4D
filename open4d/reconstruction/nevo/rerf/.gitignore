@@ -1,0 +1,12 @@
+**/.ipynb_checkpoints
+**/__pycache__
+*.npz
+*.dae
+data
+logs
+configs/NHR
+run.sh
+run_voxel_sample.sh
+.idea/
+test/
+test_code.sh
