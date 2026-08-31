@@ -36,8 +36,21 @@ class GstreamOptions:
     """The arguments 3DGStream needs and QUEEN does not."""
 
     init_dir: Path | None = None
-    images: str = "images"
+    #: Image subdirectory inside each timestep. Left unset by default: upstream's
+    #: own default applies, and DyNeRF-derived scenes keep their views directly in
+    #: `frameNNNNNN/` with no subdirectory at all, so passing one breaks the load.
+    images: str | None = None
+    #: Must match the iteration the initial 3DGS was saved at.
     first_load_iteration: int = 15000
+    #: Timestep range, 1-based and half-open at the end, as upstream defines it.
+    #: None leaves upstream's own defaults (1 to 150) in place.
+    frame_start: int | None = None
+    frame_end: int | None = None
+    #: 1, not upstream's argparse default of 3. 3DGStream's README requires the
+    #: initial 3DGS to be trained at `--sh_degree 1`, and the frames stage loads
+    #: that ply with an assertion on the spherical-harmonic count -- so leaving
+    #: the default in place fails inside `load_ply` with a bare AssertionError.
+    sh_degree: int = 1
     ntc_path: Path | None = None
     ntc_conf_path: Path | None = None
     extra: tuple[str, ...] = field(default_factory=tuple)
@@ -73,7 +86,7 @@ def init_command(spec: RunSpec, options: GstreamOptions) -> list[str]:
         "-m",
         str(options.resolved_init(spec.run_dir)),
         "--sh_degree",
-        "1",
+        str(options.sh_degree),
         *options.extra,
         *spec.passthrough,
     ]
@@ -93,11 +106,17 @@ def train_command(spec: RunSpec, options: GstreamOptions | None = None) -> list[
         str(options.resolved_init(spec.run_dir)),
         "-v",
         str(spec.scene.resolve()),
-        "--image",
-        options.images,
         "--first_load_iteration",
         str(options.first_load_iteration),
+        "--sh_degree",
+        str(options.sh_degree),
     ]
+    if options.images:
+        command += ["--image", options.images]
+    if options.frame_start is not None:
+        command += ["--frame_start", str(options.frame_start)]
+    if options.frame_end is not None:
+        command += ["--frame_end", str(options.frame_end)]
     if options.ntc_path:
         command += ["--ntc_path", str(Path(options.ntc_path).resolve())]
     # Upstream's default is the empty string, which fails at NTC construction, so
