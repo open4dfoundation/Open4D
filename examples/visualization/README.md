@@ -110,12 +110,28 @@ one and say so.
 | Folder of `.obj` or `.ply` frames | nothing |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
+| Raw MPEG V-DMC bitstream (`.vmesh`) | a compatible native V-DMC decoder |
 | One mesh file | as above |
 
 Frames are ordered by **the last number in the filename**, so `frame_2.obj` comes
 before `frame_10.obj` — but `frame_003_qp9.obj` sorts on 9, not 3. A codec that
 puts a parameter last will silently misalign every frame and look far worse than
 it is; rename before comparing. A frame with no faces is drawn as a point cloud.
+
+### Raw V-DMC bitstreams
+
+Raw `.vmesh` input needs a compatible native decoder:
+
+```bash
+export OPEN4D_VDMC_DECODER=/path/to/vmesh-decoder
+export OPEN4D_VDMC_DECODER_CONFIG=/path/to/decoder.cfg  # optional
+python examples/visualization/visualize_sequence.py capture.vmesh --info
+```
+
+This path is read-only and geometry-only. It defaults to 30 fps, accepts
+`--fps N`, and displays the coordinates emitted by the decoder. Open4D removes
+the temporary decoded OBJ files when the sequence closes. Use `.v4d` when the
+sequence also needs Open4D timestamps, metadata, and coordinate bounds.
 
 ## Flags
 

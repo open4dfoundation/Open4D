@@ -386,6 +386,57 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
     decoded.close()
 
 
+def test_vmesh_decodes_a_raw_bitstream_without_an_open4d_manifest(
+    tmp_path, monkeypatch
+):
+    import open4d.codec._vmesh as implementation
+
+    executable = tmp_path / "decoder"
+    executable.write_text("native test double", encoding="ascii")
+    executable.chmod(0o700)
+    config = tmp_path / "decoder.cfg"
+    config.write_text("test config", encoding="ascii")
+    bitstream = tmp_path / "capture.vmesh"
+    bitstream.write_bytes(b"raw-vdmc-bitstream")
+    calls = []
+    monkeypatch.setenv("OPEN4D_VDMC_DECODER_CONFIG", str(config))
+
+    def native_call(command, label):
+        calls.append((command, label))
+        options = dict(item[2:].split("=", 1) for item in command[1:] if "=" in item)
+        assert Path(options["compressed"]) == bitstream.absolute()
+        output = Path(options["decMesh"]).parent
+        (output / "frame_000000.obj").write_text(
+            "v 10 20 30\nv 11 20 30\nv 10 21 30\nf 1 2 3\n", encoding="ascii"
+        )
+        (output / "frame_000001.obj").write_text(
+            "v 12 20 30\nv 13 20 30\nv 12 21 30\nf 1 2 3\n", encoding="ascii"
+        )
+
+    monkeypatch.setattr(implementation, "_run", native_call)
+    decoded = VMeshCodec("vdmc").decode(
+        bitstream, decoder=executable, fps=24
+    )
+    decoded_directory = Path(
+        next(item for item in calls[0][0] if item.startswith("--decMesh="))
+        .split("=", 1)[1]
+    ).parent
+
+    assert len(decoded) == 2
+    assert decoded.timestamps == (0.0, 1 / 24)
+    assert decoded.metadata["format"] == ".vmesh"
+    assert decoded.metadata["codec"] == "vdmc"
+    assert decoded.metadata["raw_bitstream"] is True
+    assert decoded[1].frame_index == 1
+    np.testing.assert_array_equal(decoded[0].geometry.positions[0], [10, 20, 30])
+    assert calls[0][1] == "vdmc decoder"
+    assert f"--config={config.absolute()}" in calls[0][0]
+    assert decoded_directory.is_dir()
+
+    decoded.close()
+    assert not decoded_directory.exists()
+
+
 def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch):
     import open4d.codec._klt as implementation
 
