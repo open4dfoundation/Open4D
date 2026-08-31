@@ -43,3 +43,26 @@ def test_documentation_does_not_advertise_usd_frame_directories():
     )
 
     assert "Folder of `.usd` frames" not in readme
+
+
+def test_example_helpers_advertise_raw_vdmc_as_a_sequence_source(tmp_path):
+    bitstream = tmp_path / "capture.vmesh"
+    bitstream.write_bytes(b"raw bitstream")
+
+    assert frame_sources.source_kind(bitstream) == "sequence-file"
+    assert ".vmesh" in frame_sources.supported_formats()
+
+
+def test_raw_vmesh_fps_is_forwarded_to_the_public_loader(tmp_path, monkeypatch):
+    bitstream = tmp_path / "capture.vmesh"
+    bitstream.write_bytes(b"raw bitstream")
+    received = {}
+    monkeypatch.setattr(
+        frame_sources,
+        "_open_sequence",
+        lambda path, **options: received.update(path=path, **options),
+    )
+
+    frame_sources.open_sequence(bitstream, fps=24)
+
+    assert received == {"path": bitstream, "fps": 24}

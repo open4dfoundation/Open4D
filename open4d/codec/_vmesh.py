@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import math
+from numbers import Real
 import os
 from pathlib import Path
 import subprocess
@@ -14,7 +16,7 @@ from zipfile import BadZipFile, ZIP_STORED, ZipFile
 import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
-from open4d.io import open_sequence
+from open4d.io import Open4DError, open_sequence
 from open4d.io._mesh import write_obj
 
 from ._npz import _json_value
@@ -22,6 +24,7 @@ from ._protocol import CodecError
 
 _SCHEMA = "open4d.vmesh-sequence/v1"
 _POSITION_BIT_DEPTH = 12
+_DEFAULT_RAW_FPS = 30.0
 
 
 def _executable(value: str | os.PathLike[str] | None, variable: str) -> Path:
@@ -32,6 +35,29 @@ def _executable(value: str | os.PathLike[str] | None, variable: str) -> Path:
     if not path.is_file() or not os.access(path, os.X_OK):
         raise CodecError(f"native codec executable is not runnable: {path}")
     return path
+
+
+def _configuration(
+    value: str | os.PathLike[str] | None, variable: str
+) -> Path | None:
+    selected = value or os.environ.get(variable)
+    if not selected:
+        return None
+    path = Path(selected).absolute()
+    if not path.is_file():
+        raise CodecError(f"native codec configuration is missing: {path}")
+    return path
+
+
+def _raw_fps(value: float | None) -> float:
+    if value is None:
+        return _DEFAULT_RAW_FPS
+    if not isinstance(value, Real) or isinstance(value, bool):
+        raise TypeError("fps must be a real number or None")
+    result = float(value)
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError("fps must be finite and greater than zero")
+    return result
 
 
 def _run(command: list[str], label: str) -> None:
@@ -81,6 +107,47 @@ class _DecodedProvider:
             record["frame_index"], record["timestamp"], geometry,
             record.get("metadata", {}),
         )
+
+    def close(self) -> None:
+        self.decoded.close()
+        self.temporary.cleanup()
+
+
+class _RawDecodedProvider:
+    def __init__(
+        self,
+        temporary: tempfile.TemporaryDirectory,
+        decoded: Sequence,
+        source: Path,
+        codec: str,
+        fps: float,
+    ) -> None:
+        self.temporary = temporary
+        self.decoded = decoded
+        self.metadata = MappingProxyType(
+            {
+                "name": source.stem,
+                "source": str(source),
+                "format": ".vmesh",
+                "codec": codec,
+                "fps": fps,
+                "raw_bitstream": True,
+            }
+        )
+        self.topology = decoded.topology
+        self.has_constant_vertex_count = decoded.has_constant_vertex_count
+        self.has_vertex_correspondence = decoded.has_vertex_correspondence
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.decoded)
+
+    @property
+    def timestamps(self) -> tuple[float, ...]:
+        return self.decoded.timestamps
+
+    def get_frame(self, index: int) -> Frame:
+        return self.decoded[index]
 
     def close(self) -> None:
         self.decoded.close()
@@ -199,35 +266,76 @@ class VMeshCodec:
         return destination
 
     def decode(
-        self, source: Path, *, decoder: str | os.PathLike[str] | None = None
+        self,
+        source: Path,
+        *,
+        decoder: str | os.PathLike[str] | None = None,
+        decoder_config: str | os.PathLike[str] | None = None,
+        fps: float | None = None,
     ) -> Sequence:
-        executable = _executable(decoder, f"OPEN4D_{self._environment}_DECODER")
         source = Path(source).absolute()
+        raw = source.suffix.lower() == ".vmesh"
+        if not raw and fps is not None:
+            raise TypeError("fps applies only to manifest-free .vmesh bitstreams")
+        raw_rate = _raw_fps(fps) if raw else None
+        executable = _executable(decoder, f"OPEN4D_{self._environment}_DECODER")
+        config_variable = f"OPEN4D_{self._environment}_DECODER_CONFIG"
+        configured = (
+            _configuration(decoder_config, config_variable)
+            if decoder_config is not None
+            else None
+        )
         temporary = tempfile.TemporaryDirectory(prefix=f"open4d-{self.id}-decode-")
         work = Path(temporary.name)
         try:
-            with ZipFile(source) as archive:
-                manifest = json.loads(archive.read("manifest.json"))
-                if not isinstance(manifest, Mapping):
-                    raise CodecError("V-Mesh artifact manifest root must be an object")
-                if manifest.get("schema") != _SCHEMA or manifest.get("codec") != self.id:
-                    raise CodecError(f"artifact is not {self.id}")
-                archive.extract("sequence.vmesh", work)
-                if "decoder.cfg" in archive.namelist():
-                    archive.extract("decoder.cfg", work)
+            if raw:
+                stream = source
+                manifest = None
+            else:
+                with ZipFile(source) as archive:
+                    manifest = json.loads(archive.read("manifest.json"))
+                    if not isinstance(manifest, Mapping):
+                        raise CodecError("V-Mesh artifact manifest root must be an object")
+                    if (
+                        manifest.get("schema") != _SCHEMA
+                        or manifest.get("codec") != self.id
+                    ):
+                        raise CodecError(f"artifact is not {self.id}")
+                    archive.extract("sequence.vmesh", work)
+                    if "decoder.cfg" in archive.namelist():
+                        archive.extract("decoder.cfg", work)
+                stream = work / "sequence.vmesh"
             output = work / "decoded"
             output.mkdir()
             # The pinned V-DMC decoder parses decTex even with zero attributes.
             command = [str(executable)]
-            if (work / "decoder.cfg").is_file():
-                command.append(f"--config={work / 'decoder.cfg'}")
+            embedded_config = work / "decoder.cfg"
+            config = configured or (
+                embedded_config
+                if embedded_config.is_file()
+                else _configuration(None, config_variable)
+            )
+            if config is not None:
+                command.append(f"--config={config}")
             command.extend([
-                f"--compressed={work / 'sequence.vmesh'}",
+                f"--compressed={stream}",
                 f"--decMesh={output / 'frame_%06d.obj'}",
                 f"--decTex={output / 'texture_%06d.png'}", "--startFrameIndex=0",
             ])
             _run(command, f"{self.id} decoder")
-            decoded = open_sequence(output)
+            try:
+                decoded = open_sequence(output, fps=raw_rate)
+            except (Open4DError, OSError) as error:
+                raise CodecError(
+                    f"{self.id} decoder produced no readable OBJ frames: {error}"
+                ) from error
+            if raw:
+                return Sequence(
+                    _RawDecodedProvider(
+                        temporary, decoded, source, self.id, raw_rate
+                    )
+                )
+            assert manifest is not None
             if len(decoded) != len(manifest["frames"]):
                 raise CodecError(
                     f"{self.id} decoded {len(decoded)} frames, expected {len(manifest['frames'])}"

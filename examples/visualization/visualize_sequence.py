@@ -6,13 +6,14 @@
     python examples/visualization/visualize_sequence.py my_capture.usdc
 
 Point it at your own data. A source is normally a whole-sequence file such as
-`.o4d` or a time-sampled `.usdc`. A folder holding one mesh per frame and a
-standalone mesh remain useful import paths. Meshes and point clouds are both
-handled: a frame with no faces is drawn as a point cloud.
+`.o4d`, a time-sampled `.usdc`, or a raw V-DMC `.vmesh` bitstream. A folder
+holding one mesh per frame and a standalone mesh remain useful import paths.
+Meshes and point clouds are both handled: a frame with no faces is drawn as a
+point cloud.
 
 Start with `--info`. It reports frame count, timing, and topology without
-decoding geometry or opening a window, which is the quickest way to see whether
-a dataset loads and what the loader made of it.
+parsing frame geometry or opening a window, which is the quickest way to see
+whether a dataset loads and what the loader made of it.
 
 In the window: drag to orbit, scroll to zoom, drag the slider to scrub, space to
 pause, left/right to step, q to quit. Frame number, timestamp and vertex/triangle
@@ -37,9 +38,10 @@ from _common import existing_source
 from frame_sources import (
     DEFAULT_FPS,
     describe_source,
+    open_sequence,
     supported_formats,
 )
-from open4d import load as open_sequence, save as save_sequence
+from open4d import save as save_sequence
 from open4d.codec import CodecError
 from open4d.io import Open4DError
 from open4d.visualization._frames import (
@@ -57,7 +59,7 @@ PLOT_UP = 2
 def report(sequence, path: Path, fps: float) -> None:
     """Print what the sequence declares, before decoding any geometry."""
     print(f"\n{path}")
-    print(f"  {describe_source(path)}")
+    print(f"  {describe_source(path, len(sequence))}")
     print(f"  frames     : {len(sequence)}")
     print(f"  duration   : {sequence.duration:.3f} s at "
           f"{sequence.fps or 0:.2f} fps")
@@ -130,8 +132,8 @@ def main() -> None:
         "path",
         type=Path,
         nargs="?",
-        help="your sequence: an .o4d or USD file, a frame directory, or a "
-        "standalone mesh import",
+        help="your sequence: an .o4d, USD, or raw .vmesh file; a frame "
+        "directory; or a standalone mesh import",
     )
     parser.add_argument(
         "--stride", type=int, default=1, help="keep every Nth frame"
@@ -140,8 +142,8 @@ def main() -> None:
         "--fps",
         type=float,
         default=None,
-        help="override playback; for a manifest-free frame directory this also "
-        "defines imported timestamps (default: 30 fps)",
+        help="override playback; for a manifest-free frame directory or raw "
+        ".vmesh this also defines imported timestamps (default: 30 fps)",
     )
     parser.add_argument(
         "--up",
@@ -224,8 +226,7 @@ def main() -> None:
     # A malformed frame in someone else's dataset is ordinary, not a crash, so
     # report it as an error naming the file rather than a traceback.
     try:
-        import_fps = args.fps if path.is_dir() else None
-        with open_sequence(path, fps=import_fps) as sequence:
+        with open_sequence(path, fps=args.fps) as sequence:
             # One rate, resolved once, used for reporting, playback, GIF timing
             # and any container we write.
             fps = resolve_fps(sequence, args.fps)

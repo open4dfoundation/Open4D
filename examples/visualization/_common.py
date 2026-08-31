@@ -41,6 +41,6 @@ def existing_source(path: Path) -> Path:
         return path
     sys.exit(
         f"{path} does not exist.\n"
-        "Pass a folder holding one mesh file per frame, or a USD container.\n"
+        "Pass a sequence file, a frame directory, or a standalone mesh.\n"
         "Run with --help to see every format."
     )
