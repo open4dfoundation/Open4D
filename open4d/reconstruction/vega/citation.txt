@@ -1,0 +1,7 @@
+@inproceedings{kim2025vega,
+    author = {Kim, Gunjoong and Park, Seonghoon and Lee, Jeho and Jung, Chanyoung and Jun, Hyungchol and Cha, Hojung},
+    title = {Vega: Fully Immersive Mobile Volumetric Video Streaming with 3D Gaussian Splatting},
+    booktitle = {Proceedings of the 31st Annual International Conference on Mobile Computing and Networking (ACM MobiCom '25)},
+    year = {2025},
+    doi = {10.1145/3680207.3765267}
+}
