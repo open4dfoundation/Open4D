@@ -32,6 +32,11 @@ from open4d.io import write_sequence
 
 from streamer.client import viewer_path
 
+
+def _source() -> str:
+    """The decode worker, which is where the codecs live."""
+    return (viewer_path().parent / "worker.js").read_text()
+
 pytestmark = pytest.mark.cpu
 
 NODE = shutil.which("node")
@@ -43,7 +48,7 @@ PARSERS = ("parseMeshPly", "parsePly", "parseSplat")
 
 def _extract(name: str) -> str:
     """One top-level function's source out of the page."""
-    page = viewer_path().read_text()
+    page = _source()
     start = page.index(f"function {name}(")
     end = page.index("\n}\n", start) + 3
     return page[start:end]
@@ -235,6 +240,6 @@ def test_parse_splat_rejects_a_truncated_frame(tmp_path):
 @requires_node
 def test_every_named_parser_is_still_present():
     """The extraction is by name, so a rename must fail here, not silently."""
-    page = viewer_path().read_text()
+    page = _source()
     for name in PARSERS:
         assert f"function {name}(" in page
