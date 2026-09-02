@@ -49,8 +49,8 @@ def test_viewer_only_knows_representations_core_defines():
     assert _registry_keys(_viewer_source()) <= CORE_VALUES
 
 
-def test_viewer_renders_the_two_representations_the_exporters_emit():
-    assert _registry_keys(_viewer_source()) == {"gaussians", "pixels"}
+def test_the_viewer_renders_every_representation_core_defines():
+    assert _registry_keys(_viewer_source()) == CORE_VALUES
 
 
 def test_geometry_flags_agree_with_core():

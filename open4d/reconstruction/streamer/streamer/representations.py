@@ -23,10 +23,11 @@ all: ReRF's entropy coder exists only as a CPython 3.8 binary, which is why
 ``pixels`` is a first-class representation rather than a fallback.
 
 ``playable`` is a property of this repository's client, not of the
-representation. ``mesh`` and ``points`` are registered and have geometry in
-core, but no WebGL renderer here yet, so a bundle declaring one is reported as
-unplayable instead of showing an empty pane. Writing that renderer flips one
-flag.
+representation: a bundle declaring something the client cannot draw is reported
+as unplayable rather than shown as an empty pane. Every representation core
+defines is playable today, so nothing sets it False -- it stays because the next
+representation will arrive before its renderer does, and that gap should be
+stated rather than discovered.
 """
 
 from __future__ import annotations
@@ -166,14 +167,16 @@ register(
 register(
     RepresentationSpec(
         representation=Representation.MESH,
+        # Only `.ply` is playable: the client parses that, and it is what
+        # `open4d.io.write_sequence` produces. The other two are registered so a
+        # bundle carrying them is served with a sensible type rather than as
+        # markup, which is a separate question from whether it can be rendered.
         media_types={".ply": _OCTET, ".obj": "model/obj", ".glb": "model/gltf-binary"},
-        playable=False,
     )
 )
 register(
     RepresentationSpec(
         representation=Representation.POINTS,
         media_types={".ply": _OCTET},
-        playable=False,
     )
 )

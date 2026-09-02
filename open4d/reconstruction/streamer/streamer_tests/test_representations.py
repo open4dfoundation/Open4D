@@ -29,14 +29,27 @@ def test_has_geometry_is_read_from_core_not_stored():
         assert spec.has_geometry is spec.representation.has_geometry
 
 
-def test_playable_is_a_property_of_this_repositorys_client():
-    """mesh and points have geometry in core but no renderer here yet."""
+def test_everything_core_defines_is_playable_today():
+    """The renderer gap is closed; the flag stays for the next representation."""
     assert {spec.name for spec in representations.playable()} == {
-        "gaussians",
-        "pixels",
+        member.value for member in Representation
     }
-    assert representations.spec("mesh").has_geometry is True
+
+
+def test_unplayable_is_still_expressible(monkeypatch):
+    """A representation can arrive before its renderer, and must say so."""
+    monkeypatch.setattr(representations, "_REGISTRY", dict(representations._REGISTRY))
+    representations.register(
+        RepresentationSpec(
+            representation=Representation.MESH,
+            media_types={".ply": "application/octet-stream"},
+            playable=False,
+        ),
+        replace=True,
+    )
     assert representations.spec("mesh").playable is False
+    assert representations.spec("mesh").has_geometry is True
+    assert "mesh" not in {spec.name for spec in representations.playable()}
 
 
 def test_spec_accepts_the_enum_or_the_wire_value():
