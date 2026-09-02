@@ -104,6 +104,92 @@ def test_the_representation_registry_evaluates(tmp_path):
         assert isinstance(entry["cacheSize"], int) and entry["cacheSize"] > 0, name
 
 
+@requires_node
+def test_frames_display_in_order_under_varying_decode_latency(tmp_path):
+    """Why playback has to be buffer-driven, demonstrated on both patterns.
+
+    Decode latency varies per frame -- that is what a fetch does -- and an
+    advance loop that fires on a wall clock without waiting overlaps its own
+    calls, which then resolve in whatever order they finish. The result is not
+    slow playback but *wrong* playback: the counter races ahead and the panes
+    show whichever decode landed last. Measured here at 3,1,5,0,6,4,2 for a
+    request of 0..6.
+
+    This simulates the two patterns rather than driving the real `tick`, which
+    needs a DOM. `test_the_playback_loop_waits_for_the_frame_it_asked_for`
+    checks that the shipped loop still uses the pattern this one vindicates.
+    """
+    script = tmp_path / "loop.mjs"
+    script.write_text(
+        """
+        const LATENCY = [40, 15, 60, 10, 50, 12, 45, 18, 55, 11];
+        const FPS = 30;
+        function makeShow(shown) {
+          return async (index) => {
+            await new Promise((r) => setTimeout(r, LATENCY[index % LATENCY.length]));
+            shown.push(index);
+          };
+        }
+        async function wallClock(steps) {
+          const shown = []; const show = makeShow(shown);
+          let frame = 0, last = 0, now = 0;
+          for (let i = 0; i < steps; i++) {
+            now += 1000 / FPS;
+            if (now - last >= 1000 / FPS) { last = now; show(frame++); }
+            await new Promise((r) => setTimeout(r, 1));
+          }
+          await new Promise((r) => setTimeout(r, 300));
+          return shown;
+        }
+        async function bufferDriven(steps) {
+          const shown = []; const show = makeShow(shown);
+          let frame = 0, advancing = false;
+          for (let i = 0; i < steps * 12; i++) {
+            if (!advancing) {
+              advancing = true;
+              show(frame++).finally(() => { advancing = false; });
+            }
+            await new Promise((r) => setTimeout(r, 1));
+            if (shown.length >= steps) break;
+          }
+          return shown;
+        }
+        process.stdout.write(JSON.stringify({
+          wallClock: (await wallClock(10)).slice(0, 7),
+          bufferDriven: (await bufferDriven(7)).slice(0, 7),
+        }));
+        """
+    )
+    finished = subprocess.run(
+        [NODE, str(script)], capture_output=True, text=True, timeout=120
+    )
+    assert finished.returncode == 0, finished.stderr
+    result = json.loads(finished.stdout)
+
+    ordered = lambda seq: all(b > a for a, b in zip(seq, seq[1:]))
+    assert not ordered(result["wallClock"]), result["wallClock"]
+    assert ordered(result["bufferDriven"]), result["bufferDriven"]
+    assert result["bufferDriven"] == sorted(result["bufferDriven"])
+
+
+def test_the_playback_loop_waits_for_the_frame_it_asked_for():
+    """Structural, because `tick` needs a DOM to run.
+
+    Weak on its own, which is why it names what it is guarding: the invariant is
+    at most one advance in flight, and the next interval timed from when a frame
+    was actually shown.
+    """
+    source = page()
+    start = source.index("function tick(")
+    body = source[start : source.index("\n}\n", start)]
+    assert "!app.advancing" in body, "the advance guard is gone"
+    assert "app.advancing = true" in body
+    assert ".finally(" in body, "the guard is never cleared"
+    assert "app.lastAdvance = performance.now()" in body, (
+        "the interval is timed from the clock again, not from the frame"
+    )
+
+
 def test_the_page_carries_no_external_dependency():
     """No build step and no CDN is what makes the page servable as one file."""
     source = page()
