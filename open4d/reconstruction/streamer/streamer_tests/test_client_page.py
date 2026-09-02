@@ -69,12 +69,17 @@ def test_the_representation_registry_evaluates(tmp_path):
     literal reading them in their temporal dead zone -- which fails at load,
     before anything renders, and only in a browser.
     """
+    # Everything the literal reaches while it is being evaluated. Names the
+    # literal only calls later -- parseDraco, loadDraco -- are not needed here,
+    # which is why this is a list rather than the whole script: what is being
+    # tested is that the literal can be built at load, not that the page runs.
     probe = "\n".join(
         cut(name)
         for name in (
             "parseMeshPly",
             "REPRESENTATIONS",
             "parseGaussianFrame",
+            "parseGeometryFrame",
             "decodeGeometry",
             "decodeImage",
         )
