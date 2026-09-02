@@ -29,6 +29,46 @@ def _viewer_source() -> str:
     return viewer_path().read_text()
 
 
+def _codec_table(source: str) -> dict[str, set[str]]:
+    """The client's CODECS table: representation -> the suffixes it decodes."""
+    body = re.search(r"const CODECS = \{(.*?)\n\};", source, re.DOTALL)
+    assert body, "CODECS table not found in the viewer"
+    found: dict[str, set[str]] = {}
+    for name, entries in re.findall(
+        r"^  (\w+):\s*\{(.*?)\},$", body.group(1), re.MULTILINE
+    ):
+        found[name] = set(re.findall(r'"(\.[a-z0-9]+)"', entries))
+    return found
+
+
+def test_the_client_decodes_exactly_what_the_codec_registry_promises():
+    """Python says a `.drc` mesh is client-decodable; the client must agree.
+
+    These are two hand-maintained tables in two languages -- a Python registry
+    that tells a producer what it may write, and a JavaScript one that decides
+    what actually parses. A promise on one side with no parser on the other is a
+    blank pane, which is the failure mode this whole registry exists to remove.
+    """
+    from streamer import codecs
+
+    client = _codec_table(_viewer_source())
+    for representation in Representation:
+        promised = {
+            spec.suffix for spec in codecs.client_decodable(representation)
+        }
+        assert client.get(representation.value, set()) == promised, representation
+
+
+def test_the_client_does_not_decode_what_python_says_is_server_side():
+    """ReRF can never decode in a browser; a parser for it would be a lie."""
+    from streamer import codecs
+
+    client = _codec_table(_viewer_source())
+    for spec in codecs.known():
+        if spec.decodes == "server":
+            assert spec.suffix not in client.get(spec.representation.value, set())
+
+
 def _registry_keys(source: str) -> set[str]:
     """The keys of the viewer's REPRESENTATIONS object literal."""
     body = re.search(

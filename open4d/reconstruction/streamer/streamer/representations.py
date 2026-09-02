@@ -7,20 +7,18 @@ of clip kinds, so a new representation meant touching unrelated files and
 discovering the omissions at runtime -- a ``.obj`` arriving as ``text/html``,
 say, which fails as a parse error rather than as a missing registration.
 
-A spec is deliberately small. It answers only the questions transport actually
-has:
+A spec is deliberately small, and got smaller when `streamer.codecs` arrived.
+It answers one question -- whether the bundled client can *render* this
+representation today -- and derives the rest:
 
-* which file suffixes are frames of this representation, and what
-  ``Content-Type`` each must be served as;
-* whether the bundled client can render it *today*.
-
-Everything else about a representation lives elsewhere on purpose.
-``has_geometry`` -- whether a free camera is meaningful -- is
-`open4d.core.Representation`'s to answer and is read from there rather than
-copied, because a second copy is a second opinion. How a frame is *decoded* is
-the client's business, and for some representations cannot be the streamer's at
-all: ReRF's entropy coder exists only as a CPython 3.8 binary, which is why
-``pixels`` is a first-class representation rather than a fallback.
+* ``has_geometry``, whether a free camera is meaningful, is
+  `open4d.core.Representation`'s to answer and is read from there rather than
+  copied, because a second copy is a second opinion.
+* ``media_types`` used to be listed here per representation, which duplicated
+  what the codec registry knows and let the two disagree. It is now derived
+  from `streamer.codecs`: a suffix is a property of a codec, not of a
+  representation, and the same ``.ply`` is three different codecs depending on
+  which representation is asking.
 
 ``playable`` is a property of this repository's client, not of the
 representation: a bundle declaring something the client cannot draw is reported
@@ -43,29 +41,17 @@ _OCTET = "application/octet-stream"
 
 @dataclass(frozen=True)
 class RepresentationSpec:
-    """Transport-level facts about one representation."""
+    """What the client can do with one representation."""
 
     representation: Representation
-    #: Frame-file suffix (lowercase, with the dot) -> ``Content-Type``.
-    media_types: Mapping[str, str]
     #: Whether the client packaged in `streamer.client` can render it today.
     playable: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.representation, Representation):
             raise TypeError("representation must be an open4d.core.Representation")
-        if not isinstance(self.media_types, Mapping) or not self.media_types:
-            raise ValueError("media_types must be a non-empty mapping")
-        cleaned: dict[str, str] = {}
-        for suffix, media_type in self.media_types.items():
-            if not isinstance(suffix, str) or not suffix.startswith("."):
-                raise ValueError(f"suffix {suffix!r} must start with a dot")
-            if not isinstance(media_type, str) or not media_type:
-                raise ValueError(f"media type for {suffix!r} must be a non-empty string")
-            cleaned[suffix.lower()] = media_type
         if not isinstance(self.playable, bool):
             raise TypeError("playable must be bool")
-        object.__setattr__(self, "media_types", MappingProxyType(cleaned))
 
     @property
     def name(self) -> str:
@@ -76,6 +62,28 @@ class RepresentationSpec:
     def has_geometry(self) -> bool:
         """Read from core, never stored: one definition, one answer."""
         return self.representation.has_geometry
+
+    @property
+    def media_types(self) -> Mapping[str, str]:
+        """Suffix -> ``Content-Type``, from the codecs that produce this.
+
+        Derived rather than declared: a suffix belongs to a codec. Listing them
+        here as well is how the registry and the server came to disagree about
+        what a ``.drc`` was.
+        """
+        from . import codecs
+
+        return MappingProxyType({
+            spec.suffix: spec.media_type
+            for spec in codecs.for_representation(self.representation)
+        })
+
+    @property
+    def codecs(self) -> tuple:
+        """Every codec producing this representation; see `streamer.codecs`."""
+        from . import codecs as registry
+
+        return registry.for_representation(self.representation)
 
 
 _REGISTRY: dict[Representation, RepresentationSpec] = {}
@@ -127,62 +135,22 @@ def playable() -> tuple[RepresentationSpec, ...]:
 
 
 def media_types() -> dict[str, str]:
-    """Every registered suffix, merged, for a server's extension map.
+    """Every suffix any codec produces, for a server's extension map.
 
-    A suffix shared by several representations -- ``.ply`` is a mesh, a point
-    cloud and a Gaussian cloud -- is fine as long as they agree on the type,
-    which is checked rather than assumed: disagreement here would mean a frame's
-    ``Content-Type`` depended on registration order.
+    Kept here as well as in `streamer.codecs` because this is where the server
+    has always asked; it is now a delegation rather than a second list.
     """
-    merged: dict[str, str] = {}
-    for item in known():
-        for suffix, media_type in item.media_types.items():
-            existing = merged.get(suffix)
-            if existing is not None and existing != media_type:
-                raise ValueError(
-                    f"{suffix!r} is registered as both {existing!r} and "
-                    f"{media_type!r}; a suffix must have one Content-Type"
-                )
-            merged[suffix] = media_type
-    return merged
+    from . import codecs
+
+    return codecs.media_types()
 
 
 # ------------------------------------------------------------- the defaults ---
-# Registered here rather than by the modules that produce them, so that a server
-# started against a bundle it did not write still knows how to send its frames.
+# One line each, now that suffixes live with the codecs that produce them. What
+# is left is the single claim this module makes: the packaged client can render
+# all four.
 
-register(
-    RepresentationSpec(
-        representation=Representation.GAUSSIANS,
-        # `.splat` is the quantised form; the client parses `.ply` today.
-        media_types={".ply": _OCTET, ".splat": _OCTET},
-    )
-)
-register(
-    RepresentationSpec(
-        representation=Representation.PIXELS,
-        media_types={".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"},
-    )
-)
-register(
-    RepresentationSpec(
-        representation=Representation.MESH,
-        # `.ply` is the interchange form and `.drc` the compressed one the
-        # client also decodes -- 12.9x smaller on this repository's mesh
-        # sequence. `.obj` and `.glb` are registered so a bundle carrying them
-        # is served with a sensible type rather than as markup, which is a
-        # separate question from whether anything can render them.
-        media_types={
-            ".ply": _OCTET,
-            ".drc": _OCTET,
-            ".obj": "model/obj",
-            ".glb": "model/gltf-binary",
-        },
-    )
-)
-register(
-    RepresentationSpec(
-        representation=Representation.POINTS,
-        media_types={".ply": _OCTET, ".drc": _OCTET},
-    )
-)
+register(RepresentationSpec(representation=Representation.GAUSSIANS))
+register(RepresentationSpec(representation=Representation.PIXELS))
+register(RepresentationSpec(representation=Representation.MESH))
+register(RepresentationSpec(representation=Representation.POINTS))

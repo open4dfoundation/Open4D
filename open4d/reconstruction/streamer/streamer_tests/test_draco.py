@@ -275,7 +275,13 @@ def decode_with_client(frame: Path, tmp_path: Path) -> dict:
                 "loadDraco",
                 "parseDraco",
                 "parseMeshPly",
-                "parseGeometryFrame",
+                "CODECS",
+                "suffixOf",
+                "codecFor",
+                "decodeFrame",
+                "parsePly",
+                "parseSplat",
+                "decodeImage",
             )
         )
         + textwrap.dedent(
@@ -283,7 +289,7 @@ def decode_with_client(frame: Path, tmp_path: Path) -> dict:
             (async () => {{
               const b = fs.readFileSync({str(frame)!r});
               const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
-              const parsed = await parseGeometryFrame(ab, {str(frame)!r});
+              const parsed = await decodeFrame("mesh")(ab, {str(frame)!r});
               process.stdout.write(JSON.stringify({{
                 count: parsed.count,
                 triangles: parsed.indices.length / 3,
