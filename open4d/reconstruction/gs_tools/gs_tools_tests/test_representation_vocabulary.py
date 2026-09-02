@@ -29,10 +29,15 @@ def _viewer_source() -> str:
     return viewer_path().read_text()
 
 
+def _worker_source() -> str:
+    """The decode worker, which is where the geometry codecs live."""
+    return (viewer_path().parent / "worker.js").read_text()
+
+
 def _codec_table(source: str) -> dict[str, set[str]]:
     """The client's CODECS table: representation -> the suffixes it decodes."""
     body = re.search(r"const CODECS = \{(.*?)\n\};", source, re.DOTALL)
-    assert body, "CODECS table not found in the viewer"
+    assert body, "CODECS table not found"
     found: dict[str, set[str]] = {}
     for name, entries in re.findall(
         r"^  (\w+):\s*\{(.*?)\},$", body.group(1), re.MULTILINE
@@ -44,29 +49,58 @@ def _codec_table(source: str) -> dict[str, set[str]]:
 def test_the_client_decodes_exactly_what_the_codec_registry_promises():
     """Python says a `.drc` mesh is client-decodable; the client must agree.
 
-    These are two hand-maintained tables in two languages -- a Python registry
-    that tells a producer what it may write, and a JavaScript one that decides
-    what actually parses. A promise on one side with no parser on the other is a
-    blank pane, which is the failure mode this whole registry exists to remove.
+    Two hand-maintained tables in two languages -- a Python registry that tells a
+    producer what it may write, and a JavaScript one that decides what actually
+    parses. A promise on one side with no parser on the other is a blank pane,
+    which is the failure this registry exists to remove.
+
+    Geometry is decoded in the worker and pixels on the main thread, so the two
+    halves are checked separately rather than against one table. That split is
+    deliberate: an `<img>` needs the main thread, and a browser already decodes
+    one off it.
     """
     from streamer import codecs
 
-    client = _codec_table(_viewer_source())
+    worker = _codec_table(_worker_source())
     for representation in Representation:
-        promised = {
-            spec.suffix for spec in codecs.client_decodable(representation)
-        }
-        assert client.get(representation.value, set()) == promised, representation
+        promised = {spec.suffix for spec in codecs.client_decodable(representation)}
+        if representation.has_geometry:
+            assert worker.get(representation.value, set()) == promised, representation
+        else:
+            # Pixels never reach the worker.
+            assert representation.value not in worker
+
+
+def test_the_page_decodes_pixels_and_delegates_the_rest():
+    """The other half of the split, so neither side is left unasserted."""
+    from streamer import codecs
+
+    page = _viewer_source()
+    table = re.search(r"const REPRESENTATIONS = \{(.*?)\n\};", page, re.DOTALL)
+    assert table, "REPRESENTATIONS not found in the page"
+    for name, body in re.findall(
+        r"^  (\w+): \{(.*?)^  \},$", table.group(1), re.MULTILINE | re.DOTALL
+    ):
+        if Representation(name).has_geometry:
+            assert f'decodeFrame("{name}")' in body, name
+        else:
+            assert "decodeImage" in body, name
+    # And the suffixes Python promises for pixels are the ones decodeImage gets.
+    assert {spec.suffix for spec in codecs.client_decodable("pixels")} == {
+        ".jpg", ".jpeg", ".png"
+    }
 
 
 def test_the_client_does_not_decode_what_python_says_is_server_side():
     """ReRF can never decode in a browser; a parser for it would be a lie."""
     from streamer import codecs
 
-    client = _codec_table(_viewer_source())
+    worker = _codec_table(_worker_source())
+    page = _viewer_source()
     for spec in codecs.known():
         if spec.decodes == "server":
-            assert spec.suffix not in client.get(spec.representation.value, set())
+            assert spec.suffix not in worker.get(spec.representation.value, set())
+            assert spec.suffix not in page
 
 
 def _registry_keys(source: str) -> set[str]:
