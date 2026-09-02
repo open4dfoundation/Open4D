@@ -12,6 +12,7 @@ streamer/
   representations.py   what transport needs to know about a representation
   bundle.py            the view.json contract, shared by both sides
   monitor.py           what actually went over the wire
+  export.py            any open4d.Sequence as a bundle
   server/              sending
   client/              playback: one self-contained browser page
 ```
@@ -34,14 +35,17 @@ from streamer.representations import RepresentationSpec, register
 register(RepresentationSpec(
     representation=Representation.MESH,
     media_types={".drc": "application/octet-stream"},
-    playable=False,          # no renderer in this repo's client yet
 ))
 ```
 
 That is all. The server builds its extension map from the registry, so frames
-get the right `Content-Type` without an edit; the client keys its renderers off
-the same names; and `playable=False` makes a bundle report "no renderer for
-mesh" instead of showing an empty pane.
+get the right `Content-Type` without an edit, and the client keys its renderers
+off the same names.
+
+Every representation core defines is playable today, so nothing passes
+`playable=False`. The flag stays because the next representation will arrive
+before its renderer does, and a bundle declaring something the client cannot
+draw should report "no renderer for X" rather than show an empty pane.
 
 A spec answers only what transport actually asks. It does **not** carry
 `has_geometry` — whether a free camera is meaningful is
@@ -50,6 +54,34 @@ opinion. It does not describe decoding, which is the client's business and for
 some representations cannot be ours at all: ReRF's entropy coder exists only as
 a CPython 3.8 binary, which is why `pixels` is a first-class representation
 rather than a fallback.
+
+## Playing Open4D's own sequences
+
+`export.from_source` hands anything `open4d.load` reads to the client, so a mesh
+sequence gets the same viewport, camera and scrubbing a Gaussian one does:
+
+```python
+from streamer import from_source
+from_source("captures/basketball_player", "~/bundles/basketball", fps=10)
+```
+
+Whether a clip is `mesh` or `points` is read from the geometry, not the file
+extension -- both write `.ply`. Frames come from `open4d.io.write_sequence`,
+which already emits one `frame_NNNNNN.ply` per frame, so this chooses the
+representation, records bounds over the whole clip and hands the rest to code
+that already existed.
+
+The renderer is flat-shaded from screen-space derivatives rather than from
+stored normals: Open4D's PLY writer refuses to store normals, and a normal
+derived in the fragment shader is right for whatever geometry actually arrived.
+Point clouds are shaded as small spheres from the point sprite's own
+coordinates. A mesh frame carrying no faces falls through to points rather than
+drawing nothing.
+
+Verified on the 10-frame `basketball_player` OBJ sequence the TVMC codec
+vendors -- ~20k vertices and ~39k triangles a frame, loaded through
+`open4d.load`, parsed by the shipped client under Node in
+`streamer_tests/test_client_parsers.py`.
 
 ## Sending, receiving, measuring
 
@@ -93,9 +125,12 @@ Both bitstreams in this repository currently declare a single group spanning
 every frame, so a cold seek to the last of 30 frames costs 30 decodes. That is
 the kind of thing the model is for: it was invisible before.
 
-**A mesh or point renderer.** Both have geometry in core and are registered
-here; neither has a WebGL renderer yet, which is the one thing standing between
-Open4D's mesh sequences and this client.
+**A held-out camera, and numbers.** Compare puts several methods at one rig
+pose, which is the mode a PSNR or SSIM figure could attach to, and nothing
+computes one yet. Two caveats have to travel with it when it lands: every rig
+camera was a training view for both Vega and ReRF, so this measures
+reconstruction rather than generalisation, and ReRF renders at different
+intrinsics from the captured pane.
 
 ## Tests
 
@@ -103,4 +138,6 @@ Open4D's mesh sequences and this client.
 python -m pytest streamer_tests -q
 ```
 
-No GPU, no display, no dataset.
+No GPU, no display, no dataset. The client's frame parsers are run as shipped,
+cut out of `viewer.html` and executed under Node — those cases skip if `node` is
+absent, which is stated rather than silently covering less.

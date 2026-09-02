@@ -490,10 +490,16 @@ def _write_frame(
     path: Path, frame: Frame, suffix: str, *, allow_lossy: bool = False
 ) -> Path:
     mesh = frame.geometry
-    present = {"positions", "triangles"}
+    # Not every representation has connectivity: a PointCloud carries positions
+    # and nothing to join them with, and `getattr` rather than attribute access
+    # is what lets one writer serve both without asking which it has.
+    triangles = getattr(mesh, "triangles", None)
+    present = {"positions"}
+    if triangles is not None:
+        present.add("triangles")
     present.update(
         name for name in ("colors", "normals", "texture_coordinates")
-        if getattr(mesh, name) is not None
+        if getattr(mesh, name, None) is not None
     )
     present.update(mesh.attributes)
     unsupported = sorted(present - _OUTPUT_FIELDS[suffix])
@@ -508,13 +514,11 @@ def _write_frame(
         )
     try:
         if suffix == ".obj":
-            return _mesh.write_obj(path, mesh.positions, mesh.triangles)
+            return _mesh.write_obj(path, mesh.positions, triangles)
         if suffix == ".ply":
-            return _mesh.write_ply(
-                path, mesh.positions, mesh.triangles, mesh.colors
-            )
+            return _mesh.write_ply(path, mesh.positions, triangles, mesh.colors)
         return _mesh.write_with_trimesh(
-            path, mesh.positions, mesh.triangles, mesh.colors
+            path, mesh.positions, triangles, mesh.colors
         )
     except ImportError as error:
         raise MissingDependencyError(str(error)) from error

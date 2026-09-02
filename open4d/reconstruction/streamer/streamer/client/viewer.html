@@ -639,10 +639,15 @@ function parseSplat(buffer) {
 
     const sx = floats[f + 3], sy = floats[f + 4], sz = floats[f + 5];
 
-    const qw = (bytes[b + 28] - 128) / 128;
-    const qx = (bytes[b + 29] - 128) / 128;
-    const qy = (bytes[b + 30] - 128) / 128;
-    const qz = (bytes[b + 31] - 128) / 128;
+    // Renormalised: the quantisation is not symmetric, so q = 1 encodes as 256,
+    // clamps to 255 and arrives as 0.992. Skipping this scales every Gaussian by
+    // ~1.6% -- small enough to look fine and still be wrong.
+    let qw = (bytes[b + 28] - 128) / 128;
+    let qx = (bytes[b + 29] - 128) / 128;
+    let qy = (bytes[b + 30] - 128) / 128;
+    let qz = (bytes[b + 31] - 128) / 128;
+    const norm = Math.hypot(qw, qx, qy, qz) || 1;
+    qw /= norm; qx /= norm; qy /= norm; qz /= norm;
 
     const r00 = 1 - 2 * (qy * qy + qz * qz), r01 = 2 * (qx * qy - qw * qz), r02 = 2 * (qx * qz + qw * qy);
     const r10 = 2 * (qx * qy + qw * qz), r11 = 1 - 2 * (qx * qx + qz * qz), r12 = 2 * (qy * qz - qw * qx);
@@ -670,6 +675,352 @@ function parseSplat(buffer) {
   return { count, data, colors, positions };
 }
 
+/* A mesh or point-cloud frame, as `open4d.io.write_sequence` writes it: a
+ * binary_little_endian PLY with a vertex element and, for a mesh, a face
+ * element of `list uchar int vertex_indices`.
+ *
+ * A general-enough PLY reader rather than the fixed-stride one parsePly uses,
+ * because these headers genuinely vary: colour is float in Open4D's canon (see
+ * open4d.core.dtypes) but uchar in most files from elsewhere, and a face list
+ * is variable-length, so neither element has a stride known up front.
+ *
+ * Normals are not read. Open4D's PLY writer refuses to store them, and the
+ * renderer derives a face normal from screen-space derivatives instead, which
+ * works for any mesh regardless of what its producer chose to carry. */
+function parseMeshPly(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const limit = Math.min(bytes.length, 1 << 16);
+  const head = new TextDecoder("ascii").decode(bytes.subarray(0, limit));
+  const marker = head.indexOf("end_header");
+  if (marker < 0) throw new Error("not a PLY: no end_header in the first 64 KiB");
+  const dataStart = head.indexOf("\n", marker) + 1;
+  const lines = head.slice(0, marker).split("\n").map((line) => line.trim());
+  if (!lines.some((line) => line.startsWith("format binary_little_endian"))) {
+    throw new Error("only binary_little_endian PLY is supported");
+  }
+
+  const SIZES = { char: 1, int8: 1, uchar: 1, uint8: 1, short: 2, int16: 2,
+                  ushort: 2, uint16: 2, int: 4, int32: 4, uint: 4, uint32: 4,
+                  float: 4, float32: 4, double: 8, float64: 8 };
+  const elements = [];
+  for (const line of lines) {
+    const parts = line.split(/\s+/);
+    if (parts[0] === "element") {
+      elements.push({ name: parts[1], count: parseInt(parts[2], 10), properties: [] });
+    } else if (parts[0] === "property" && elements.length) {
+      const element = elements[elements.length - 1];
+      if (parts[1] === "list") {
+        element.properties.push({ list: true, countType: parts[2], type: parts[3], name: parts[4] });
+      } else {
+        element.properties.push({ list: false, type: parts[1], name: parts[2] });
+      }
+    }
+  }
+
+  const view = new DataView(buffer);
+  let offset = dataStart;
+  const read = (type) => {
+    switch (type) {
+      case "char": case "int8": return view.getInt8(offset++);
+      case "uchar": case "uint8": return view.getUint8(offset++);
+      case "short": case "int16": { const v = view.getInt16(offset, true); offset += 2; return v; }
+      case "ushort": case "uint16": { const v = view.getUint16(offset, true); offset += 2; return v; }
+      case "int": case "int32": { const v = view.getInt32(offset, true); offset += 4; return v; }
+      case "uint": case "uint32": { const v = view.getUint32(offset, true); offset += 4; return v; }
+      case "float": case "float32": { const v = view.getFloat32(offset, true); offset += 4; return v; }
+      case "double": case "float64": { const v = view.getFloat64(offset, true); offset += 8; return v; }
+      default: throw new Error(`unsupported PLY property type ${type}`);
+    }
+  };
+
+  let count = 0;
+  let positions = null, colors = null;
+  const faces = [];
+
+  for (const element of elements) {
+    if (element.name === "vertex") {
+      count = element.count;
+      const names = element.properties.map((property) => property.name);
+      if (!["x", "y", "z"].every((need) => names.includes(need))) {
+        throw new Error("PLY vertex element has no x/y/z");
+      }
+      // Colour is float in [0, 1] when Open4D wrote it and uchar in [0, 255]
+      // when most other tools did; the property type says which.
+      const colourNames = names.includes("red") ? ["red", "green", "blue"]
+                        : names.includes("r") ? ["r", "g", "b"] : null;
+      const colourType = colourNames
+        ? element.properties.find((property) => property.name === colourNames[0]).type
+        : null;
+      const byteScale = colourType && SIZES[colourType] === 1 ? 1 : 255;
+      positions = new Float32Array(count * 3);
+      if (colourNames) colors = new Uint8Array(count * 4);
+      for (let i = 0; i < count; i++) {
+        const row = {};
+        for (const property of element.properties) {
+          if (property.list) {
+            const n = read(property.countType);
+            for (let k = 0; k < n; k++) read(property.type);
+          } else {
+            row[property.name] = read(property.type);
+          }
+        }
+        positions[i * 3] = row.x; positions[i * 3 + 1] = row.y; positions[i * 3 + 2] = row.z;
+        if (colourNames) {
+          for (let c = 0; c < 3; c++) {
+            const value = row[colourNames[c]] * byteScale;
+            colors[i * 4 + c] = Math.max(0, Math.min(255, Math.round(value)));
+          }
+          colors[i * 4 + 3] = 255;
+        }
+      }
+    } else {
+      for (let i = 0; i < element.count; i++) {
+        for (const property of element.properties) {
+          if (property.list) {
+            const n = read(property.countType);
+            const indices = [];
+            for (let k = 0; k < n; k++) indices.push(read(property.type));
+            // Triangle fan, so a quad or an n-gon renders rather than being
+            // dropped. Open4D only writes triangles; other producers do not.
+            for (let k = 2; k < indices.length; k++) {
+              faces.push(indices[0], indices[k - 1], indices[k]);
+            }
+          } else {
+            read(property.type);
+          }
+        }
+      }
+    }
+  }
+
+  if (!count) throw new Error("PLY declares no vertices");
+  const indices = faces.length ? new Uint32Array(faces) : null;
+
+  const lower = [Infinity, Infinity, Infinity];
+  const upper = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < count; i++) {
+    for (let c = 0; c < 3; c++) {
+      const value = positions[i * 3 + c];
+      if (value < lower[c]) lower[c] = value;
+      if (value > upper[c]) upper[c] = value;
+    }
+  }
+  return { count, positions, colors, indices, bounds: [lower, upper] };
+}
+
+/* --------------------------------------------------- mesh / point shaders ---
+ * Same camera math as the splat path -- eye plus a (right, down, forward) basis
+ * and a focal length in pixels -- so a mesh pane and a splat pane of the same
+ * scene agree geometrically. What differs is that this writes a real depth and
+ * runs the depth test: triangles occlude, where splats are blended in sorted
+ * order and never do. */
+const MESH_VERTEX_SHADER = `#version 300 es
+precision highp float;
+
+uniform vec3 uEye;
+uniform vec3 uRight;
+uniform vec3 uDown;
+uniform vec3 uForward;
+uniform vec2 uFocal;
+uniform vec2 uViewport;
+uniform vec2 uDepthRange;   // near, far
+uniform float uPointSize;
+
+in vec3 aPosition;
+in vec4 aColor;
+
+out vec3 vWorld;
+out vec4 vColor;
+
+void main() {
+  vWorld = aPosition;
+  vColor = aColor;
+  vec3 p = aPosition - uEye;
+  vec3 cam = vec3(dot(p, uRight), dot(p, uDown), dot(p, uForward));
+  float near = uDepthRange.x, far = uDepthRange.y;
+  if (cam.z < near) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+
+  // The perspective divide rides in w, so interpolation stays perspective
+  // correct and the depth buffer gets the usual hyperbolic z.
+  vec2 px = vec2(uFocal.x * cam.x, uFocal.y * cam.y);
+  vec2 toNdc = vec2(2.0 / uViewport.x, -2.0 / uViewport.y);
+  float clipZ = (cam.z * (far + near) - 2.0 * far * near) / (far - near);
+  gl_Position = vec4(px * toNdc, clipZ, cam.z);
+  gl_PointSize = uPointSize;
+}
+`;
+
+const MESH_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+uniform vec3 uEye;
+uniform int uMode;          // 0 = triangles, 1 = points
+uniform float uAmbient;
+
+in vec3 vWorld;
+in vec4 vColor;
+out vec4 fragColor;
+
+void main() {
+  vec3 toEye = normalize(uEye - vWorld);
+  vec3 normal;
+  if (uMode == 1) {
+    // A point has no surface to differentiate, so it is shaded as a small
+    // sphere: the disc's own coordinates stand in for a normal, which reads as
+    // round rather than as a flat chip.
+    vec2 disc = gl_PointCoord * 2.0 - 1.0;
+    float squared = dot(disc, disc);
+    if (squared > 1.0) discard;
+    normal = normalize(vec3(disc.x, -disc.y, sqrt(max(1.0 - squared, 0.0))));
+  } else {
+    // Flat shading from screen-space derivatives. No CPU normals and none in
+    // the file: Open4D's PLY writer refuses to store them, and a normal derived
+    // here is correct for whatever geometry actually arrived.
+    normal = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+    if (dot(normal, toEye) < 0.0) normal = -normal;
+  }
+  float lambert = uAmbient + (1.0 - uAmbient) * max(dot(normal, toEye), 0.0);
+  fragColor = vec4(vColor.rgb * lambert, 1.0);
+}
+`;
+
+/* Triangles and points, sharing one program. Same interface as SplatRenderer --
+ * upload / sort / draw -- so a Pane does not know which it is holding; `sort`
+ * is a no-op here because the depth buffer does that job. */
+class MeshRenderer {
+  constructor(gl, mode) {
+    this.gl = gl;
+    this.mode = mode === "points" ? 1 : 0;
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, MESH_VERTEX_SHADER));
+    gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, MESH_FRAGMENT_SHADER));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program) || "program link failed");
+    }
+    this.program = program;
+    this.uniform = {};
+    for (const name of ["uEye", "uRight", "uDown", "uForward", "uFocal",
+                        "uViewport", "uDepthRange", "uPointSize", "uMode",
+                        "uAmbient"]) {
+      this.uniform[name] = gl.getUniformLocation(program, name);
+    }
+    this.positionBuffer = gl.createBuffer();
+    this.colorBuffer = gl.createBuffer();
+    this.indexBuffer = gl.createBuffer();
+    this.count = 0;
+    this.indexCount = 0;
+    this.bounds = null;
+  }
+
+  upload(parsed) {
+    const gl = this.gl;
+    this.count = parsed.count;
+    this.bounds = parsed.bounds;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, parsed.positions, gl.DYNAMIC_DRAW);
+
+    // A mesh with no colour is drawn in the same near-white the Qt sequence
+    // viewer uses, so the two do not disagree about what an uncoloured mesh
+    // looks like.
+    const colors = parsed.colors || (() => {
+      const flat = new Uint8Array(parsed.count * 4);
+      for (let i = 0; i < parsed.count; i++) {
+        flat[i * 4] = 242; flat[i * 4 + 1] = 242; flat[i * 4 + 2] = 247;
+        flat[i * 4 + 3] = 255;
+      }
+      return flat;
+    })();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
+
+    this.indexCount = parsed.indices ? parsed.indices.length : 0;
+    if (this.indexCount) {
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, parsed.indices, gl.DYNAMIC_DRAW);
+    }
+  }
+
+  /* Nothing to do: the depth buffer resolves occlusion, which is the whole
+   * reason a mesh does not need the far-to-near ordering a splat does. */
+  sort() {}
+
+  /* Near and far from the frame's own bounding box, so a scene of any scale
+   * gets usable depth precision instead of a guessed constant. */
+  _depthRange(eye) {
+    if (!this.bounds) return [0.01, 100.0];
+    const [lower, upper] = this.bounds;
+    let near = Infinity, far = 0;
+    for (let corner = 0; corner < 8; corner++) {
+      const point = [
+        (corner & 1) ? upper[0] : lower[0],
+        (corner & 2) ? upper[1] : lower[1],
+        (corner & 4) ? upper[2] : lower[2],
+      ];
+      const distance = Math.hypot(point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]);
+      near = Math.min(near, distance);
+      far = Math.max(far, distance);
+    }
+    // The eye can be inside the box, so the near plane cannot simply be the
+    // closest corner.
+    return [Math.max(near * 0.5, far * 1e-4, 1e-4), far * 2 + 1e-3];
+  }
+
+  draw(camera, rect, canvasSize) {
+    const gl = this.gl;
+    gl.viewport(0, 0, canvasSize[0], canvasSize[1]);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.clearColor(0.043, 0.047, 0.059, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (!this.count) return;
+
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(rect[0], rect[1], rect[2], rect[3]);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(rect[0], rect[1], rect[2], rect[3]);
+
+    gl.useProgram(this.program);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+
+    const position = gl.getAttribLocation(this.program, "aPosition");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 3, gl.FLOAT, false, 0, 0);
+
+    const color = gl.getAttribLocation(this.program, "aColor");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.enableVertexAttribArray(color);
+    gl.vertexAttribPointer(color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+    const depth = this._depthRange(camera.eye);
+    gl.uniform3fv(this.uniform.uEye, camera.eye);
+    gl.uniform3fv(this.uniform.uRight, camera.right);
+    gl.uniform3fv(this.uniform.uDown, camera.down);
+    gl.uniform3fv(this.uniform.uForward, camera.forward);
+    gl.uniform2f(this.uniform.uFocal, camera.focal[0], camera.focal[1]);
+    gl.uniform2f(this.uniform.uViewport, rect[2], rect[3]);
+    gl.uniform2f(this.uniform.uDepthRange, depth[0], depth[1]);
+    gl.uniform1f(this.uniform.uPointSize, 3.0);
+    gl.uniform1i(this.uniform.uMode, this.mode);
+    gl.uniform1f(this.uniform.uAmbient, 0.32);
+
+    if (this.mode === 0 && this.indexCount) {
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+      gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
+    } else {
+      // A mesh clip whose frames carry no faces still has vertices worth
+      // showing, so it falls through to points rather than drawing nothing.
+      gl.uniform1i(this.uniform.uMode, 1);
+      gl.drawArrays(gl.POINTS, 0, this.count);
+    }
+    gl.disable(gl.DEPTH_TEST);
+  }
+}
+
 /* ---------------------------------------------------- representations ---
  * What a decoded frame *is*, mirroring `open4d.core.Representation`. A
  * representation decides which source parses it, which surface shows it, and
@@ -682,10 +1033,23 @@ function parseSplat(buffer) {
  * a clip declaring one is reported as unplayable rather than rendering blank.
  */
 const REPRESENTATIONS = {
+  mesh: {
+    geometry: true,
+    surface: "canvas",
+    source: (clip, root) => new GeometryClip(clip, root, parseMeshPly),
+    renderer: (gl) => new MeshRenderer(gl, "mesh"),
+  },
+  points: {
+    geometry: true,
+    surface: "canvas",
+    source: (clip, root) => new GeometryClip(clip, root, parseMeshPly),
+    renderer: (gl) => new MeshRenderer(gl, "points"),
+  },
   gaussians: {
     geometry: true,
     surface: "canvas",
-    source: (clip, root) => new SplatClip(clip, root),
+    source: (clip, root) => new GeometryClip(clip, root, parseGaussianFrame),
+    renderer: (gl) => new SplatRenderer(gl),
   },
   pixels: {
     geometry: false,
@@ -693,6 +1057,12 @@ const REPRESENTATIONS = {
     source: (clip, root) => new ImageClip(clip, root),
   },
 };
+
+/* A Gaussian frame arrives as 3DGS PLY or as quantised .splat; both parse to
+ * one shape, so nothing below here knows which it got. */
+function parseGaussianFrame(buffer, url) {
+  return url.toLowerCase().endsWith(".splat") ? parseSplat(buffer) : parsePly(buffer);
+}
 
 /* view.json v1 called these `kind`. Bundles already on disk are worth keeping
  * readable, so the field is migrated on load rather than requiring a re-export. */
@@ -703,10 +1073,14 @@ function playable(clip) { return spec(clip) !== undefined; }
 function hasGeometry(clip) { const s = spec(clip); return s !== undefined && s.geometry; }
 function isPixels(clip) { const s = spec(clip); return s !== undefined && !s.geometry; }
 
-class SplatClip {
-  constructor(clip, root) {
+/* Any representation whose frames are parsed into vertex data, whatever the
+ * format: the parser is handed in by the representation, so a new one needs an
+ * entry in REPRESENTATIONS and nothing here. */
+class GeometryClip {
+  constructor(clip, root, parse) {
     this.clip = clip;
     this.root = root;
+    this.parse = parse;
     this.cache = new Map();
     this.pending = new Map();
   }
@@ -718,10 +1092,7 @@ class SplatClip {
     const url = this.root + this.clip.frames[index];
     const task = fetch(url).then(async (response) => {
       if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-      const buffer = await response.arrayBuffer();
-      const parsed = url.toLowerCase().endsWith(".splat")
-        ? parseSplat(buffer)
-        : parsePly(buffer);
+      const parsed = this.parse(await response.arrayBuffer(), url);
       this.pending.delete(index);
       this.cache.set(index, parsed);
       // A parsed frame is ~50 bytes a Gaussian, so a handful is tens of MB and
@@ -786,19 +1157,28 @@ class Pane {
     this.clip = null;
     this.source = null;
     this.renderer = null;
+    this.rendererKind = null;
+    this.gl = null;
     this.canvas = null;
     this.image = null;
     this.loaded = -1;
     this.sortKey = "";
   }
 
-  _surface(which) {
+  _surface(which, makeRenderer) {
     if (which === "canvas" && !this.canvas) {
       this.canvas = document.createElement("canvas");
       this.host.appendChild(this.canvas);
       const gl = this.canvas.getContext("webgl2", { antialias: false, premultipliedAlpha: true });
       if (!gl) throw new Error("WebGL2 unavailable");
-      this.renderer = new SplatRenderer(gl);
+      this.gl = gl;
+    }
+    // The renderer is per representation, and a pane's representation changes
+    // when its clip does -- so it is rebuilt when the kind of renderer needed
+    // changes, on the one canvas rather than a new context per switch.
+    if (which === "canvas" && makeRenderer && this.rendererKind !== makeRenderer.kind) {
+      this.renderer = makeRenderer(this.gl);
+      this.rendererKind = makeRenderer.kind;
     }
     if (which === "image" && !this.image) {
       this.image = document.createElement("img");
@@ -830,7 +1210,9 @@ class Pane {
       return;
     }
     const kind = spec(clip);
-    this._surface(kind.surface);
+    const make = kind.renderer;
+    if (make) make.kind = clip.representation;
+    this._surface(kind.surface, make);
     this.source = kind.source(clip, "./");
     this.label.textContent = clip.camera === null || clip.camera === undefined
       ? this.method : `${this.method} · cam ${clip.camera}`;
@@ -841,11 +1223,12 @@ class Pane {
    * that goes away has to say so, or a few method changes silently exhaust the
    * budget and the surviving canvases start losing their contexts. */
   dispose() {
-    if (this.renderer) {
-      const lose = this.renderer.gl.getExtension("WEBGL_lose_context");
+    if (this.gl) {
+      const lose = this.gl.getExtension("WEBGL_lose_context");
       if (lose) lose.loseContext();
-      this.renderer = null;
     }
+    this.renderer = null;
+    this.gl = null;
     this.host.remove();
   }
 

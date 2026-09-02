@@ -197,7 +197,10 @@ def serve(
     clips = index.get("clips", [])
     print(f"{index.get('title', bundle_dir.name)}")
     for clip in clips:
-        print(f"  {clip['name']:<28} {len(clip.get('frames', []))} frames  ({clip.get('kind')})")
+        print(
+            f"  {clip['name']:<28} {len(clip.get('frames', []))} frames"
+            f"  ({clip.get('representation')})"
+        )
     print(f"\nserving {bundle_dir}\n  {url}")
     print(f"  counters at {url.rstrip('/')}{STATS_ROUTE}")
     if host in ("0.0.0.0", "::", ""):

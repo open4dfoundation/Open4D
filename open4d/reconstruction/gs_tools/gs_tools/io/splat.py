@@ -16,6 +16,11 @@ byte range   type    meaning
 ``28..31``   4u8     rotation ``(w, x, y, z)``, ``round(q * 128) + 128``
 ===========  ======  =======================================================
 
+The rotation encoding is not symmetric: ``q = 1`` would be 256, which clamps to
+255 and comes back as 0.992. A reader must therefore **renormalise** the
+quaternion, which both readers here do -- building a covariance from a non-unit
+one scales every Gaussian by about 1.6%.
+
 Three consequences worth stating plainly, because each is a real loss:
 
 * **Every SH band above degree 0 is dropped.** View-dependent appearance goes
@@ -109,9 +114,15 @@ def decode(data: bytes) -> GaussianCloud:
         raise ValueError(f"{len(data)} bytes is not a multiple of {SPLAT_BYTES}")
     payload = np.frombuffer(data, dtype=np.uint8).reshape(-1, SPLAT_BYTES)
     floats = payload[:, :24].copy().view(np.float32).reshape(-1, 6)
-    rotations = (
-        payload[:, 28:32].astype(np.float32) - QUANT_OFFSET
-    ) / QUANT_SCALE
+    # Renormalised, because the quantisation is not symmetric: w = 1 encodes as
+    # round(128) + 128 = 256, which clamps to 255 and decodes to 0.992. Without
+    # this the covariance is built from a non-unit quaternion and every Gaussian
+    # is scaled by ~1.6% -- small, wrong, and invisible until measured.
+    rotations = (payload[:, 28:32].astype(np.float32) - QUANT_OFFSET) / QUANT_SCALE
+    norms = np.linalg.norm(rotations, axis=1, keepdims=True)
+    rotations = np.divide(
+        rotations, norms, out=np.zeros_like(rotations), where=norms > 0
+    )
     return GaussianCloud(
         positions=floats[:, :3].copy(),
         scales=floats[:, 3:].copy(),
