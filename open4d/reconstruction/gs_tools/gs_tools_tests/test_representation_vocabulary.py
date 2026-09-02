@@ -1,0 +1,97 @@
+"""`streamer`, `gs_tools` and `open4d.core` must name representations alike.
+
+These drifted apart once already: the viewer had `splats`/`images` while core
+had only triangle meshes, and the cost was that adding a representation meant
+editing every function that touched a clip. The point of the shared vocabulary
+is that it stays shared, so it is asserted rather than trusted -- and now that
+the producer and the streaming module are separate packages, nothing but a test
+holds them to it.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+from open4d.core import Representation
+
+from streamer import bundle
+from streamer.client import viewer_path
+
+from gs_tools.methods import capture, rerf, vega
+
+CORE_VALUES = {member.value for member in Representation}
+
+
+def _viewer_source() -> str:
+    return viewer_path().read_text()
+
+
+def _registry_keys(source: str) -> set[str]:
+    """The keys of the viewer's REPRESENTATIONS object literal."""
+    body = re.search(
+        r"const REPRESENTATIONS = \{(.*?)\n\};", source, re.DOTALL
+    )
+    assert body, "REPRESENTATIONS literal not found in the viewer"
+    return set(re.findall(r"^  (\w+): \{", body.group(1), re.MULTILINE))
+
+
+def _legacy_map(source: str) -> dict[str, str]:
+    line = re.search(r"const LEGACY_KINDS = \{(.*?)\};", source)
+    assert line, "LEGACY_KINDS not found in the viewer"
+    return dict(re.findall(r"(\w+): \"(\w+)\"", line.group(1)))
+
+
+def test_viewer_only_knows_representations_core_defines():
+    """A key the viewer invents is a vocabulary fork; catch it here."""
+    assert _registry_keys(_viewer_source()) <= CORE_VALUES
+
+
+def test_viewer_renders_the_two_representations_the_exporters_emit():
+    assert _registry_keys(_viewer_source()) == {"gaussians", "pixels"}
+
+
+def test_geometry_flags_agree_with_core():
+    """`geometry:` in the viewer is `Representation.has_geometry`, not a second opinion."""
+    source = _viewer_source()
+    body = re.search(r"const REPRESENTATIONS = \{(.*?)\n\};", source, re.DOTALL)
+    for name, flag in re.findall(
+        r"^  (\w+): \{\n\s*geometry: (true|false),", body.group(1), re.MULTILINE
+    ):
+        assert Representation(name).has_geometry is (flag == "true"), name
+
+
+def test_legacy_kinds_migrate_onto_real_representations():
+    mapping = _legacy_map(_viewer_source())
+    assert mapping == {"splats": "gaussians", "images": "pixels"}
+    assert set(mapping.values()) <= CORE_VALUES
+
+
+@pytest.mark.parametrize(
+    ("module", "expected"),
+    [(vega, "gaussians"), (rerf, "pixels"), (capture, "pixels")],
+)
+def test_every_exporter_declares_a_core_representation(module, expected):
+    source = Path(module.__file__).read_text()
+    found = set(re.findall(r'representation="(\w+)"', source))
+    assert found == {expected}
+    assert found <= CORE_VALUES
+
+
+def test_no_exporter_still_writes_the_v1_field():
+    for module in (vega, rerf, capture):
+        assert 'kind="' not in Path(module.__file__).read_text()
+
+
+def test_bundle_version_was_bumped_for_the_field_rename():
+    """A v1 bundle carries `kind`; a reader has to be able to tell them apart."""
+    assert bundle.VERSION >= 2
+
+
+def test_clip_has_no_kind_field():
+    assert "kind" not in {field.name for field in bundle.dataclasses.fields(bundle.Clip)}
+    assert "representation" in {
+        field.name for field in bundle.dataclasses.fields(bundle.Clip)
+    }

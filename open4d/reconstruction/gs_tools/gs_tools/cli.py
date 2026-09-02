@@ -3,16 +3,30 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
-from . import env, paths, rast
+from streamer import bundle
+from streamer import server as view
+
+from . import env, outputs, paths, rast
 from .data import layouts
 from .io import manifest
-from .methods import base, gstream, queen
+from .methods import base, capture, gstream, queen, rerf, vega
 
 METHODS = {"queen": queen, "3dgstream": gstream}
+
+#: Output kinds each exporter claims, for `--method auto`.
+EXPORTERS = {
+    "vega": (vega, (outputs.Kind.VEGA_CATALOG, outputs.Kind.VEGA_BITSTREAM,
+                    outputs.Kind.VEGA_SCENE_EXPORT)),
+    "rerf": (rerf, (outputs.Kind.RERF_RUN, outputs.Kind.RERF_BITSTREAM,
+                    outputs.Kind.IMAGE_SEQUENCE)),
+    "captured": (capture, (outputs.Kind.ORBIT_CORPUS, outputs.Kind.ORBIT_SCENE)),
+}
 
 
 def _spec(args: argparse.Namespace) -> base.RunSpec:
@@ -79,6 +93,186 @@ def _cmd_manifest(args: argparse.Namespace) -> int:
         return 1
     json.dump(data, sys.stdout, indent=2, sort_keys=True)
     print()
+    return 0
+
+
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    found = [outputs.detect(Path(entry).expanduser()) for entry in args.input]
+    for detected in found:
+        print(f"{detected.root}\n  {outputs.describe(detected)}")
+    return 0 if all(detected.viewable for detected in found) else 1
+
+
+def _default_bundle_dir(sources: list[Path], kinds: list[outputs.Detected]) -> Path:
+    """Where a bundle goes when the user did not say.
+
+    Not beside the sources: these outputs live on data mounts that are shared,
+    read-mostly, or (for a Vega catalog) somebody else's results directory, and
+    an export is derived data that can be regenerated. The cache directory is
+    keyed by the absolute source paths, so re-exporting the same set reuses the
+    same place instead of accumulating copies, and a different set gets its own.
+    """
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    digest = hashlib.sha1("\n".join(str(source) for source in sources).encode()).hexdigest()[:8]
+    if len(sources) == 1:
+        name = f"{kinds[0].kind.value}-{sources[0].name}-{digest}"
+    else:
+        name = f"mixed-{len(sources)}-sources-{digest}"
+    return cache / "open4d-gs-tools" / "view" / name
+
+
+def _exporter(found: outputs.Detected, requested: str):
+    """The module that can export this output, or None if it needs none."""
+    if found.kind is outputs.Kind.BUNDLE:
+        return None
+    if requested != "auto":
+        return EXPORTERS[requested][0]
+    for module, kinds in EXPORTERS.values():
+        if found.kind in kinds:
+            return module
+    return None
+
+
+def _options_for(module, args: argparse.Namespace):
+    """Translate the shared flag set into the exporter's own options."""
+    if module is capture:
+        return capture.CaptureOptions(
+            objects=tuple(args.objects or ()),
+            views=tuple(int(v) for v in args.views) if args.views else (),
+            frames=args.frames,
+            max_width=args.capture_width,
+            fps=args.fps,
+        )
+    if module is vega:
+        return vega.VegaExportOptions(
+            objects=tuple(args.objects or ()),
+            frames=args.frames,
+            bake_azimuth_deg=args.bake_azimuth,
+            device=args.device,
+            fps=args.fps,
+        )
+    return rerf.RerfRenderOptions(
+        frames=args.frames,
+        force=args.force,
+        render=args.render,
+        depth=not args.no_depth,
+        bitstream=args.bitstream,
+        pca=None if args.pca is None else args.pca,
+        pca_chs=tuple(int(n) for n in args.pca_chs.split(",")) if args.pca_chs else None,
+        group_size=args.group_size,
+        python=Path(args.rerf_python).expanduser() if args.rerf_python else None,
+        config=Path(args.config).expanduser() if args.config else None,
+        rig_views=tuple(int(v) for v in args.rig_views) if args.rig_views else (),
+        fps=args.fps,
+        dry_run=getattr(args, "dry_run", False),
+        passthrough=tuple(args.passthrough),
+    )
+
+
+def _export(args: argparse.Namespace) -> tuple[Path, list[outputs.Detected]]:
+    """Build (or reuse) one viewable bundle covering every `args.input`.
+
+    Several sources land in one bundle rather than one each because comparing
+    them is the point: a Vega object and the ReRF render of the same subject are
+    two clips in one viewer, not two browser tabs.
+    """
+    sources = [Path(entry).expanduser().resolve() for entry in args.input]
+    found = [outputs.detect(source) for source in sources]
+    for detected in found:
+        print(f"{detected.root}\n  {outputs.describe(detected)}")
+
+    unusable = [d.root for d in found if not d.viewable]
+    if unusable:
+        raise SystemExit("nothing viewable at " + ", ".join(str(path) for path in unusable))
+
+    bundles = [d for d in found if d.kind is outputs.Kind.BUNDLE]
+    if bundles:
+        if len(found) > 1:
+            raise SystemExit(
+                f"{bundles[0].root} is already a bundle; it cannot be combined with "
+                "other sources. Re-export from the original outputs instead."
+            )
+        if getattr(args, "output", None):
+            print("  already a bundle; --output ignored")
+        return sources[0], found
+
+    modules = []
+    for detected in found:
+        module = _exporter(detected, args.method)
+        if module is None:
+            raise SystemExit(
+                f"no exporter for {detected.kind.value} at {detected.root}; --method takes "
+                + ", ".join(sorted(EXPORTERS))
+            )
+        modules.append(module)
+
+    out_dir = (
+        Path(args.output).expanduser().resolve() if args.output
+        else _default_bundle_dir(sources, found)
+    )
+    existing = outputs.detect(out_dir)
+    if existing.kind is outputs.Kind.BUNDLE and not args.force:
+        # `view` calls this on every invocation, and decoding a Vega sequence or
+        # rendering a ReRF one is not something to repeat for a second look.
+        print(f"  reusing bundle at {out_dir} ({outputs.describe(existing)}); --force to rebuild")
+        return out_dir, found
+
+    titles: list[str] = []
+    clips: list[bundle.Clip] = []
+    detail: dict[str, object] = {}
+    for source, module in zip(sources, modules):
+        print(f"  exporting {source.name} with {module.name} -> {out_dir}")
+        title, produced, produced_detail = module.build_clips(
+            source, out_dir, _options_for(module, args)
+        )
+        titles.append(title)
+        clips += produced
+        detail.setdefault("sources", []).append(
+            {"path": str(source), "exporter": module.name, "detail": produced_detail}
+        )
+
+    if getattr(args, "dry_run", False) and not clips:
+        return out_dir, found
+
+    # The rigs come from the corpus, not from any exporter: a shared camera is
+    # only shared if every method is handed the same one.
+    scenes = sorted({clip.scene for clip in clips if clip.scene})
+    rigs = capture.rigs_for(args.corpus, scenes) if scenes else {}
+    missing = [scene for scene in scenes if scene not in rigs]
+    if missing:
+        print(
+            f"  note: no rig in {args.corpus} for {', '.join(missing)} — those scenes "
+            "get no shared camera, so they are explore-only"
+        )
+    bundle.write(
+        out_dir,
+        title=titles[0] if len(titles) == 1 else f"{len(clips)} clips from {len(sources)} sources",
+        source=", ".join(str(source) for source in sources),
+        clips=clips,
+        fps=args.fps,
+        scenes=rigs,
+        detail=detail,
+    )
+    return out_dir, found
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    out_dir, _ = _export(args)
+    if getattr(args, "dry_run", False):
+        return 0
+    print(f"\nbundle: {out_dir}\nview it with: gs-tools view -i {out_dir}")
+    return 0
+
+
+def _cmd_view(args: argparse.Namespace) -> int:
+    out_dir, _ = _export(args)
+    print()
+    view.serve(
+        out_dir,
+        host=args.host,
+        port=args.port,
+        open_browser=args.browser,
+    )
     return 0
 
 
@@ -153,6 +347,81 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--dry-run", action="store_true", dest="dry_run")
     render.add_argument("passthrough", nargs="*", help=argparse.SUPPRESS)
     render.set_defaults(func=_cmd_render)
+
+    inspect = sub.add_parser("inspect", help="report what kind of output a directory holds")
+    inspect.add_argument("-i", "--input", required=True, nargs="+")
+    inspect.set_defaults(func=_cmd_inspect)
+
+    def add_export_arguments(target: argparse.ArgumentParser) -> None:
+        target.add_argument("-i", "--input", required=True, nargs="+",
+                            help="one or more of: a Vega bitstream/catalog, a ReRF run or "
+                                 "bitstream, a rendered image sequence, or (alone) an existing "
+                                 "bundle. Several sources become clips in one bundle.")
+        target.add_argument("-o", "--output", help="bundle directory (default: a cache directory)")
+        target.add_argument("--method", default="auto", choices=["auto", *sorted(EXPORTERS)])
+        target.add_argument("--frames", type=int, help="export only the first N frames")
+        target.add_argument("--fps", type=int, default=30, help="playback rate recorded in the bundle")
+        # Vega
+        target.add_argument("--objects", nargs="+",
+                            help="object names to export, for a Vega catalog or an ORBIT "
+                                 "corpus (default: all of them)")
+        target.add_argument("--corpus", default=str(capture.DEFAULT_CORPUS),
+                            help="ORBIT corpus the capture rigs are read from, which is what "
+                                 "gives every method a shared camera")
+        target.add_argument("--views", nargs="+",
+                            help="captured only: rig view ids to export (default: all 8)")
+        target.add_argument("--capture-width", type=int, default=1024, dest="capture_width",
+                            help="captured only: longest edge of the exported images")
+        target.add_argument("--bake-azimuth", type=float, default=0.0, dest="bake_azimuth",
+                            help="Vega only: camera azimuth in degrees that colour is baked from")
+        target.add_argument("--device", help="Vega only: torch device for the colour decode")
+        # ReRF
+        target.add_argument("--render", action="store_true",
+                            help="ReRF only: run ReRF's renderer (minutes of GPU time) instead of "
+                                 "requiring an existing render")
+        target.add_argument("--force", action="store_true",
+                            help="rebuild the bundle even if one is already there; for ReRF this "
+                                 "also re-renders rather than reusing an existing render")
+        target.add_argument("--no-depth", action="store_true", dest="no_depth",
+                            help="ReRF only: skip ReRF's depth maps")
+        target.add_argument("--rig-views", nargs="+", dest="rig_views",
+                            help="ReRF only: render at these capture-rig cameras instead of "
+                                 "upstream's synthetic orbit, so the result is comparable with "
+                                 "other methods and with the captured image at the same pose")
+        target.add_argument("--bitstream",
+                            help="ReRF only: which bitstream directory in the run to render "
+                                 "(default: bundle the renders already present)")
+        target.add_argument("--config", help="ReRF only: ReRF config (default: <run>/config.py)")
+        target.add_argument("--rerf-python", dest="rerf_python",
+                            help=f"ReRF only: the Python 3.8 interpreter that can import ReRF's "
+                                 f"entropy coder (default: ${rerf.PYTHON_ENV_VAR}, else a sibling "
+                                 f"`{rerf.DEFAULT_ENV_NAME}` conda env)")
+        target.add_argument("--group-size", type=int, dest="group_size",
+                            help="ReRF only: override the inferred ReRF key-frame interval")
+        target.add_argument("--pca-chs", dest="pca_chs",
+                            help="ReRF only: override the inferred PCA channel split, e.g. 7,13")
+        target.add_argument("--pca", dest="pca", action="store_true", default=None,
+                            help="ReRF only: force PCA decode on")
+        target.add_argument("--no-pca", dest="pca", action="store_false",
+                            help="ReRF only: force PCA decode off")
+        target.add_argument("--dry-run", action="store_true", dest="dry_run",
+                            help="ReRF only: print the render command without running it")
+        target.add_argument("passthrough", nargs="*", help=argparse.SUPPRESS)
+
+    export = sub.add_parser(
+        "export",
+        help="convert a method's output into a viewable bundle (3DGS PLY or images)",
+    )
+    add_export_arguments(export)
+    export.set_defaults(func=_cmd_export)
+
+    viewer = sub.add_parser("view", help="export if needed, then serve the bundle to a browser")
+    add_export_arguments(viewer)
+    viewer.add_argument("--port", type=int, default=view.DEFAULT_PORT)
+    viewer.add_argument("--host", default="127.0.0.1",
+                        help="0.0.0.0 to reach it from another machine (no authentication)")
+    viewer.add_argument("--browser", action="store_true", help="open a browser here")
+    viewer.set_defaults(func=_cmd_view)
 
     show = sub.add_parser("manifest", help="print a run's manifest")
     show.add_argument("-m", "--run", required=True)

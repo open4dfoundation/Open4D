@@ -16,13 +16,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open4d-gs-tools"
 version = "0.1.0"
-description = "Gaussian-splatting free-viewpoint-video reconstruction for Open4D (QUEEN, 3DGStream)"
+description = "Gaussian-splatting free-viewpoint-video reconstruction for Open4D (QUEEN, 3DGStream), and viewing Vega and ReRF output"
 requires-python = ">=3.11,<3.13"
 # Not MIT, unlike the rest of Open4D: derived from QUEEN under the NVIDIA
 # License, which limits use to non-commercial research or evaluation. See
 # THIRD_PARTY.md.
 license = { text = "LicenseRef-NVIDIA-Non-Commercial AND MIT" }
-dependencies = ["numpy"]
+# `open4d` for `open4d.core.Representation`: the bundle manifest and the
+# browser viewer name representations with core's vocabulary rather than
+# their own, so this is a real dependency and not a convenience. Its own
+# runtime requirement is numpy; everything heavy in Open4D is an extra.
+dependencies = ["numpy", "open4d"]
 
 [project.scripts]
 gs-tools = "gs_tools.cli:main"
@@ -30,3 +34,8 @@ gs-tools = "gs_tools.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["gs_tools*"]
+
+# The viewer is data, not code, and `gs-tools view` reads it off disk at request
+# time, so it has to be installed alongside the package.
+[tool.setuptools.package-data]
+"gs_tools.view" = ["viewer.html"]
