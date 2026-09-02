@@ -139,13 +139,24 @@ def write(
     return path
 
 
-def _read_header(handle) -> tuple[int, list[str], bool]:
-    """(vertex count, property names, little-endian) from an open binary file."""
+#: PLY scalar type names -> NumPy codes, for the mixed-type headers real
+#: producers write. QUEEN adds an ``int vertex_id`` column to its Gaussians, so
+#: assuming every property is float32 makes its output unreadable.
+_PLY_TYPES = {
+    "float": "f4", "float32": "f4", "float64": "f8", "double": "f8",
+    "char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1",
+    "short": "i2", "int16": "i2", "ushort": "u2", "uint16": "u2",
+    "int": "i4", "int32": "i4", "uint": "u4", "uint32": "u4",
+}
+
+
+def _read_header(handle) -> tuple[int, list[tuple[str, str]], bool]:
+    """(vertex count, [(property, NumPy code)], little-endian) from an open file."""
     if handle.read(3) != _HEADER_MAGIC:
         raise ValueError("not a PLY file")
     handle.seek(0)
     count: int | None = None
-    names: list[str] = []
+    names: list[tuple[str, str]] = []
     little = True
     in_vertex = False
     while True:
@@ -164,9 +175,14 @@ def _read_header(handle) -> tuple[int, list[str], bool]:
                 count = int(parts[2])
         elif text.startswith("property ") and in_vertex:
             parts = text.split()
-            if parts[1] != "float" and parts[1] != "float32":
+            if parts[1] == "list":
+                raise ValueError(
+                    f"list properties are not supported in a vertex element: {text!r}"
+                )
+            code = _PLY_TYPES.get(parts[1])
+            if code is None:
                 raise ValueError(f"unsupported property type in {text!r}")
-            names.append(parts[2])
+            names.append((parts[2], code))
         elif text == "end_header":
             break
     if count is None:
@@ -184,17 +200,23 @@ def read(path: Path | str) -> dict[str, Any]:
     """Read a 3DGS PLY back into raw arrays, the inverse of :func:`write`."""
     path = Path(path)
     with path.open("rb") as handle:
-        n, names, little = _read_header(handle)
-        dtype = np.dtype("<f4" if little else ">f4")
-        table = np.frombuffer(handle.read(n * len(names) * 4), dtype=dtype)
-    table = table.reshape(n, len(names)).astype(np.float32)
-    column = {name: index for index, name in enumerate(names)}
+        n, properties, little = _read_header(handle)
+        order = "<" if little else ">"
+        # A structured dtype rather than one flat float32 block: the properties
+        # are not all the same width, and reading them as if they were shifts
+        # every column after the first odd one.
+        record = np.dtype([(name, order + code) for name, code in properties])
+        rows = np.frombuffer(handle.read(n * record.itemsize), dtype=record, count=n)
+    names = [name for name, _ in properties]
+    present = set(names)
 
     def take(keys: list[str]) -> np.ndarray:
-        missing = [key for key in keys if key not in column]
+        missing = [key for key in keys if key not in present]
         if missing:
             raise ValueError(f"{path.name} is missing {', '.join(missing)}")
-        return table[:, [column[key] for key in keys]]
+        return np.stack(
+            [rows[key].astype(np.float32) for key in keys], axis=-1
+        )
 
     n_rest = sum(1 for name in names if name.startswith("f_rest_")) // 3
     result: dict[str, Any] = {

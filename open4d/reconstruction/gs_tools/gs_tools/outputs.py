@@ -43,7 +43,9 @@ class Kind(str, Enum):
     RERF_RUN = "rerf-run"
     #: ReRF's compressed bitstream: model_kwargs.json + header_*.json + feature_*.
     RERF_BITSTREAM = "rerf-bitstream"
-    #: QUEEN / 3DGStream: point_cloud/iteration_*/point_cloud.ply.
+    #: A 3DGS run in any of the three layouts `gaussian_frames` resolves:
+    #: a single frame's `point_cloud/iteration_*/`, 3DGStream's per-frame
+    #: `frameNNNNNN/`, or QUEEN's `frames/NNNN/`.
     GAUSSIAN_RUN = "gaussian-run"
     #: The ORBIT Gaussian-training corpus: dataset.json listing every object.
     ORBIT_CORPUS = "orbit-corpus"
@@ -64,7 +66,86 @@ class Detected:
 
     @property
     def viewable(self) -> bool:
-        return self.kind is not Kind.UNKNOWN
+        """Whether `gs-tools export` has a path for this, not merely recognised it.
+
+        These used to differ: anything but UNKNOWN called itself viewable, so a
+        3DGS run passed `inspect` and then failed `export` with "no exporter for
+        gaussian-run". A kind with no entry in :data:`EXPORTER_FOR` is detected
+        but not yet exportable, and saying so here is the difference between a
+        clear refusal and a puzzling one.
+        """
+        return self.kind is Kind.BUNDLE or self.kind in EXPORTER_FOR
+
+
+#: Which exporter handles each kind. Names rather than modules because
+#: `gs_tools.methods` imports this module, so the modules cannot be imported
+#: from here; `gs_tools.cli` maps the names onto them and is checked against
+#: this, so the two cannot drift.
+EXPORTER_FOR: dict[Kind, str] = {
+    Kind.VEGA_CATALOG: "vega",
+    Kind.VEGA_BITSTREAM: "vega",
+    Kind.VEGA_SCENE_EXPORT: "vega",
+    Kind.RERF_RUN: "rerf",
+    Kind.RERF_BITSTREAM: "rerf",
+    Kind.IMAGE_SEQUENCE: "rerf",
+    Kind.ORBIT_CORPUS: "captured",
+    Kind.ORBIT_SCENE: "captured",
+    Kind.GAUSSIAN_RUN: "gaussian",
+}
+
+
+def _best_iteration_ply(directory: Path) -> Path | None:
+    """The trained result in a `point_cloud/iteration_*/` directory.
+
+    The highest iteration, which is the finished model rather than a checkpoint
+    on the way to it. `added/point_cloud.ply`, which 3DGStream writes beside the
+    frame's own model, is skipped: it holds only that frame's *newly added*
+    Gaussians, so treating it as a frame would show a fraction of the scene.
+    """
+    found = sorted(
+        directory.glob("point_cloud/iteration_*/point_cloud.ply"),
+        key=lambda path: int(path.parent.name.split("_")[-1]),
+    )
+    return found[-1] if found else None
+
+
+def gaussian_frames(root: Path) -> list[tuple[int, Path]]:
+    """Ordered ``(frame index, PLY)`` for a 3DGS run, in any of three layouts.
+
+    The layouts are not variations on one convention, they are three unrelated
+    ones, so each is matched rather than globbed for generically:
+
+    * ``<run>/frames/NNNN/point_cloud.ply`` -- QUEEN, one directory per frame,
+      no iteration level.
+    * ``<run>/frameNNNNNN/point_cloud/iteration_N/point_cloud.ply`` --
+      3DGStream, per-frame runs each with their own iterations.
+    * ``<run>/point_cloud/iteration_N/point_cloud.ply`` -- a single frame, which
+      is what a static 3DGS run or 3DGStream's init step produces.
+
+    Frame numbers come from the directory names, so a run whose frames start at
+    2 keeps its own numbering instead of being silently renumbered from zero.
+    """
+    queen = sorted(
+        (int(path.parent.name), path)
+        for path in root.glob("frames/*/point_cloud.ply")
+        if path.parent.name.isdigit()
+    )
+    if queen:
+        return queen
+
+    gstream: list[tuple[int, Path]] = []
+    for directory in sorted(root.glob("frame*")):
+        if not directory.is_dir():
+            continue
+        digits = directory.name[len("frame"):]
+        ply = _best_iteration_ply(directory) if digits.isdigit() else None
+        if ply is not None:
+            gstream.append((int(digits), ply))
+    if gstream:
+        return sorted(gstream)
+
+    single = _best_iteration_ply(root)
+    return [(0, single)] if single is not None else []
 
 
 def _frame_pts(root: Path) -> list[Path]:
@@ -88,11 +169,6 @@ def _rerf_headers(root: Path) -> list[Path]:
         p for p in root.glob("header_*.json") if re.fullmatch(r"header_\d+\.json", p.name)
     ]
     return sorted(headers, key=lambda p: int(p.stem.split("_")[1]))
-
-
-def _iteration_plys(root: Path) -> list[Path]:
-    found = sorted(root.glob("point_cloud/iteration_*/point_cloud.ply"))
-    return sorted(found, key=lambda p: int(p.parent.name.split("_")[-1]))
 
 
 def _config_value(config: Path, key: str) -> str | None:
@@ -230,13 +306,22 @@ def detect(path: Path | str) -> Detected:
                 },
             )
 
-    plys = _iteration_plys(root)
-    if plys:
+    frames = gaussian_frames(root)
+    if frames:
         return Detected(
             root,
             Kind.GAUSSIAN_RUN,
             {
-                "iterations": [int(p.parent.name.split("_")[-1]) for p in plys],
+                "frames": len(frames),
+                "first_frame": frames[0][0],
+                "last_frame": frames[-1][0],
+                "iterations": sorted(
+                    {
+                        int(ply.parent.name.split("_")[-1])
+                        for _, ply in frames
+                        if ply.parent.name.startswith("iteration_")
+                    }
+                ),
                 "method": (json.loads((root / "manifest.json").read_text()).get("method")
                            if (root / "manifest.json").is_file() else None),
             },
