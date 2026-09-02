@@ -16,8 +16,26 @@ streamer/
   export.py            any open4d.Sequence as a bundle
   live.py              clips rendered as they are watched
   server/              sending
-  client/              playback, and the scheduler that plans a seek
+  client/              playback, the scheduler, and the decode worker
 ```
+
+Decoding happens in a worker (`client/worker.js`), not on the page's thread.
+Parsing is the one expensive synchronous step in playback — 16.5 ms for a 3DGS
+PLY, 32.1 ms for a 439k-Gaussian `.splat`, 17.8 ms for a Draco mesh — and on
+the main thread each of those is a missed `requestAnimationFrame` for *every*
+pane, because there is only one main thread. Four Gaussian panes blocked it for
+66 ms a frame, two whole budgets at 30 fps; now they block it for about 1 ms
+and parse while the previous frame draws.
+
+The codecs live in the worker and nowhere else. Sharing them with the page would
+mean either duplicating them, which drifts, or a build step, which this client
+does not have. Results come back with their buffers **transferred**, since a
+4.3 MB frame parses to several megabytes of typed arrays and copying those back
+would return much of what the worker saved.
+
+`decodeImage` is the exception and stays on the page: it needs `Image`, and a
+browser already decodes an image off the main thread, so there is nothing to
+move.
 
 ## The codec axis
 

@@ -25,6 +25,11 @@ import pytest
 
 from streamer import bundle, export, representations
 from streamer.client import viewer_path
+
+
+def _source() -> str:
+    """The decode worker, which is where the codecs live."""
+    return (viewer_path().parent / "worker.js").read_text()
 from streamer.server import serve
 
 pytestmark = pytest.mark.cpu
@@ -212,7 +217,7 @@ def test_the_client_asset_route_refuses_anything_outside_the_package(tmp_path, p
 
 
 def _cut(name: str) -> str:
-    page = viewer_path().read_text()
+    page = _source()
     # `async function X(` first: `function X(` is a substring of it, and slicing
     # from the shorter match drops the async keyword and will not parse.
     for prefix in (
@@ -249,15 +254,9 @@ def decode_with_client(frame: Path, tmp_path: Path) -> dict:
             const CLIENT = {str(CLIENT)!r};
             const onDisk = (url) => path.join(CLIENT, url.replace(/^client\\//, ""));
             globalThis.self = globalThis;
-            globalThis.document = {{
-              head: {{ appendChild(tag) {{ tag.onload(); }} }},
-              createElement() {{
-                return {{
-                  set src(value) {{
-                    globalThis.self.DracoDecoderModule = require(onDisk(value));
-                  }},
-                }};
-              }},
+            // The worker loads the decoder with importScripts, not a script tag.
+            globalThis.importScripts = (url) => {{
+              globalThis.self.DracoDecoderModule = require(onDisk(url));
             }};
             globalThis.fetch = async (url) => ({{
               arrayBuffer: async () => {{
@@ -275,13 +274,11 @@ def decode_with_client(frame: Path, tmp_path: Path) -> dict:
                 "loadDraco",
                 "parseDraco",
                 "parseMeshPly",
-                "CODECS",
-                "suffixOf",
-                "codecFor",
-                "decodeFrame",
                 "parsePly",
                 "parseSplat",
-                "decodeImage",
+                "suffixOf",
+                "CODECS",
+                "codecFor",
             )
         )
         + textwrap.dedent(
@@ -289,7 +286,7 @@ def decode_with_client(frame: Path, tmp_path: Path) -> dict:
             (async () => {{
               const b = fs.readFileSync({str(frame)!r});
               const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
-              const parsed = await decodeFrame("mesh")(ab, {str(frame)!r});
+              const parsed = await codecFor("mesh", {str(frame)!r})(ab, {str(frame)!r});
               process.stdout.write(JSON.stringify({{
                 count: parsed.count,
                 triangles: parsed.indices.length / 3,

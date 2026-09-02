@@ -87,20 +87,11 @@ def test_the_representation_registry_evaluates(tmp_path):
     # literal only calls later -- parseDraco, loadDraco -- are not needed here,
     # which is why this is a list rather than the whole script: what is being
     # tested is that the literal can be built at load, not that the page runs.
+    # The literal reaches `decodeFrame` and `decodeImage` while it is being
+    # evaluated. Both are function declarations, so both are hoisted; the parsers
+    # they eventually reach live in the worker and are not needed here.
     probe = "\n".join(
-        cut(name)
-        for name in (
-            "parseMeshPly",
-            "REPRESENTATIONS",
-            "parsePly",
-            "parseSplat",
-            "parseDraco",
-            "decodeImage",
-            "CODECS",
-            "suffixOf",
-            "codecFor",
-            "decodeFrame",
-        )
+        cut(name) for name in ("REPRESENTATIONS", "decodeFrame", "decodeImage")
     ) + """
         const out = {};
         for (const [name, spec] of Object.entries(REPRESENTATIONS)) {
