@@ -808,6 +808,127 @@ function parseMeshPly(buffer) {
   return { count, positions, colors, indices, bounds: [lower, upper] };
 }
 
+/* ------------------------------------------------------------------ draco ---
+ * A compressed mesh frame, decoded here rather than on the server.
+ *
+ * This is the first format in this client that is actually a *compression* of
+ * geometry rather than an interchange dump of it: measured on the basketball
+ * sequence, 761 kB of PLY becomes 59 kB of Draco at 14-bit quantisation, which
+ * is 1.8 MB/s at 30 fps instead of 23. That is the difference between a link
+ * and a LAN, and it is why this exists.
+ *
+ * Two costs, both real and both bounded. Position is quantised -- at 14 bits the
+ * worst vertex moved 0.0046% of the model's diagonal on that sequence -- and
+ * duplicate vertices are merged, so the decoded point count is lower than the
+ * encoder was given (20,672 -> 19,747 there, because the source OBJ splits
+ * vertices at seams). Neither changes what the surface looks like; both mean a
+ * `.drc` frame is a delivery form and the PLY stays the source of truth.
+ *
+ * The decoder is Google's, vendored under client/vendor/draco and served from
+ * this origin -- never a CDN, which is what keeps the page free of external
+ * dependencies. It is a WASM module, so loading is asynchronous and happens once
+ * on first use: `Scheduler.decode` is awaited, which is what makes an async
+ * decoder possible at all here.
+ */
+const DRACO_PATH = "client/vendor/draco";
+let dracoModule = null;
+
+function loadDraco() {
+  if (dracoModule) return dracoModule;
+  dracoModule = (async () => {
+    // Injected rather than imported: the wrapper is an Emscripten UMD bundle,
+    // not an ES module, so it publishes DracoDecoderModule as a global.
+    if (!self.DracoDecoderModule) {
+      await new Promise((resolve, reject) => {
+        const tag = document.createElement("script");
+        tag.src = `${DRACO_PATH}/draco_wasm_wrapper.js`;
+        tag.onload = resolve;
+        tag.onerror = () => reject(new Error(
+          `could not load ${tag.src} — the server serves this from the client `
+          + `package, so a 404 here means a stale or partial install`));
+        document.head.appendChild(tag);
+      });
+    }
+    const wasmBinary = await (await fetch(`${DRACO_PATH}/draco_decoder.wasm`))
+      .arrayBuffer();
+    return self.DracoDecoderModule({ wasmBinary });
+  })();
+  return dracoModule;
+}
+
+/* One Draco frame, in the shape parseMeshPly returns so the renderer cannot
+ * tell which format a frame arrived in. */
+async function parseDraco(buffer) {
+  const draco = await loadDraco();
+  const decoder = new draco.Decoder();
+  const input = new draco.DecoderBuffer();
+  input.Init(new Int8Array(buffer), buffer.byteLength);
+
+  let mesh = null;
+  try {
+    if (decoder.GetEncodedGeometryType(input) !== draco.TRIANGULAR_MESH) {
+      throw new Error("not a Draco triangular mesh");
+    }
+    mesh = new draco.Mesh();
+    const status = decoder.DecodeBufferToMesh(input, mesh);
+    if (!status.ok()) throw new Error(status.error_msg());
+
+    const count = mesh.num_points();
+    const faces = mesh.num_faces();
+
+    const positions = new Float32Array(count * 3);
+    const attribute = decoder.GetAttribute(
+      mesh, decoder.GetAttributeId(mesh, draco.POSITION));
+    const values = new draco.DracoFloat32Array();
+    decoder.GetAttributeFloatForAllPoints(mesh, attribute, values);
+    for (let i = 0; i < count * 3; i++) positions[i] = values.GetValue(i);
+    draco.destroy(values);
+
+    // Through the heap rather than GetFaceFromMesh per face: 39k calls across
+    // the WASM boundary is most of the decode time on this content.
+    const bytes = faces * 3 * 4;
+    const pointer = draco._malloc(bytes);
+    decoder.GetTrianglesUInt32Array(mesh, bytes, pointer);
+    const indices = new Uint32Array(draco.HEAPF32.buffer, pointer, faces * 3).slice();
+    draco._free(pointer);
+
+    let colors = null;
+    const colourId = decoder.GetAttributeId(mesh, draco.COLOR);
+    if (colourId >= 0) {
+      const colourAttribute = decoder.GetAttribute(mesh, colourId);
+      const raw = new draco.DracoFloat32Array();
+      decoder.GetAttributeFloatForAllPoints(mesh, colourAttribute, raw);
+      const channels = colourAttribute.num_components();
+      colors = new Uint8Array(count * 4);
+      for (let i = 0; i < count; i++) {
+        for (let c = 0; c < 3; c++) {
+          const value = raw.GetValue(i * channels + Math.min(c, channels - 1));
+          // Draco keeps whatever range it was given; Open4D's canon is [0, 1].
+          colors[i * 4 + c] = Math.max(0, Math.min(255, Math.round(
+            value <= 1.0001 ? value * 255 : value)));
+        }
+        colors[i * 4 + 3] = 255;
+      }
+      draco.destroy(raw);
+    }
+
+    const lower = [Infinity, Infinity, Infinity];
+    const upper = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < count; i++) {
+      for (let c = 0; c < 3; c++) {
+        const value = positions[i * 3 + c];
+        if (value < lower[c]) lower[c] = value;
+        if (value > upper[c]) upper[c] = value;
+      }
+    }
+    return { count, positions, colors, indices, bounds: [lower, upper] };
+  } finally {
+    if (mesh) draco.destroy(mesh);
+    draco.destroy(input);
+    draco.destroy(decoder);
+  }
+}
+
 /* --------------------------------------------------- mesh / point shaders ---
  * Same camera math as the splat path -- eye plus a (right, down, forward) basis
  * and a focal length in pixels -- so a mesh pane and a splat pane of the same
@@ -1036,14 +1157,14 @@ const REPRESENTATIONS = {
   mesh: {
     geometry: true,
     surface: "canvas",
-    decode: decodeGeometry(parseMeshPly),
+    decode: decodeGeometry(parseGeometryFrame),
     cacheSize: 6,
     renderer: (gl) => new MeshRenderer(gl, "mesh"),
   },
   points: {
     geometry: true,
     surface: "canvas",
-    decode: decodeGeometry(parseMeshPly),
+    decode: decodeGeometry(parseGeometryFrame),
     cacheSize: 6,
     renderer: (gl) => new MeshRenderer(gl, "points"),
   },
@@ -1068,6 +1189,11 @@ const REPRESENTATIONS = {
  * one shape, so nothing below here knows which it got. */
 function parseGaussianFrame(buffer, url) {
   return url.toLowerCase().endsWith(".splat") ? parseSplat(buffer) : parsePly(buffer);
+}
+
+/* A mesh or point frame arrives as PLY or as Draco. Same shape out. */
+function parseGeometryFrame(buffer, url) {
+  return url.toLowerCase().endsWith(".drc") ? parseDraco(buffer) : parseMeshPly(buffer);
 }
 
 /* view.json v1 called these `kind`. Bundles already on disk are worth keeping

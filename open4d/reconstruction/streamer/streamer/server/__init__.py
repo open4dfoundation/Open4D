@@ -39,9 +39,23 @@ VIEWER_ROUTES = ("/", "/index.html", "/viewer.html")
 STATS_ROUTE = "/stats.json"
 #: Live streams are proxied under this prefix; see `streamer.live`.
 LIVE_PREFIX = f"/{live.ROUTE_PREFIX}/"
+#: Assets that belong to the client package rather than to any bundle -- the
+#: vendored Draco decoder, for one. Served from here so the page fetches them
+#: from its own origin and never a CDN, and so a bundle does not have to carry
+#: a copy of a decoder it did not choose.
+CLIENT_PREFIX = "/client/"
 #: Copy size for the proxy. Small, because a frame boundary can fall anywhere
 #: and a large buffer would hold the tail of one frame back until the next.
 PROXY_CHUNK = 8192
+
+#: Content types for client-package assets. `.wasm` matters: a browser refuses
+#: to compile a module served as anything else through the streaming API.
+CLIENT_TYPES = {
+    ".js": "text/javascript",
+    ".wasm": "application/wasm",
+    ".html": "text/html; charset=utf-8",
+    ".md": "text/plain; charset=utf-8",
+}
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
@@ -74,6 +88,8 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_stats()
         if self.path.startswith(LIVE_PREFIX):
             return self._proxy_live(self.path[len(LIVE_PREFIX):])
+        if self.path.startswith(CLIENT_PREFIX):
+            return self._send_client_asset(self.path[len(CLIENT_PREFIX):])
         return super().do_GET()
 
     def do_HEAD(self):  # noqa: N802
@@ -91,6 +107,26 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_client_asset(self, relative: str):
+        """A file from the client package, e.g. the vendored Draco decoder."""
+        root = viewer_path().parent
+        # Resolved and then checked to be inside the package: the path comes off
+        # a URL, so `../../etc/passwd` is a request this will receive eventually.
+        target = (root / relative.split("?", 1)[0]).resolve()
+        if not target.is_file() or root.resolve() not in target.parents:
+            self.send_error(404, f"no client asset {relative!r}")
+            return
+        payload = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", CLIENT_TYPES.get(
+            target.suffix.lower(), "application/octet-stream"))
+        self.send_header("Content-Length", str(len(payload)))
+        # Immutable: these ship with the package, so a version of the page and a
+        # version of its decoder always arrive together.
+        self.send_header("Cache-Control", "public, max-age=86400")
         self.end_headers()
         self.wfile.write(payload)
 

@@ -29,9 +29,22 @@ from open4d.core import Representation, Sequence
 
 from . import bundle
 
-#: Frames are written in this format. PLY is Open4D's only first-party mesh
-#: format needing no optional dependency, and the one the client parses.
+#: Interchange form: Open4D's only first-party mesh format needing no optional
+#: dependency, and readable by anything.
 FRAME_FORMAT = "ply"
+
+#: Delivery form. Draco compresses this repository's mesh sequence 12.9x -- 761
+#: kB a frame to 59 kB, which is 1.8 MB/s at 30 fps rather than 23 -- and the
+#: client decodes it with the WASM decoder vendored under `client/vendor/draco`.
+#: Lossy in two bounded ways: positions are quantised (at 14 bits the worst
+#: vertex moved 0.0046% of the model's diagonal on that sequence) and duplicate
+#: vertices are merged. Delivery, not archive.
+DRACO_FORMAT = "draco"
+FORMATS = (FRAME_FORMAT, DRACO_FORMAT)
+
+#: Position quantisation. 14 is DracoPy's own default and the knee of the curve
+#: measured here: 11 bits saves a further 20% for eight times the error.
+DRACO_QUANTIZATION_BITS = 14
 
 
 def representation_of(sequence: Sequence) -> Representation:
@@ -46,29 +59,74 @@ def representation_of(sequence: Sequence) -> Representation:
     return sequence[0].geometry.representation
 
 
+def _write_draco(sequence: Sequence, frames_at: Path, bits: int) -> list[Path]:
+    """One ``.drc`` per frame, encoded with the same Draco this repository vendors.
+
+    Per frame rather than one container for the sequence, because a streaming
+    client fetches frames: `open4d.save(..., codec="draco")` writes a `.d4d`
+    holding the whole sequence, which is the right shape for an archive and the
+    wrong one for a wire.
+    """
+    try:
+        import DracoPy
+    except ImportError as error:  # pragma: no cover - depends on the environment
+        raise RuntimeError(
+            "Draco frames need the DracoPy binding: pip install 'open4d[draco]'"
+        ) from error
+
+    written: list[Path] = []
+    for index in range(len(sequence)):
+        geometry = sequence[index].geometry
+        triangles = getattr(geometry, "triangles", None)
+        payload = DracoPy.encode(
+            geometry.positions.astype("float32"),
+            None if triangles is None else triangles.astype("uint32"),
+            quantization_bits=bits,
+        )
+        target = frames_at / f"frame_{index:06d}.drc"
+        target.write_bytes(payload)
+        written.append(target)
+    return written
+
+
 def from_sequence(
     sequence: Sequence,
     out_dir: Path | str,
     *,
     name: str,
+    frame_format: str = FRAME_FORMAT,
+    quantization_bits: int = DRACO_QUANTIZATION_BITS,
     scene: str | None = None,
     method: str | None = None,
     notes: list[str] | None = None,
     detail: dict[str, Any] | None = None,
 ) -> bundle.Clip:
-    """Write ``sequence`` into ``out_dir`` as one clip and describe it."""
+    """Write ``sequence`` into ``out_dir`` as one clip and describe it.
+
+    ``frame_format`` is ``"ply"`` for the interchange form or ``"draco"`` for the
+    compressed one; see :data:`DRACO_FORMAT` for what the second costs.
+    """
     from open4d.io import write_sequence
 
+    if frame_format not in FORMATS:
+        raise ValueError(
+            f"unknown frame format {frame_format!r}; expected one of "
+            + ", ".join(FORMATS)
+        )
     out_dir = Path(out_dir).expanduser().resolve()
     representation = representation_of(sequence)
     frames_at = bundle.frame_dir(out_dir, name)
     clip_name = frames_at.name
 
-    write_sequence(sequence, frames_at, format=FRAME_FORMAT, overwrite=True)
-    written = sorted(
-        str(path.relative_to(out_dir))
-        for path in frames_at.glob(f"frame_*.{FRAME_FORMAT}")
-    )
+    if frame_format == DRACO_FORMAT:
+        paths = _write_draco(sequence, frames_at, quantization_bits)
+        written = sorted(str(path.relative_to(out_dir)) for path in paths)
+    else:
+        write_sequence(sequence, frames_at, format=FRAME_FORMAT, overwrite=True)
+        written = sorted(
+            str(path.relative_to(out_dir))
+            for path in frames_at.glob(f"frame_*.{FRAME_FORMAT}")
+        )
     if not written:
         raise ValueError(f"{name} produced no frames")
 
@@ -100,8 +158,17 @@ def from_sequence(
         frames=written,
         bounds_min=lower,
         bounds_max=upper,
-        notes=notes or [],
-        detail={**(detail or {}), "frame_format": FRAME_FORMAT},
+        notes=(notes or []) + ([
+            f"frames are Draco at {quantization_bits}-bit position quantisation: "
+            "a delivery form, decoded in the browser, lossy in position and in "
+            "merging duplicate vertices",
+        ] if frame_format == DRACO_FORMAT else []),
+        detail={
+            **(detail or {}),
+            "frame_format": frame_format,
+            **({"quantization_bits": quantization_bits}
+               if frame_format == DRACO_FORMAT else {}),
+        },
     )
 
 
@@ -111,6 +178,7 @@ def from_source(
     *,
     fps: float | None = None,
     name: str | None = None,
+    frame_format: str = FRAME_FORMAT,
     scene: str | None = None,
     method: str | None = None,
 ) -> Path:
@@ -134,6 +202,7 @@ def from_source(
             sequence,
             out_dir,
             name=name or source.stem or source.name,
+            frame_format=frame_format,
             scene=scene,
             method=method,
             notes=[
