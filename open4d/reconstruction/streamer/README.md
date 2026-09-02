@@ -14,7 +14,7 @@ streamer/
   monitor.py           what actually went over the wire
   export.py            any open4d.Sequence as a bundle
   server/              sending
-  client/              playback: one self-contained browser page
+  client/              playback, and the scheduler that plans a seek
 ```
 
 ## The one abstraction that matters
@@ -110,20 +110,40 @@ taken live rather than simulated. It is counters and nothing more: a monitor
 that decided things would be a second scheduler, and there is not yet a second
 transport to adapt between.
 
+## Planning a seek
+
+A clip declares how its frames depend on one another, in
+`open4d.core.Dependency`'s vocabulary: `independent`, `gop` (frames need the
+group's key frame first, as in Vega's group-of-volumes) or `sequential` (the
+decode stream does not rewind at all, as in ReRF). The manifest carries it per
+clip, absent meaning independent, and the client's `Scheduler` plans the chain
+rather than requesting a frame and hoping.
+
+The asymmetry is the point. A forward step reuses where the decoder already
+sits; a backward seek in a sequential stream comes back as a full replay from
+zero, because that stream cannot be rewound. Both bitstreams here declare a
+single group spanning every frame, so a cold seek to the last of 30 costs 30
+decodes — the kind of thing that was invisible before it was modelled.
+
+`chain` exists twice, in Python and transcribed into the client, because the
+browser cannot run Python. Two implementations of one rule drift, so
+`streamer_tests/test_scheduler.py` runs both over the same 56 cases and asserts
+they agree. Change one and that test tells you about the other.
+
+The Scheduler also owns caching and look-ahead, which the two clip sources used
+to keep separately with different policies — and only one of which evicted, so
+scrubbing a long pixel clip kept every frame it had ever shown. Buffer
+occupancy, decode count and bytes are in the viewer's stats panel; decode order
+and replay count appear only when something is not independent, since a replay
+count of zero says nothing about an independent clip.
+
+**Every exporter here writes independent frames**, because they all decode
+before they write. The `gop` and `sequential` paths are therefore tested rather
+than exercised: they are what a producer serving a bitstream *as* its frames
+would need, and building them afterwards would mean changing the client at the
+same time as trusting a new encoder.
+
 ## What is deliberately missing
-
-**The scheduler.** `open4d.core.Dependency` declares that a codec's frames may
-need a key frame decoded first (`gop`, as in Vega's group-of-volumes), or that
-its decode stream cannot be rewound at all (`sequential`, as in ReRF), and
-`Dependency.chain()` returns the frames to decode, in order, to reach a target —
-reusing the decoder's current position on a forward seek and reporting a full
-replay on a backward one. The declaration exists and is tested. The client that
-consumes it, so that seeking in such a stream plans the chain instead of
-requesting a frame and hoping, is the next piece and belongs here.
-
-Both bitstreams in this repository currently declare a single group spanning
-every frame, so a cold seek to the last of 30 frames costs 30 decodes. That is
-the kind of thing the model is for: it was invisible before.
 
 **A held-out camera, and numbers.** Compare puts several methods at one rig
 pose, which is the mode a PSNR or SSIM figure could attach to, and nothing
