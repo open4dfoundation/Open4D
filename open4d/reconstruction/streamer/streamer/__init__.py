@@ -25,6 +25,10 @@ The pieces, smallest first:
 ``server``
     Sending. Today one transport: static files for a local bundle, plus the
     counters at ``/stats.json``.
+``live``
+    Clips rendered as they are watched -- the transport for a representation
+    that cannot be decoded in a browser, and the only one here cheap enough
+    for a real link.
 ``transfer``
     Receiving. Pull a bundle, or some clips of one, onto the machine you are
     sitting at.
@@ -44,7 +48,7 @@ tested; the scheduler that consumes it is the next piece, and belongs here.
 
 from __future__ import annotations
 
-from . import bundle, client, export, monitor, representations, server, transfer
+from . import bundle, client, export, live, monitor, representations, server, transfer
 from .bundle import Clip
 from .client import viewer_path
 from .export import from_sequence, from_source
@@ -62,6 +66,7 @@ __all__ = [
     "bundle",
     "client",
     "export",
+    "live",
     "fetch",
     "from_sequence",
     "from_source",
