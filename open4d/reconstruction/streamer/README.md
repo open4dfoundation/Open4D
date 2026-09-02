@@ -13,9 +13,39 @@ streamer/
   bundle.py            the view.json contract, shared by both sides
   monitor.py           what actually went over the wire
   export.py            any open4d.Sequence as a bundle
+  live.py              clips rendered as they are watched
   server/              sending
   client/              playback, and the scheduler that plans a seek
 ```
+
+## Two transports, because the modules genuinely differ
+
+Measured on this repository's own content, per frame and at 30 fps:
+
+| on the wire | per frame | at 30 fps |
+| --- | --- | --- |
+| QUEEN `.splat`, 439k gaussians | 14 MB | 422 MB/s |
+| Vega decoded PLY | 4.31 MB | 129 MB/s |
+| Vega's own bitstream | 2.44 MB | 73 MB/s |
+| mesh PLY, 20k verts | 760 kB | 23 MB/s |
+| mesh through Draco | 291 kB | 8.7 MB/s |
+| ReRF bitstream | 533 kB | 16 MB/s |
+| **ReRF rendered, one view** | **47 kB** | **1.4 MB/s** |
+
+Sending geometry buys a free camera and costs LAN-class bandwidth. Sending
+pixels costs two orders of magnitude less and fixes the viewpoint. Neither is
+the right answer for every module, so both exist:
+
+* **Client-decode** — a frame list, fetched and parsed by the `Scheduler`.
+  Free camera, `mesh`/`points`/`gaussians`.
+* **Server-render** — `live.mjpeg(url, ...)`, a URL instead of a frame list.
+  The only transport ReRF has at all, its entropy coder being a sourceless
+  CPython 3.8 binary, and the only one here that works over a tunnel.
+
+A live clip gets **its own scene**, because a live renderer chooses its own
+camera and putting one beside a rig pose would break the guarantee Compare
+exists to make. It has no timeline either, so the transport bar disables itself
+and says `live` rather than leaving a scrubber that does nothing.
 
 ## The one abstraction that matters
 
