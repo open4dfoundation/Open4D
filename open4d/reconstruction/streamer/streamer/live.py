@@ -32,6 +32,9 @@ from urllib.parse import urlparse
 
 from . import bundle
 
+#: Path prefix the bundle server proxies live streams under.
+ROUTE_PREFIX = "live"
+
 
 def mjpeg(
     url: str,
@@ -44,21 +47,24 @@ def mjpeg(
 ) -> bundle.Clip:
     """A clip fed by an MJPEG endpoint.
 
-    ``url`` is fetched by the *browser*, not by the server that hands out the
-    manifest, so it has to be reachable from wherever the page is opened. A
-    loopback URL works when the page is opened through a tunnel to the same
-    host, which is the normal case here; it does not when the bundle is copied
-    to another machine, and that is recorded in the clip's notes rather than
-    left to be discovered.
+    ``url`` is where the renderer actually is, and it is recorded as the clip's
+    *upstream*. What the manifest hands the client is a path on the bundle
+    server instead -- ``live/<name>``, which `streamer.server` proxies.
+
+    That indirection is the whole point, and skipping it is a mistake worth
+    naming: a manifest that gives the browser ``http://127.0.0.1:8768/stream``
+    is telling it to fetch port 8768 *on the machine the browser is running on*.
+    Open the page through a tunnel and that is the laptop, which has nothing
+    there, so the pane stays blank with no error. Proxying makes the bundle
+    server the single origin, so one forwarded port is enough and the bundle
+    stays portable.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"{url!r} is not an http(s) URL")
+    if "/" in name:
+        raise ValueError(f"{name!r} must be a single path segment")
 
-    reach = (
-        f"the browser fetches {parsed.netloc} directly, so this plays only where "
-        "that host is reachable from"
-    )
     return bundle.validate(
         bundle.Clip(
             name=name,
@@ -66,12 +72,32 @@ def mjpeg(
             scene=scene or name,
             method=method,
             frames=[],
-            stream={"url": url, "protocol": "mjpeg"},
+            stream={
+                "url": f"{ROUTE_PREFIX}/{name}",
+                "protocol": "mjpeg",
+                "upstream": url,
+            },
             notes=(notes or []) + [
                 "live: rendered as it is watched, so there is no frame list and "
                 "nothing to scrub",
-                reach,
+                f"proxied by the bundle server from {parsed.netloc}, so the page "
+                "needs no access to that port itself",
             ],
-            detail={**(detail or {}), "endpoint": url},
+            detail={**(detail or {}), "upstream": url},
         )
     )
+
+
+def upstreams(index: dict) -> dict[str, str]:
+    """Clip name -> upstream URL, for every live clip in a manifest.
+
+    Read from the manifest rather than passed in separately, so a server started
+    against a bundle it did not write proxies exactly what that bundle declares.
+    """
+    found: dict[str, str] = {}
+    for clip in index.get("clips", []):
+        stream = clip.get("stream") or {}
+        upstream = stream.get("upstream")
+        if upstream:
+            found[clip["name"]] = upstream
+    return found
