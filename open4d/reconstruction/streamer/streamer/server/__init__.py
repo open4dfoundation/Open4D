@@ -22,11 +22,13 @@ import socket
 import socketserver
 import threading
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from functools import partial
 from pathlib import Path
 
-from .. import bundle, representations
+from .. import bundle, live, representations
 from ..client import viewer_path
 from ..monitor import Monitor
 
@@ -35,6 +37,11 @@ DEFAULT_PORT = 8770
 
 VIEWER_ROUTES = ("/", "/index.html", "/viewer.html")
 STATS_ROUTE = "/stats.json"
+#: Live streams are proxied under this prefix; see `streamer.live`.
+LIVE_PREFIX = f"/{live.ROUTE_PREFIX}/"
+#: Copy size for the proxy. Small, because a frame boundary can fall anywhere
+#: and a large buffer would hold the tail of one frame back until the next.
+PROXY_CHUNK = 8192
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
@@ -46,6 +53,9 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
     """
 
     monitor: Monitor | None = None
+    #: Clip name -> upstream URL, from the manifest. Empty for a bundle with no
+    #: live clips, which makes the proxy route 404 rather than exist unused.
+    upstreams: dict = {}
 
     # SimpleHTTPRequestHandler guesses by extension and falls back to
     # text/html, which makes a .ply arrive as markup and fail to parse. The
@@ -62,6 +72,8 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_viewer()
         if self.path.split("?", 1)[0] == STATS_ROUTE:
             return self._send_stats()
+        if self.path.startswith(LIVE_PREFIX):
+            return self._proxy_live(self.path[len(LIVE_PREFIX):])
         return super().do_GET()
 
     def do_HEAD(self):  # noqa: N802
@@ -81,6 +93,49 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
+
+    def _proxy_live(self, name: str):
+        """Relay a live stream from its renderer, so the page has one origin.
+
+        The alternative is putting the renderer's own URL in the manifest, which
+        asks the *browser* to reach that port -- and a browser on a laptop
+        looking at a tunnelled page cannot, so the pane stays blank and nothing
+        reports why. Proxying costs a thread and a copy loop and removes the
+        whole class of problem.
+
+        Copied through rather than buffered: this is a `multipart/x-mixed-replace`
+        body that never ends, so anything that waits for completion waits
+        forever.
+        """
+        upstream = self.upstreams.get(name.split("?", 1)[0])
+        if upstream is None:
+            self.send_error(404, f"no live stream named {name!r} in this bundle")
+            return
+        try:
+            source = urllib.request.urlopen(upstream, timeout=10)
+        except (urllib.error.URLError, OSError) as error:
+            # 502 with the reason, because "the renderer is not running" is the
+            # single most likely thing to be wrong and is not the bundle's fault.
+            self.send_error(502, f"cannot reach {upstream}: {error}")
+            return
+
+        self.send_response(200)
+        for header in ("Content-Type", "Age", "Cache-Control", "Pragma"):
+            value = source.headers.get(header)
+            if value:
+                self.send_header(header, value)
+        self.send_header("Cache-Control", "no-store, no-cache, private")
+        self.end_headers()
+        try:
+            while True:
+                block = source.read(PROXY_CHUNK)
+                if not block:
+                    break
+                self.wfile.write(block)
+        except (BrokenPipeError, ConnectionResetError):
+            pass          # the tab was closed or navigated away; expected
+        finally:
+            source.close()
 
     def send_response(self, code, message=None):
         # Captured here because this is the one place every response passes
@@ -179,7 +234,11 @@ def serve(
     # itself: the class attribute is shared, so setting it on the base would
     # make two servers in one process count into each other.
     counters = Monitor() if monitor is None else monitor
-    handler_class = type("_BundleHandler", (_Handler,), {"monitor": counters})
+    handler_class = type(
+        "_BundleHandler",
+        (_Handler,),
+        {"monitor": counters, "upstreams": live.upstreams(index)},
+    )
     handler = partial(handler_class, directory=str(bundle_dir))
     try:
         server = _Server((host, port), handler)
@@ -203,6 +262,8 @@ def serve(
         )
     print(f"\nserving {bundle_dir}\n  {url}")
     print(f"  counters at {url.rstrip('/')}{STATS_ROUTE}")
+    for name, upstream in live.upstreams(index).items():
+        print(f"  live {name} <- {upstream}")
     if host in ("0.0.0.0", "::", ""):
         print("  bound to every interface, with no authentication: anyone who can")
         print("  reach this port can read the bundle.")
