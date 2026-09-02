@@ -1157,43 +1157,79 @@ const REPRESENTATIONS = {
   mesh: {
     geometry: true,
     surface: "canvas",
-    decode: decodeGeometry(parseGeometryFrame),
+    decode: decodeFrame("mesh"),
     cacheSize: 6,
     renderer: (gl) => new MeshRenderer(gl, "mesh"),
   },
   points: {
     geometry: true,
     surface: "canvas",
-    decode: decodeGeometry(parseGeometryFrame),
+    decode: decodeFrame("points"),
     cacheSize: 6,
     renderer: (gl) => new MeshRenderer(gl, "points"),
   },
   gaussians: {
     geometry: true,
     surface: "canvas",
-    decode: decodeGeometry(parseGaussianFrame),
+    decode: decodeFrame("gaussians"),
     cacheSize: 6,
     renderer: (gl) => new SplatRenderer(gl),
   },
   pixels: {
     geometry: false,
     surface: "image",
-    decode: decodeImage,
+    decode: decodeFrame("pixels"),
     // Pixels decode to an <img>, which is cheap next to a parsed vertex buffer,
     // so a longer window costs little and covers a faster scrub.
     cacheSize: 16,
   },
 };
 
-/* A Gaussian frame arrives as 3DGS PLY or as quantised .splat; both parse to
- * one shape, so nothing below here knows which it got. */
-function parseGaussianFrame(buffer, url) {
-  return url.toLowerCase().endsWith(".splat") ? parseSplat(buffer) : parsePly(buffer);
+/* ----------------------------------------------------------------- codecs ---
+ * What is on the wire, keyed the way `streamer.codecs` keys it: by
+ * (representation, suffix), not by suffix. The same `.ply` is a 3DGS cloud or a
+ * mesh depending on which representation is asking, and they need different
+ * parsers -- which is why this was previously two hand-written dispatchers, one
+ * per representation, each sniffing an extension.
+ *
+ * Adding a codec is an entry here and a parser. Nothing else in this file
+ * changes, and nothing outside it learns the format's name. */
+const CODECS = {
+  mesh:      { ".ply": parseMeshPly, ".drc": parseDraco },
+  points:    { ".ply": parseMeshPly, ".drc": parseDraco },
+  gaussians: { ".ply": parsePly,     ".splat": parseSplat },
+  pixels:    { ".jpg": decodeImage, ".jpeg": decodeImage, ".png": decodeImage },
+};
+
+function suffixOf(url) {
+  const path = url.split("?", 1)[0];
+  const dot = path.lastIndexOf(".");
+  return dot < 0 ? "" : path.slice(dot).toLowerCase();
 }
 
-/* A mesh or point frame arrives as PLY or as Draco. Same shape out. */
-function parseGeometryFrame(buffer, url) {
-  return url.toLowerCase().endsWith(".drc") ? parseDraco(buffer) : parseMeshPly(buffer);
+/* The parser for one frame, or a refusal that names what was missing.
+ *
+ * A frame in a format nothing here decodes is the failure this whole registry
+ * exists to make legible: `streamer.codecs` may well know the format and say it
+ * decodes server-side, in which case the producer should have rendered it to
+ * pixels rather than shipping the bitstream. Saying which suffixes *are*
+ * handled turns that from a blank pane into a sentence. */
+function codecFor(representation, url) {
+  const table = CODECS[representation] || {};
+  const suffix = suffixOf(url);
+  const parse = table[suffix];
+  if (!parse) {
+    const offered = Object.keys(table).join(", ") || "nothing";
+    throw new Error(
+      `no decoder for a ${representation} frame ending ${suffix || "(none)"}; `
+      + `this client decodes ${offered}`);
+  }
+  return parse;
+}
+
+function decodeFrame(representation) {
+  return (buffer, url, mediaType) =>
+    codecFor(representation, url)(buffer, url, mediaType);
 }
 
 /* view.json v1 called these `kind`. Bundles already on disk are worth keeping
@@ -1390,17 +1426,14 @@ class Scheduler {
   }
 }
 
-/* The decoders a Scheduler drives. Each turns bytes into something a renderer
- * takes and nothing else: no caching, no look-ahead, no idea what frame it is.
- * That all moved to the Scheduler, so the two paths share one policy instead of
+/* The decoders a Scheduler drives turn bytes into something a renderer takes
+ * and nothing else: no caching, no look-ahead, no idea what frame it is. That
+ * all moved to the Scheduler, so the paths share one policy instead of
  * disagreeing about it.
  *
  * A parsed geometry frame is roughly 50 bytes a Gaussian, so a handful is tens
- * of megabytes and the whole sequence is not -- hence the small cache the
+ * of megabytes and the whole sequence is not -- hence the small cache each
  * representation asks for rather than an unbounded one. */
-function decodeGeometry(parse) {
-  return (buffer, url) => parse(buffer, url);
-}
 
 
 /* Pixels arrive as an <img> rather than an array, because that is what the

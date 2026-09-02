@@ -38,14 +38,28 @@ def script() -> str:
 
 
 def cut(name: str) -> str:
-    """One top-level definition, by the name the page gives it."""
+    """One top-level definition, by the name the page gives it.
+
+    `async function X(` is tried first because `function X(` is a substring of
+    it: matching the shorter one drops the `async` keyword, and the extracted
+    text then fails to parse on its own `await`.
+    """
     source = page()
-    for prefix in (f"function {name}(", f"const {name} =", f"class {name} "):
+    for prefix in (
+        f"async function {name}(",
+        f"function {name}(",
+        f"const {name} =",
+        f"let {name} =",
+        f"class {name} ",
+    ):
         start = source.find(prefix)
         if start < 0:
             continue
-        if prefix.startswith("const"):
+        if prefix.startswith(("const", "let")):
             return source[start : source.index(";\n", start) + 2]
+        line = source[start : source.index("\n", start)]
+        if line.count("{") and line.count("{") == line.count("}"):
+            return line
         return source[start : source.index("\n}\n", start) + 3]
     raise AssertionError(f"{name} is not defined in the viewer")
 
@@ -78,10 +92,14 @@ def test_the_representation_registry_evaluates(tmp_path):
         for name in (
             "parseMeshPly",
             "REPRESENTATIONS",
-            "parseGaussianFrame",
-            "parseGeometryFrame",
-            "decodeGeometry",
+            "parsePly",
+            "parseSplat",
+            "parseDraco",
             "decodeImage",
+            "CODECS",
+            "suffixOf",
+            "codecFor",
+            "decodeFrame",
         )
     ) + """
         const out = {};

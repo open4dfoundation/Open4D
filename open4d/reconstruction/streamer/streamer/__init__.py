@@ -9,12 +9,15 @@ them.
 
 The pieces, smallest first:
 
+``codecs``
+    What is on the wire, and who can decode it. A codec is a wire format that
+    produces a representation, keyed by both because the same ``.ply`` is a
+    3DGS cloud or a mesh depending on which is asking. ``decodes`` says whether
+    a browser can turn it back into geometry, which is the question that decides
+    whether a module can be streamed at all.
 ``representations``
-    The pluggable bit. A representation registers what transport needs to know
-    about it -- frame suffixes and their ``Content-Type``, and whether the
-    packaged client can render it -- and nothing else. The server builds its
-    extension map from this rather than a hardcoded list, so a new
-    representation is a registration, not an edit in three files.
+    What a decoded frame is, and whether the packaged client can render it.
+    Suffixes are derived from the codecs rather than listed again here.
 ``bundle``
     The ``view.json`` contract: clips, their representation, their frames, and
     the capture rig that lets several of them share a camera. Belongs to neither
@@ -48,23 +51,36 @@ tested; the scheduler that consumes it is the next piece, and belongs here.
 
 from __future__ import annotations
 
-from . import bundle, client, export, live, monitor, representations, server, transfer
+from . import (
+    bundle,
+    client,
+    codecs,
+    export,
+    live,
+    monitor,
+    representations,
+    server,
+    transfer,
+)
 from .bundle import Clip
 from .client import viewer_path
 from .export import from_sequence, from_source
 from .monitor import Monitor, Transfer
+from .codecs import CodecSpec
 from .representations import RepresentationSpec
 from .server import DEFAULT_PORT, serve
 from .transfer import fetch
 
 __all__ = [
     "Clip",
+    "CodecSpec",
     "DEFAULT_PORT",
     "Monitor",
     "RepresentationSpec",
     "Transfer",
     "bundle",
     "client",
+    "codecs",
     "export",
     "live",
     "fetch",
