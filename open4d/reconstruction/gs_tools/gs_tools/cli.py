@@ -15,17 +15,26 @@ from streamer import server as view
 from . import env, outputs, paths, rast
 from .data import layouts
 from .io import manifest
-from .methods import base, capture, gstream, queen, rerf, vega
+from .methods import base, capture, gaussian, gstream, queen, rerf, vega
 
 METHODS = {"queen": queen, "3dgstream": gstream}
 
-#: Output kinds each exporter claims, for `--method auto`.
+#: Exporter name -> the module implementing it. Which *kinds* each claims lives
+#: in `gs_tools.outputs.EXPORTER_FOR`, next to the Kind enum, so that
+#: `Detected.viewable` can answer "is there a path for this" without importing
+#: this module -- and so the answer cannot disagree with what `--method auto`
+#: picks.
+EXPORTER_MODULES = {
+    "vega": vega,
+    "rerf": rerf,
+    "captured": capture,
+    "gaussian": gaussian,
+}
+
+#: Kinds each exporter claims, derived so the two definitions cannot drift.
 EXPORTERS = {
-    "vega": (vega, (outputs.Kind.VEGA_CATALOG, outputs.Kind.VEGA_BITSTREAM,
-                    outputs.Kind.VEGA_SCENE_EXPORT)),
-    "rerf": (rerf, (outputs.Kind.RERF_RUN, outputs.Kind.RERF_BITSTREAM,
-                    outputs.Kind.IMAGE_SEQUENCE)),
-    "captured": (capture, (outputs.Kind.ORBIT_CORPUS, outputs.Kind.ORBIT_SCENE)),
+    name: (module, tuple(k for k, v in outputs.EXPORTER_FOR.items() if v == name))
+    for name, module in EXPORTER_MODULES.items()
 }
 
 
@@ -126,11 +135,9 @@ def _exporter(found: outputs.Detected, requested: str):
     if found.kind is outputs.Kind.BUNDLE:
         return None
     if requested != "auto":
-        return EXPORTERS[requested][0]
-    for module, kinds in EXPORTERS.values():
-        if found.kind in kinds:
-            return module
-    return None
+        return EXPORTER_MODULES[requested]
+    claimed = outputs.EXPORTER_FOR.get(found.kind)
+    return EXPORTER_MODULES.get(claimed) if claimed else None
 
 
 def _options_for(module, args: argparse.Namespace):
@@ -141,6 +148,14 @@ def _options_for(module, args: argparse.Namespace):
             views=tuple(int(v) for v in args.views) if args.views else (),
             frames=args.frames,
             max_width=args.capture_width,
+            fps=args.fps,
+        )
+    if module is gaussian:
+        return gaussian.GaussianExportOptions(
+            frames=args.frames,
+            frame_format=args.frame_format,
+            scene=args.scene_name,
+            method=args.method_name,
             fps=args.fps,
         )
     if module is vega:
@@ -374,6 +389,19 @@ def build_parser() -> argparse.ArgumentParser:
                             help="captured only: longest edge of the exported images")
         target.add_argument("--bake-azimuth", type=float, default=0.0, dest="bake_azimuth",
                             help="Vega only: camera azimuth in degrees that colour is baked from")
+        # 3DGS runs
+        target.add_argument("--frame-format", default="ply", choices=gaussian.FORMATS,
+                            dest="frame_format",
+                            help="3DGS runs only: 'ply' copies the run's own frames; "
+                                 "'splat' re-encodes to 32 bytes per Gaussian, several "
+                                 "times smaller but degree-0 colour only")
+        target.add_argument("--scene-name", dest="scene_name",
+                            help="3DGS runs only: subject name, so this clip lines up in "
+                                 "Compare with another method's clip of the same subject "
+                                 "(default: the run directory's name)")
+        target.add_argument("--method-name", dest="method_name",
+                            help="3DGS runs only: method label in the viewer "
+                                 "(default: the run manifest's, else 'gaussian')")
         target.add_argument("--device", help="Vega only: torch device for the colour decode")
         # ReRF
         target.add_argument("--render", action="store_true",

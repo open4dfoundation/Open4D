@@ -168,14 +168,60 @@ def test_detect_image_sequence_ignores_depth_companions(tmp_path):
     assert found.detail["frames"] == 3
 
 
-def test_detect_gaussian_run(tmp_path):
+def test_detect_gaussian_run_single_frame(tmp_path):
+    """A static 3DGS run, or 3DGStream's init step: one frame, several checkpoints."""
     for iteration in (7000, 30000):
         target = tmp_path / "point_cloud" / f"iteration_{iteration}"
         target.mkdir(parents=True)
         ply.write(target / "point_cloud.ply", **_gaussians(3))
     found = outputs.detect(tmp_path)
     assert found.kind is outputs.Kind.GAUSSIAN_RUN
-    assert found.detail["iterations"] == [7000, 30000]
+    assert found.detail["frames"] == 1
+    # The finished model, not every checkpoint on the way to it.
+    assert found.detail["iterations"] == [30000]
+    assert outputs.gaussian_frames(tmp_path)[0][1].parent.name == "iteration_30000"
+
+
+def test_detect_gaussian_run_queen_layout(tmp_path):
+    for frame in (1, 2, 3):
+        target = tmp_path / "frames" / f"{frame:04d}"
+        target.mkdir(parents=True)
+        ply.write(target / "point_cloud.ply", **_gaussians(3))
+    found = outputs.detect(tmp_path)
+    assert found.kind is outputs.Kind.GAUSSIAN_RUN
+    assert (found.detail["frames"], found.detail["first_frame"]) == (3, 1)
+    assert [index for index, _ in outputs.gaussian_frames(tmp_path)] == [1, 2, 3]
+
+
+def test_detect_gaussian_run_gstream_layout(tmp_path):
+    for frame in (2, 3, 4):
+        target = tmp_path / f"frame{frame:06d}" / "point_cloud" / "iteration_150"
+        target.mkdir(parents=True)
+        ply.write(target / "point_cloud.ply", **_gaussians(3))
+    found = outputs.detect(tmp_path)
+    assert found.kind is outputs.Kind.GAUSSIAN_RUN
+    # Frame numbering is the run's own: a run starting at 2 is not renumbered.
+    assert [index for index, _ in outputs.gaussian_frames(tmp_path)] == [2, 3, 4]
+    assert found.detail["first_frame"] == 2
+
+
+def test_gstream_added_gaussians_are_not_a_frame(tmp_path):
+    """`added/` holds only that frame's new Gaussians, not the whole scene."""
+    base = tmp_path / "frame000002" / "point_cloud"
+    (base / "iteration_150").mkdir(parents=True)
+    ply.write(base / "iteration_150" / "point_cloud.ply", **_gaussians(3))
+    (base / "iteration_250" / "added").mkdir(parents=True)
+    ply.write(base / "iteration_250" / "added" / "point_cloud.ply", **_gaussians(1))
+    frames = outputs.gaussian_frames(tmp_path)
+    assert len(frames) == 1
+    assert frames[0][1].parent.name == "iteration_150"
+
+
+def test_viewable_means_exportable_not_merely_recognised(tmp_path):
+    """These disagreed: `inspect` said viewable, then `export` refused."""
+    assert not outputs.detect(tmp_path).viewable
+    for kind, name in outputs.EXPORTER_FOR.items():
+        assert name in {"vega", "rerf", "captured", "gaussian"}, kind
 
 
 def test_detect_unknown_and_missing(tmp_path):
