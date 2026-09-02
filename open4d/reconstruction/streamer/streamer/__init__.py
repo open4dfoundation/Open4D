@@ -28,6 +28,10 @@ The pieces, smallest first:
 ``transfer``
     Receiving. Pull a bundle, or some clips of one, onto the machine you are
     sitting at.
+``export``
+    Any `open4d.Sequence` as a bundle -- which is how Open4D's own mesh and
+    point-cloud sequences, in any format `open4d.load` reads, reach this
+    client.
 ``client``
     Playback. One self-contained browser page, no build step and no CDN.
 
@@ -40,9 +44,10 @@ tested; the scheduler that consumes it is the next piece, and belongs here.
 
 from __future__ import annotations
 
-from . import bundle, client, monitor, representations, server, transfer
+from . import bundle, client, export, monitor, representations, server, transfer
 from .bundle import Clip
 from .client import viewer_path
+from .export import from_sequence, from_source
 from .monitor import Monitor, Transfer
 from .representations import RepresentationSpec
 from .server import DEFAULT_PORT, serve
@@ -56,7 +61,10 @@ __all__ = [
     "Transfer",
     "bundle",
     "client",
+    "export",
     "fetch",
+    "from_sequence",
+    "from_source",
     "monitor",
     "representations",
     "server",
