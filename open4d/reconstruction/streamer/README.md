@@ -45,7 +45,53 @@ the right answer for every module, so both exist:
 A live clip gets **its own scene**, because a live renderer chooses its own
 camera and putting one beside a rig pose would break the guarantee Compare
 exists to make. It has no timeline either, so the transport bar disables itself
-and says `live` rather than leaving a scrubber that does nothing.
+rather than leaving a scrubber that does nothing.
+
+### Live is not the same as replay
+
+MJPEG carries a decode-and-render-on-demand loop and a slideshow of files
+equally well, and this repository has both, so `live.mjpeg` requires an
+`origin` and has no default — a default would let a slideshow be presented as
+live by saying nothing:
+
+| origin | means | example here |
+| --- | --- | --- |
+| `rendered` | decoded and drawn per frame, on demand | Vega's wall demo |
+| `replay` | frames rendered earlier, looped over the same transport | NeVo's viewer |
+
+`rendered` does not claim the *encode* is happening live — it isn't, any more
+than it is for a video. It claims the decode is. NeVo is `replay` because a
+NeRF frame takes about half a second to ray-march, which is not a playback
+rate; its own status page has always said so.
+
+### Running the live demo
+
+The streaming loop is Vega's, driven from this tree:
+
+```bash
+cd open4d/reconstruction/vega
+PYTHONPATH=. python -m orbitvega.wall_demo \
+    --bitstream-dir <orbitvega.prepare output> \
+    --objects basketball dancer mitch thomas \
+    --chunk-port 8801 --mjpeg-port 8800
+```
+
+Then register it and serve:
+
+```python
+from streamer import bundle, live, serve
+clip = live.mjpeg("http://127.0.0.1:8800/stream", name="vega-live",
+                  origin="rendered", scene="Vega live")
+bundle.write(out, title="live", source="vega", clips=[clip])
+serve(out, port=8770)
+```
+
+The chunk server's access log **is** the streaming loop: one `GET
+/<object>/frame_NNNN.pt` per object per frame, reassembled by
+`vega.player.StreamingPlayer`, colour-decoded from the hash grid, culled and
+scheduled per `vega.pipeline`, then rasterised. Measured at about 14 frames in
+6 seconds for four objects at 360 px tiles on one RTX 4090 — which is the
+honest rate for decoding four Gaussian sequences per frame, not a target.
 
 ## The one abstraction that matters
 

@@ -36,16 +36,39 @@ from . import bundle
 ROUTE_PREFIX = "live"
 
 
+#: Where a stream's pixels come from at the moment they are requested.
+#:
+#: The transport does not say. MJPEG carries a decode-and-render-on-demand loop
+#: and a slideshow of files equally well, and this repository has both -- Vega's
+#: wall demo runs the full client path per frame, while NeVo's loops PNGs a
+#: renderer wrote hours earlier because a NeRF frame takes about half a second
+#: to ray-march. Presenting the second as live would be a claim the software
+#: does not support, so a producer has to say which it is.
+ORIGINS = {
+    #: Decoded and rendered per frame, on demand. The encode may well be offline
+    #: -- that is true of any video -- but the decode is happening now.
+    "rendered": "live",
+    #: Frames prepared earlier and replayed over the same transport. Nothing is
+    #: being computed while you watch.
+    "replay": "replay",
+}
+
+
 def mjpeg(
     url: str,
     *,
     name: str,
+    origin: str,
     scene: str | None = None,
     method: str = "live",
     notes: list[str] | None = None,
     detail: dict | None = None,
 ) -> bundle.Clip:
     """A clip fed by an MJPEG endpoint.
+
+    ``origin`` is required and has no default: see :data:`ORIGINS`. A default
+    would let a producer mislabel a slideshow as live by saying nothing, which
+    is exactly the mistake this argument exists to prevent.
 
     ``url`` is where the renderer actually is, and it is recorded as the clip's
     *upstream*. What the manifest hands the client is a path on the bundle
@@ -64,6 +87,10 @@ def mjpeg(
         raise ValueError(f"{url!r} is not an http(s) URL")
     if "/" in name:
         raise ValueError(f"{name!r} must be a single path segment")
+    if origin not in ORIGINS:
+        raise ValueError(
+            f"origin must be one of {', '.join(sorted(ORIGINS))}; got {origin!r}"
+        )
 
     return bundle.validate(
         bundle.Clip(
@@ -76,10 +103,14 @@ def mjpeg(
                 "url": f"{ROUTE_PREFIX}/{name}",
                 "protocol": "mjpeg",
                 "upstream": url,
+                "origin": origin,
             },
             notes=(notes or []) + [
-                "live: rendered as it is watched, so there is no frame list and "
-                "nothing to scrub",
+                "rendered on demand: decoded and drawn per frame while you watch"
+                if origin == "rendered"
+                else "replay: frames were rendered earlier and are being looped — "
+                     "nothing is being computed while you watch",
+                "no frame list and nothing to scrub: the stream sets its own pace",
                 f"proxied by the bundle server from {parsed.netloc}, so the page "
                 "needs no access to that port itself",
             ],
