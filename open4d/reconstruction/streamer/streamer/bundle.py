@@ -38,7 +38,9 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from open4d.core import Dependency, DependencyMode
 
 from ._revision import open4d_revision
 
@@ -80,8 +82,44 @@ class Clip:
     #: What a viewer of this clip needs to be told -- a baked colour direction,
     #: a fixed render camera, a quality caveat. Shown in the viewer's UI.
     notes: list[str] = field(default_factory=list)
+    #: How this clip's frames depend on one another, in the vocabulary of
+    #: `open4d.core.Dependency`: ``{"mode": ..., "key_frames": [...]}``. Absent
+    #: means independent, which is what a directory of whole frames is and what
+    #: every exporter in this repository currently writes -- they decode before
+    #: they write. A producer that serves a bitstream *as* the frames, rather
+    #: than decoding it first, is what this field exists for.
+    dependency: dict[str, Any] | None = None
     #: Anything method-specific worth keeping; not interpreted by the viewer.
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+def dependency_field(dependency: Dependency | None) -> dict[str, Any] | None:
+    """A `Dependency` as the manifest stores it, or None when it is the default.
+
+    Independent is omitted rather than written out, so a manifest only carries
+    the field when it says something: a reader treating absent as independent
+    and a writer omitting the default cannot disagree.
+    """
+    if dependency is None or dependency.mode is DependencyMode.INDEPENDENT:
+        return None
+    return {
+        "mode": dependency.mode.value,
+        "key_frames": list(dependency.key_frames),
+    }
+
+
+def dependency_of(clip: Clip | Mapping[str, Any]) -> Dependency:
+    """The `Dependency` a clip declares, defaulting to independent.
+
+    Accepts a `Clip` or the plain mapping a manifest holds, so a consumer that
+    read ``view.json`` back does not have to rebuild the dataclass first.
+    """
+    raw = clip.dependency if isinstance(clip, Clip) else clip.get("dependency")
+    if not raw:
+        return Dependency()
+    mode = DependencyMode(raw["mode"])
+    keys = tuple(raw.get("key_frames") or ())
+    return Dependency(mode=mode, key_frames=keys if mode is DependencyMode.GOP else ())
 
 
 def frame_dir(out_dir: Path | str, name: str) -> Path:

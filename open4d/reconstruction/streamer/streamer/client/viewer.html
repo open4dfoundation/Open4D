@@ -1036,25 +1036,31 @@ const REPRESENTATIONS = {
   mesh: {
     geometry: true,
     surface: "canvas",
-    source: (clip, root) => new GeometryClip(clip, root, parseMeshPly),
+    decode: decodeGeometry(parseMeshPly),
+    cacheSize: 6,
     renderer: (gl) => new MeshRenderer(gl, "mesh"),
   },
   points: {
     geometry: true,
     surface: "canvas",
-    source: (clip, root) => new GeometryClip(clip, root, parseMeshPly),
+    decode: decodeGeometry(parseMeshPly),
+    cacheSize: 6,
     renderer: (gl) => new MeshRenderer(gl, "points"),
   },
   gaussians: {
     geometry: true,
     surface: "canvas",
-    source: (clip, root) => new GeometryClip(clip, root, parseGaussianFrame),
+    decode: decodeGeometry(parseGaussianFrame),
+    cacheSize: 6,
     renderer: (gl) => new SplatRenderer(gl),
   },
   pixels: {
     geometry: false,
     surface: "image",
-    source: (clip, root) => new ImageClip(clip, root),
+    decode: decodeImage,
+    // Pixels decode to an <img>, which is cheap next to a parsed vertex buffer,
+    // so a longer window costs little and covers a faster scrub.
+    cacheSize: 16,
   },
 };
 
@@ -1073,69 +1079,189 @@ function playable(clip) { return spec(clip) !== undefined; }
 function hasGeometry(clip) { const s = spec(clip); return s !== undefined && s.geometry; }
 function isPixels(clip) { const s = spec(clip); return s !== undefined && !s.geometry; }
 
-/* Any representation whose frames are parsed into vertex data, whatever the
- * format: the parser is handed in by the representation, so a new one needs an
- * entry in REPRESENTATIONS and nothing here. */
-class GeometryClip {
-  constructor(clip, root, parse) {
+/* ------------------------------------------------------------- scheduling ---
+ * When a frame can only be decoded after another one, requesting it and hoping
+ * is wrong. `open4d.core.Dependency` is where that is declared -- a codec's
+ * frames may need the group's key frame first (`gop`, as in Vega's
+ * group-of-volumes), or its decode stream may not rewind at all (`sequential`,
+ * as in ReRF) -- and a manifest carries the declaration per clip.
+ *
+ * This is that model's client half. `chain` is a transcription of
+ * Dependency.chain, and being a transcription is a liability: two
+ * implementations of one rule in two languages drift. So it is held to the
+ * Python one by a test that runs both over the same cases
+ * (streamer_tests/test_scheduler.py). Change one, and that test tells you about
+ * the other.
+ *
+ * Every clip this repository writes today is independent, because every
+ * exporter decodes before it writes. The gop and sequential paths are therefore
+ * tested rather than exercised; they are what a producer serving a bitstream as
+ * its frames would need, and building them after such a producer existed would
+ * mean changing the client at the same time as trusting a new encoder.
+ */
+const INDEPENDENT = { mode: "independent", keyFrames: [] };
+
+function dependencyOf(clip) {
+  const raw = clip && clip.dependency;
+  if (!raw) return INDEPENDENT;
+  return { mode: raw.mode, keyFrames: raw.key_frames || [] };
+}
+
+/* The frames to decode, in order, to make `index` available -- see
+ * Dependency.chain for why a backward seek in a sequential stream comes back as
+ * a full replay rather than a step. `decoded` is where the decoder currently
+ * sits, or null. */
+function chain(dependency, index, decoded = null) {
+  if (index < 0) throw new Error("index must be nonnegative");
+  if (dependency.mode === "independent") return [index];
+  if (decoded === index) return [];
+
+  let start;
+  if (dependency.mode === "gop") {
+    const keys = dependency.keyFrames.filter((key) => key <= index);
+    if (!keys.length) throw new Error(`no key frame at or before ${index}`);
+    start = keys[keys.length - 1];
+    if (decoded !== null && start <= decoded && decoded < index) start = decoded + 1;
+  } else {
+    start = decoded !== null && decoded < index ? decoded + 1 : 0;
+  }
+  const frames = [];
+  for (let i = start; i <= index; i++) frames.push(i);
+  return frames;
+}
+
+/* One cache, one prefetch policy, one place that honours the dependency chain.
+ *
+ * Before this the two clip sources each kept their own: different look-ahead
+ * (two frames against four), and only one of them evicted -- the image path
+ * grew without bound, so scrubbing a long clip kept every frame it had ever
+ * shown. Hoisting it fixes that and is most of why this exists today, given
+ * that nothing yet declares a dependency to honour.
+ */
+class Scheduler {
+  constructor(clip, root, decode, { cacheSize = 6, lookAhead = 3 } = {}) {
     this.clip = clip;
     this.root = root;
-    this.parse = parse;
-    this.cache = new Map();
-    this.pending = new Map();
+    this.decode = decode;
+    this.dependency = dependencyOf(clip);
+    this.cacheSize = Math.max(1, cacheSize);
+    this.lookAhead = lookAhead;
+    this.cache = new Map();          // index -> decoded frame, insertion-ordered
+    this.pending = new Map();        // index -> in-flight promise
+    this.decoded = null;             // where a stateful decoder currently sits
+    this.stats = { decodes: 0, bytes: 0, hits: 0, misses: 0, replays: 0 };
   }
+
   get length() { return this.clip.frames.length; }
 
-  async frame(index) {
+  _touch(index, value) {
+    // Insertion-ordered Map as an LRU: re-inserting moves a key to the end, so
+    // the oldest is always the first key.
+    this.cache.delete(index);
+    this.cache.set(index, value);
+    while (this.cache.size > this.cacheSize) {
+      this.cache.delete(this.cache.keys().next().value);
+    }
+  }
+
+  async _decodeOne(index) {
     if (this.cache.has(index)) return this.cache.get(index);
     if (this.pending.has(index)) return this.pending.get(index);
     const url = this.root + this.clip.frames[index];
     const task = fetch(url).then(async (response) => {
       if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-      const parsed = this.parse(await response.arrayBuffer(), url);
+      const buffer = await response.arrayBuffer();
+      // The response's own Content-Type, which the server takes from the
+      // representation registry -- so an image is decoded as the type it was
+      // served as rather than by leaving a browser to sniff a typeless blob.
+      const parsed = await this.decode(buffer, url, response.headers
+        ? response.headers.get("Content-Type") : null);
       this.pending.delete(index);
-      this.cache.set(index, parsed);
-      // A parsed frame is ~50 bytes a Gaussian, so a handful is tens of MB and
-      // the whole sequence is not.
-      if (this.cache.size > 6) this.cache.delete(this.cache.keys().next().value);
+      this.stats.decodes += 1;
+      this.stats.bytes += buffer.byteLength;
+      this._touch(index, parsed);
       return parsed;
     }).catch((error) => { this.pending.delete(index); throw error; });
     this.pending.set(index, task);
     return task;
   }
 
-  prefetch(index) {
-    for (let ahead = 1; ahead <= 2; ahead++) {
-      const next = (index + ahead) % this.length;
-      if (!this.cache.has(next) && !this.pending.has(next)) this.frame(next).catch(() => {});
+  /* The frame at `index`, decoding whatever has to come first. */
+  async seek(index) {
+    if (this.cache.has(index)) {
+      this.stats.hits += 1;
+      const value = this.cache.get(index);
+      this._touch(index, value);
+      return value;
     }
+    this.stats.misses += 1;
+    const plan = chain(this.dependency, index, this.decoded);
+    if (plan.length > 1) this.stats.replays += 1;
+    let last = this.cache.get(index);
+    for (const step of plan) {
+      last = await this._decodeOne(step);
+      if (this.dependency.mode !== "independent") this.decoded = step;
+    }
+    return last;
+  }
+
+  /* Look ahead along the direction playback actually moves. Only the frames a
+   * forward step would need are fetched, which for a dependent clip is the next
+   * few in the chain rather than an arbitrary window. */
+  prefetch(index) {
+    for (let ahead = 1; ahead <= this.lookAhead; ahead++) {
+      const next = (index + ahead) % this.length;
+      if (this.cache.has(next) || this.pending.has(next)) continue;
+      if (this.dependency.mode === "independent") {
+        this._decodeOne(next).catch(() => {});
+      } else if (next === index + ahead) {
+        // Not across the loop point: restarting a dependent stream to prefetch
+        // frame 0 would evict the frames being played to get there.
+        this._decodeOne(next).catch(() => {});
+      }
+    }
+  }
+
+  snapshot() {
+    return {
+      ...this.stats,
+      cached: this.cache.size,
+      pending: this.pending.size,
+      mode: this.dependency.mode,
+    };
   }
 }
 
-class ImageClip {
-  constructor(clip, root) {
-    this.clip = clip;
-    this.root = root;
-    this.images = new Map();
-  }
-  get length() { return this.clip.frames.length; }
+/* The decoders a Scheduler drives. Each turns bytes into something a renderer
+ * takes and nothing else: no caching, no look-ahead, no idea what frame it is.
+ * That all moved to the Scheduler, so the two paths share one policy instead of
+ * disagreeing about it.
+ *
+ * A parsed geometry frame is roughly 50 bytes a Gaussian, so a handful is tens
+ * of megabytes and the whole sequence is not -- hence the small cache the
+ * representation asks for rather than an unbounded one. */
+function decodeGeometry(parse) {
+  return (buffer, url) => parse(buffer, url);
+}
 
-  frame(index) {
-    if (this.images.has(index)) return Promise.resolve(this.images.get(index));
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => { this.images.set(index, image); resolve(image); };
-      image.onerror = () => reject(new Error(`could not load ${this.clip.frames[index]}`));
-      image.src = this.root + this.clip.frames[index];
-    });
-  }
 
-  prefetch(index) {
-    for (let ahead = 1; ahead <= 4; ahead++) {
-      const next = (index + ahead) % this.length;
-      if (!this.images.has(next)) this.frame(next).catch(() => {});
-    }
-  }
+/* Pixels arrive as an <img> rather than an array, because that is what the
+ * surface takes. Decoded through a blob URL so the fetch, and therefore the
+ * byte count and the cache, work the same way as every other representation --
+ * setting `img.src` to the frame URL would put the transfer somewhere the
+ * scheduler cannot see. */
+function decodeImage(buffer, url, mediaType) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([buffer], mediaType ? { type: mediaType } : undefined);
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(objectUrl); resolve(image); };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error(`could not decode ${url}`));
+    };
+    image.src = objectUrl;
+  });
 }
 
 /* ------------------------------------------------------------------ panes ---
@@ -1213,7 +1339,9 @@ class Pane {
     const make = kind.renderer;
     if (make) make.kind = clip.representation;
     this._surface(kind.surface, make);
-    this.source = kind.source(clip, "./");
+    this.source = new Scheduler(clip, "./", kind.decode, {
+      cacheSize: kind.cacheSize,
+    });
     this.label.textContent = clip.camera === null || clip.camera === undefined
       ? this.method : `${this.method} · cam ${clip.camera}`;
   }
@@ -1237,11 +1365,13 @@ class Pane {
   async show(frame) {
     if (!this.source) return;
     const index = Math.min(frame, this.source.length - 1);
+    // seek, not fetch: for a clip that declares a dependency this decodes
+    // whatever has to come first, in order.
+    const decoded = await this.source.seek(index);
     if (isPixels(this.clip)) {
-      this.image.src = (await this.source.frame(index)).src;
+      this.image.src = decoded.src;
     } else {
-      const parsed = await this.source.frame(index);
-      this.renderer.upload(parsed);
+      this.renderer.upload(decoded);
       this.sortKey = "";
     }
     this.loaded = index;
@@ -1426,8 +1556,35 @@ function refreshPanel() {
   const rows = [["mode", app.mode], ["panes", app.panes.length], ["frames", frameCount()]];
   for (const pane of app.panes) {
     if (pane.clip && pane.clip.counts && pane.clip.counts.length) {
-      rows.push([`${pane.method} gaussians`,
+      const noun = pane.clip.representation === "gaussians" ? "gaussians" : "vertices";
+      rows.push([`${pane.method} ${noun}`,
                  Math.round(pane.clip.counts.reduce((a, b) => a + b, 0) / pane.clip.counts.length).toLocaleString()]);
+    }
+  }
+  // What the scheduler actually did. Summed across panes, because the question
+  // is whether playback is keeping up, not which pane is behind.
+  const active = app.panes.filter((pane) => pane.source && pane.source.snapshot);
+  if (active.length) {
+    const totals = active.reduce((sum, pane) => {
+      const snap = pane.source.snapshot();
+      return {
+        cached: sum.cached + snap.cached,
+        pending: sum.pending + snap.pending,
+        decodes: sum.decodes + snap.decodes,
+        bytes: sum.bytes + snap.bytes,
+        replays: sum.replays + snap.replays,
+      };
+    }, { cached: 0, pending: 0, decodes: 0, bytes: 0, replays: 0 });
+    rows.push(["buffered", `${totals.cached} frames`
+      + (totals.pending ? ` (+${totals.pending} in flight)` : "")]);
+    rows.push(["decoded", `${totals.decodes} frames · `
+      + `${(totals.bytes / 1e6).toFixed(1)} MB`]);
+    const modes = new Set(active.map((pane) => pane.source.snapshot().mode));
+    if (!(modes.size === 1 && modes.has("independent"))) {
+      // Only worth the row when something is not independent: a replay count of
+      // zero on an independent clip says nothing.
+      rows.push(["decode order", [...modes].join(", ")]);
+      rows.push(["replays", String(totals.replays)]);
     }
   }
   for (const [key, value] of rows) {

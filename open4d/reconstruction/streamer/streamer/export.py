@@ -87,6 +87,12 @@ def from_sequence(
         representation=representation.value,
         scene=scene or clip_name,
         method=method or representation.value,
+        # Carried through from the provider rather than assumed: a Sequence whose
+        # frames need a key frame first says so, and the client is then able to
+        # plan a seek instead of requesting a frame and hoping. Writing whole
+        # frames per file makes this independent in practice today -- the field
+        # is the path by which that stops being the only option.
+        dependency=bundle.dependency_field(sequence.dependency),
         # Vertices per frame. The field is named for the Gaussian case that
         # needed it first; for a mesh it is the vertex count, which is the same
         # thing the viewer reports.
