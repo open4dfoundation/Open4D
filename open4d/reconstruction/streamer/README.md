@@ -28,7 +28,7 @@ Measured on this repository's own content, per frame and at 30 fps:
 | Vega decoded PLY | 4.31 MB | 129 MB/s |
 | Vega's own bitstream | 2.44 MB | 73 MB/s |
 | mesh PLY, 20k verts | 760 kB | 23 MB/s |
-| mesh through Draco | 291 kB | 8.7 MB/s |
+| mesh through **Draco**, decoded in the browser | **59 kB** | **1.8 MB/s** |
 | ReRF bitstream | 533 kB | 16 MB/s |
 | **ReRF rendered, one view** | **47 kB** | **1.4 MB/s** |
 
@@ -37,7 +37,8 @@ pixels costs two orders of magnitude less and fixes the viewpoint. Neither is
 the right answer for every module, so both exist:
 
 * **Client-decode** — a frame list, fetched and parsed by the `Scheduler`.
-  Free camera, `mesh`/`points`/`gaussians`.
+  Free camera, `mesh`/`points`/`gaussians`. For meshes this is a genuinely
+  *compressed* wire format: see Draco below.
 * **Server-render** — `live.mjpeg(url, ...)`, a URL instead of a frame list.
   The only transport ReRF has at all, its entropy coder being a sourceless
   CPython 3.8 binary, and the only one here that works over a tunnel.
@@ -158,6 +159,45 @@ Verified on the 10-frame `basketball_player` OBJ sequence the TVMC codec
 vendors -- ~20k vertices and ~39k triangles a frame, loaded through
 `open4d.load`, parsed by the shipped client under Node in
 `streamer_tests/test_client_parsers.py`.
+
+## Draco: a compressed format, decoded in the client
+
+The first thing here that puts a *compression* of geometry on the wire rather
+than an interchange dump of it. Measured on the mesh sequence the TVMC codec
+vendors, at Draco's 14-bit position quantisation:
+
+| | per frame | 10-frame clip | at 30 fps |
+| --- | --- | --- | --- |
+| PLY | 761 kB | 7.4 MB | 23 MB/s |
+| Draco | **59 kB** | **0.61 MB** | **1.8 MB/s** |
+
+12.9x, and it decodes *faster* — 17.8 ms against 20.1 ms for parsing the PLY in
+JavaScript, because the WASM decoder does the work the JS parser was doing by
+hand.
+
+```python
+from streamer import from_source
+from_source("captures/basketball_player", out, fps=10, frame_format="draco")
+```
+
+The decoder is Google's, vendored under `client/vendor/draco` and served by the
+bundle server from this origin — never a CDN, which is what keeps the page free
+of external dependencies. `open4d[draco]` is needed on the encoding side only;
+the client needs nothing installed.
+
+Lossy in two bounded ways, both in the clip's notes and measured in
+`streamer_tests/test_draco.py`:
+
+* **Positions are quantised.** At 14 bits the worst vertex moved 0.0046% of the
+  model's diagonal on that sequence. 11 bits saves a further 20% for eight
+  times the error, which is why 14 is the default.
+* **Duplicate vertices are merged**, so the decoded count is lower than the
+  encoder was given — 20,672 to 19,747 there, because the source OBJ splits
+  vertices at seams. Deduplication, not quantisation; it does not change the
+  surface.
+
+A `.drc` frame is a delivery form. The PLY stays the source of truth, and
+re-encoding from a `.drc` would compound the quantisation.
 
 ## Sending, receiving, measuring
 
