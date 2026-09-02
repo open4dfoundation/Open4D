@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, overload
 
 from .frame import Frame
-from .provider import FrameProvider, TopologyMode
+from .provider import Dependency, DependencyMode, FrameProvider, TopologyMode
 
 
 class Sequence:
@@ -36,6 +36,11 @@ class Sequence:
         if not isinstance(topology, TopologyMode):
             raise TypeError("provider topology must be a TopologyMode")
         self._topology = topology
+
+        dependency = getattr(provider, "dependency", None) or Dependency()
+        if not isinstance(dependency, Dependency):
+            raise TypeError("provider dependency must be a Dependency")
+        self._dependency = dependency
 
     def __len__(self) -> int:
         return self._frame_count
@@ -137,6 +142,32 @@ class Sequence:
         return self._topology
 
     @property
+    def dependency(self) -> Dependency:
+        """How frames in this sequence depend on one another.
+
+        Advisory, not a restriction: :meth:`__getitem__` stays random-access, and
+        a provider whose codec needs prior state is expected to replay
+        internally to honour that. What this declares is the *cost and ordering*
+        of doing so -- which is exactly what a consumer needs to prefetch
+        sensibly, or to know that seeking backwards in a ReRF stream is a full
+        replay rather than a step.
+        """
+        return self._dependency
+
+    def decode_chain(
+        self, index: int, *, decoded: int | None = None
+    ) -> tuple[int, ...]:
+        """Frames to decode, in order, to reach ``index``.
+
+        Convenience for ``sequence.dependency.chain(...)``; see
+        :meth:`open4d.core.Dependency.chain`.
+        """
+        self._ensure_open()
+        if not 0 <= operator.index(index) < len(self):
+            raise IndexError("frame index out of range")
+        return self._dependency.chain(index, decoded=decoded)
+
+    @property
     def has_constant_topology(self) -> bool | None:
         if self.topology is TopologyMode.FIXED:
             return True
@@ -192,6 +223,15 @@ class _ViewProvider:
         self.indices = indices
         self.metadata = parent.metadata
         self.topology = parent.topology
+        # Key-frame ordinals are the parent's, and a slice may start mid-group or
+        # skip frames, so they cannot be rebased onto this view in general.
+        # Declaring SEQUENTIAL is pessimistic but never wrong: a consumer walks
+        # the view in order, which is what it would do anyway.
+        self.dependency = (
+            Dependency()
+            if parent.dependency.mode is DependencyMode.INDEPENDENT
+            else Dependency(mode=DependencyMode.SEQUENTIAL)
+        )
         self.has_constant_vertex_count = parent.has_constant_vertex_count
         self.has_vertex_correspondence = parent.has_vertex_correspondence
         self.allow_nonmonotonic_timestamps = True

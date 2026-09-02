@@ -56,7 +56,7 @@ def test_frame_rejects_nonfinite_timestamps(value):
 
 
 def test_frame_requires_geometry_and_mapping_metadata():
-    with pytest.raises(TypeError, match="TriangleMesh"):
+    with pytest.raises(TypeError, match="open4d.core.Geometry"):
         Frame(0, 0.0, object())
     with pytest.raises(TypeError, match="mapping"):
         Frame(0, 0.0, mesh(), [])

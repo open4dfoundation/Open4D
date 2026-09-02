@@ -8,7 +8,7 @@ from numbers import Integral, Real
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from .geometry import TriangleMesh
+from .geometry import Geometry, Representation
 
 
 @dataclass(frozen=True, eq=False)
@@ -17,7 +17,7 @@ class Frame:
 
     frame_index: int
     timestamp: float
-    geometry: TriangleMesh
+    geometry: Geometry
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -32,8 +32,18 @@ class Frame:
         timestamp = float(self.timestamp)
         if not math.isfinite(timestamp):
             raise ValueError("timestamp must be finite")
-        if not isinstance(self.geometry, TriangleMesh):
-            raise TypeError("geometry must be a TriangleMesh")
+        # Any representation, not just triangles: see `open4d.core.geometry`.
+        # The check is against the protocol rather than a fixed tuple of types so
+        # that a new representation -- in this package or a third party's -- needs
+        # no edit here.
+        if not isinstance(self.geometry, Geometry):
+            raise TypeError(
+                "geometry must implement open4d.core.Geometry (a "
+                "`representation` property); got "
+                f"{type(self.geometry).__name__}"
+            )
+        if not isinstance(self.geometry.representation, Representation):
+            raise TypeError("geometry.representation must be a Representation")
         if not isinstance(self.metadata, Mapping):
             raise TypeError("metadata must be a mapping")
 
