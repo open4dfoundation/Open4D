@@ -9,7 +9,8 @@ to describe and serve their output, and this imports none of them.
 
 ```
 streamer/
-  representations.py   what transport needs to know about a representation
+  codecs.py            what is on the wire, and who can decode it
+  representations.py   what a decoded frame is, and whether it renders here
   bundle.py            the view.json contract, shared by both sides
   monitor.py           what actually went over the wire
   export.py            any open4d.Sequence as a bundle
@@ -17,6 +18,52 @@ streamer/
   server/              sending
   client/              playback, and the scheduler that plans a seek
 ```
+
+## The codec axis
+
+Two questions, deliberately separate. A **representation** is what a decoded
+frame *is* — `mesh`, `points`, `gaussians`, `pixels`. A **codec** is the format
+it travels in and whether the client can decode it:
+
+| representation | suffix | codec | decodes | |
+| --- | --- | --- | --- | --- |
+| mesh | `.ply` | `mesh-ply` | client | interchange |
+| mesh | `.drc` | `mesh-draco` | client | lossy, 12.9x |
+| points | `.ply` / `.drc` | `points-ply` / `points-draco` | client | |
+| gaussians | `.ply` | `3dgs-ply` | client | interchange |
+| gaussians | `.splat` | `splat` | client | lossy, degree-0 only |
+| pixels | `.jpg` / `.png` | `jpeg` / `png` | client | fixed viewpoint |
+| pixels | `.rerf` | `rerf` | **server** | undecodable in a browser |
+
+**The key is (representation, suffix), not suffix.** `.ply` appears three times
+above and needs two different parsers — a 3DGS PLY and a mesh PLY share an
+extension and nothing else. Keying on the extension alone is what previously
+forced the client to carry a hand-written dispatcher per representation.
+
+`decodes` is what makes the platform honest about heterogeneous modules.
+`codecs.client_decodable(representation)` answers "can I stream this to a
+browser at all" as a lookup rather than by reading the client's source. For
+ReRF the answer is permanently no — its entropy coder ships only as a CPython
+3.8 binary — so it is registered as producing `pixels` server-side, which is
+the representation it actually delivers.
+
+A lossy codec **must** state its cost; the constructor refuses one that does
+not, because that line is what reaches the person looking at the render.
+
+Adding a codec is one registration plus a parser:
+
+```python
+codecs.register(codecs.CodecSpec(
+    name="mesh-vdmc", suffix=".v4d", representation=Representation.MESH,
+    lossy=True, cost="V-DMC is lossy at any rate worth using",
+))
+```
+
+The server's extension map, each representation's `media_types`, and the
+client's `CODECS` table all follow from this. The Python registry and the
+client's table are two hand-maintained lists in two languages, so
+`gs_tools_tests/test_representation_vocabulary.py` asserts they agree — a
+promise on one side with no parser on the other is a blank pane.
 
 ## Two transports, because the modules genuinely differ
 
