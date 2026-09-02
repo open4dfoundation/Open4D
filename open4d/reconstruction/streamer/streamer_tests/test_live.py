@@ -29,11 +29,38 @@ URL = "http://127.0.0.1:8768/stream"
 # --------------------------------------------------------------- the clip ---
 
 
-def test_a_live_clip_carries_a_url_and_no_frames():
+def test_a_live_clip_is_same_origin_and_records_its_upstream():
+    """The client is handed a path on the bundle server, not the renderer's URL.
+
+    Handing it the renderer's URL asks the *browser* to reach that port. A
+    browser on a laptop viewing a tunnelled page cannot, so the pane stays blank
+    and nothing reports why -- which is exactly what happened before this.
+    """
     clip = live.mjpeg(URL, name="wall", scene="Vega live wall", method="vega-live")
-    assert clip.stream == {"url": URL, "protocol": "mjpeg"}
+    assert clip.stream["url"] == "live/wall"
+    assert clip.stream["upstream"] == URL
+    assert clip.stream["protocol"] == "mjpeg"
     assert clip.frames == []
     assert clip.representation == "pixels"
+
+
+def test_a_clip_name_must_be_one_path_segment():
+    """It becomes a route, so a slash would proxy something else entirely."""
+    with pytest.raises(ValueError, match="single path segment"):
+        live.mjpeg(URL, name="a/b")
+
+
+def test_upstreams_reads_the_mapping_out_of_a_manifest(tmp_path):
+    clips = [
+        live.mjpeg(URL, name="wall"),
+        live.mjpeg("http://127.0.0.1:8760/stream", name="nevo"),
+        bundle.Clip(name="static", representation="pixels", frames=["static/f0.jpg"]),
+    ]
+    bundle.write(tmp_path, title="t", source="s", clips=clips)
+    assert live.upstreams(bundle.read(tmp_path)) == {
+        "wall": URL,
+        "nevo": "http://127.0.0.1:8760/stream",
+    }
 
 
 def test_it_is_pixels_because_that_is_what_arrives():
@@ -46,9 +73,10 @@ def test_the_scene_defaults_to_the_clip_name():
     assert live.mjpeg(URL, name="wall").scene == "wall"
 
 
-def test_the_notes_say_it_is_live_and_where_it_is_reachable_from():
+def test_the_notes_say_it_is_live_and_that_it_is_proxied():
     notes = " ".join(live.mjpeg(URL, name="w").notes)
     assert "nothing to scrub" in notes
+    assert "proxied" in notes
     assert "127.0.0.1:8768" in notes
 
 
@@ -106,7 +134,8 @@ def test_a_live_clip_round_trips_through_a_manifest(tmp_path):
     clip = live.mjpeg(URL, name="wall", scene="Vega live wall")
     bundle.write(tmp_path, title="t", source="s", clips=[clip])
     stored = bundle.read(tmp_path)["clips"][0]
-    assert stored["stream"]["url"] == URL
+    assert stored["stream"] == {"url": "live/wall", "protocol": "mjpeg",
+                                "upstream": URL}
     assert stored["frames"] == []
 
 
@@ -187,3 +216,130 @@ def test_the_transport_bar_is_disabled_for_a_live_scene():
     assert "scrubFrame.disabled" in body
     assert "playPause.disabled" in body
     assert '"live"' in body
+
+
+# ---------------------------------------------------------------- the proxy ---
+
+
+def upstream_server(payload: bytes, boundary: str = "testframe"):
+    """A stand-in renderer: one multipart body that ends, so a test can read it."""
+    import http.server
+    import socketserver
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header(
+                "Content-Type", f"multipart/x-mixed-replace; boundary={boundary}"
+            )
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True
+    ).start()
+    return server
+
+
+def test_the_proxy_relays_the_upstream_body(tmp_path):
+    import urllib.request
+
+    from streamer.server import serve
+
+    payload = b"--testframe\r\nContent-Type: image/jpeg\r\n\r\n" + bytes(256)
+    renderer = upstream_server(payload)
+    port = renderer.server_address[1]
+    bundle.write(
+        tmp_path,
+        title="t",
+        source="s",
+        clips=[live.mjpeg(f"http://127.0.0.1:{port}/stream", name="wall")],
+    )
+    server = serve(tmp_path, port=0, block=False)
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urllib.request.urlopen(f"{base}/live/wall", timeout=10) as response:
+            assert response.status == 200
+            assert "multipart/x-mixed-replace" in response.headers["Content-Type"]
+            assert response.read() == payload
+    finally:
+        for each in (server, renderer):
+            each.shutdown()
+            each.server_close()
+
+
+def test_an_unknown_live_name_is_a_404(tmp_path):
+    import urllib.error
+    import urllib.request
+
+    from streamer.server import serve
+
+    bundle.write(
+        tmp_path,
+        title="t",
+        source="s",
+        clips=[live.mjpeg("http://127.0.0.1:1/stream", name="wall")],
+    )
+    server = serve(tmp_path, port=0, block=False)
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(f"{base}/live/nope", timeout=10)
+        assert raised.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_an_unreachable_renderer_is_a_502_naming_the_upstream(tmp_path):
+    """The likeliest thing to be wrong, and not the bundle's fault."""
+    import urllib.error
+    import urllib.request
+
+    from streamer.server import serve
+
+    bundle.write(
+        tmp_path,
+        title="t",
+        source="s",
+        clips=[live.mjpeg("http://127.0.0.1:1/stream", name="wall")],
+    )
+    server = serve(tmp_path, port=0, block=False)
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(f"{base}/live/wall", timeout=10)
+        assert raised.value.code == 502
+        assert "127.0.0.1:1" in raised.value.read().decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_bundle_with_no_live_clips_has_no_proxy_route(tmp_path):
+    import urllib.error
+    import urllib.request
+
+    from streamer.server import serve
+
+    bundle.write(
+        tmp_path,
+        title="t",
+        source="s",
+        clips=[bundle.Clip(name="s", representation="pixels", frames=["s/f0.jpg"])],
+    )
+    server = serve(tmp_path, port=0, block=False)
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(f"{base}/live/anything", timeout=10)
+        assert raised.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
