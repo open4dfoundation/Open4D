@@ -1078,6 +1078,9 @@ function spec(clip) { return clip ? REPRESENTATIONS[clip.representation] : undef
 function playable(clip) { return spec(clip) !== undefined; }
 function hasGeometry(clip) { const s = spec(clip); return s !== undefined && s.geometry; }
 function isPixels(clip) { const s = spec(clip); return s !== undefined && !s.geometry; }
+/* A clip rendered as it is watched: a URL instead of a frame list, so there is
+ * no scheduler, no cache and nothing to scrub. See streamer/live.py. */
+function isLive(clip) { return !!(clip && clip.stream); }
 
 /* ------------------------------------------------------------- scheduling ---
  * When a frame can only be decoded after another one, requesting it and hoping
@@ -1366,6 +1369,16 @@ class Pane {
       return;
     }
     const kind = spec(clip);
+    if (isLive(clip)) {
+      // No scheduler: the browser owns the connection, and multipart replacement
+      // is a browser feature. Set once -- reassigning src restarts the stream.
+      this._surface("image", null);
+      this.source = null;
+      this.image.src = clip.stream.url;
+      this.loaded = 0;
+      this.label.textContent = `${this.method} · live`;
+      return;
+    }
     const make = kind.renderer;
     if (make) make.kind = clip.representation;
     this._surface(kind.surface, make);
@@ -1395,6 +1408,7 @@ class Pane {
   get length() { return this.source ? this.source.length : 0; }
 
   async show(frame) {
+    if (isLive(this.clip)) return;   // the stream advances itself
     if (!this.source) return;
     const index = Math.min(frame, this.source.length - 1);
     // seek, not fetch: for a clip that declares a dependency this decodes
@@ -1501,13 +1515,40 @@ function clipFor(method) {
   // Compare: an image only exists at the station it was made at; Gaussians can
   // be rendered at any of them, so they are the fallback rather than the first
   // choice -- a real render beats a re-render of the same thing.
+  // A live clip is resolved whatever the station: it renders its own camera, and
+  // lives in its own scene precisely so that this cannot put it beside a rig
+  // pose and imply they match.
   return all.find((c) => isPixels(c) && c.camera === app.station)
+      || all.find(isLive)
       || all.find(hasGeometry)
       || null;
 }
 
 function frameCount() {
-  return Math.max(1, ...app.panes.map((pane) => pane.length || 1));
+  // A live pane has no length and must not shorten the clip beside it; if every
+  // pane is live there is nothing to scrub and the transport bar says so.
+  const lengths = app.panes
+    .filter((pane) => !isLive(pane.clip))
+    .map((pane) => pane.length || 1);
+  return lengths.length ? Math.max(1, ...lengths) : 1;
+}
+
+function allPanesLive() {
+  return app.panes.length > 0 && app.panes.every((pane) => isLive(pane.clip));
+}
+
+/* A live scene has no timeline. Disabling the controls rather than leaving them
+ * inert is the difference between "there is nothing to scrub here" and "the
+ * scrubber is broken". */
+function updateTransport() {
+  const live = allPanesLive();
+  scrubFrame.disabled = live;
+  playPause.disabled = live;
+  if (live) {
+    app.playing = false;
+    playPause.textContent = "▶";
+    frameLabel.textContent = "live";
+  }
 }
 
 /* Re-point every pane at the clip it should now be showing, without touching
@@ -1524,6 +1565,7 @@ function updateClips() {
   }
   scrubFrame.max = String(frameCount() - 1);
   app.frame = Math.min(app.frame, frameCount() - 1);
+  updateTransport();
   refreshPanel();
   writeHash();
   showFrame(app.frame);
@@ -1558,6 +1600,7 @@ function rebuildPanes() {
   }
   scrubFrame.max = String(frameCount() - 1);
   app.frame = Math.min(app.frame, frameCount() - 1);
+  updateTransport();
   refreshPanel();
   writeHash();
   showFrame(app.frame);
@@ -1685,6 +1728,15 @@ function renderMethodList() {
 
 function selectScene(scene) {
   app.scene = scene;
+  // A scene whose every clip is live has nothing a free camera could show, so
+  // landing on it in Explore would present an empty pane and a message about
+  // Gaussians. Switching is more useful than explaining.
+  const anyGeometry = app.index.clips.some(
+    (clip) => clip.scene === scene && hasGeometry(clip));
+  if (app.mode === "explore" && !anyGeometry) {
+    setMode("compare");
+    return;
+  }
   const available = methodsFor(scene, app.mode);
   app.methods = available.slice(0, 2);
   app.station = 0;
@@ -1720,7 +1772,7 @@ async function showFrame(index) {
   app.frame = ((index % total) + total) % total;
   scrubFrame.value = String(app.frame);
   writeHash();
-  frameLabel.textContent = `${app.frame + 1} / ${total}`;
+  frameLabel.textContent = allPanesLive() ? "live" : `${app.frame + 1} / ${total}`;
   try {
     await Promise.all(app.panes.map((pane) => pane.show(app.frame)));
     (app.shownAt = app.shownAt || []).push(performance.now());

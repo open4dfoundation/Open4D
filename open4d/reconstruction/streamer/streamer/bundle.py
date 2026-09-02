@@ -82,6 +82,11 @@ class Clip:
     #: What a viewer of this clip needs to be told -- a baked colour direction,
     #: a fixed render camera, a quality caveat. Shown in the viewer's UI.
     notes: list[str] = field(default_factory=list)
+    #: A live transport instead of a frame list: ``{"url": ..., "protocol":
+    #: "mjpeg"}``. Set for a clip that is rendered as it is watched rather than
+    #: read off disk, in which case ``frames`` is empty and there is nothing to
+    #: scrub. See `streamer.live`.
+    stream: dict[str, Any] | None = None
     #: How this clip's frames depend on one another, in the vocabulary of
     #: `open4d.core.Dependency`: ``{"mode": ..., "key_frames": [...]}``. Absent
     #: means independent, which is what a directory of whole frames is and what
@@ -91,6 +96,37 @@ class Clip:
     dependency: dict[str, Any] | None = None
     #: Anything method-specific worth keeping; not interpreted by the viewer.
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+#: Live transports the packaged client can play.
+STREAM_PROTOCOLS = ("mjpeg",)
+
+
+def validate(clip: Clip) -> Clip:
+    """Check the invariants a clip has to satisfy, and return it.
+
+    Called by :func:`write`, because the failures here are otherwise silent: a
+    clip with neither frames nor a stream renders an empty pane, and a stream
+    with a protocol the client does not know renders nothing at all -- in both
+    cases with no error anywhere a producer would see it.
+    """
+    if clip.stream is not None:
+        if not isinstance(clip.stream, Mapping) or not clip.stream.get("url"):
+            raise ValueError(f"{clip.name}: stream needs a url")
+        protocol = clip.stream.get("protocol")
+        if protocol not in STREAM_PROTOCOLS:
+            raise ValueError(
+                f"{clip.name}: stream protocol {protocol!r} is not one the client "
+                f"plays ({', '.join(STREAM_PROTOCOLS)})"
+            )
+        if clip.frames:
+            raise ValueError(
+                f"{clip.name}: a live clip has no frame list -- it is rendered as "
+                "it is watched, so there is nothing to scrub"
+            )
+    elif not clip.frames:
+        raise ValueError(f"{clip.name}: needs either frames or a stream")
+    return clip
 
 
 def dependency_field(dependency: Dependency | None) -> dict[str, Any] | None:
@@ -159,6 +195,8 @@ def write(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    for clip in clips:
+        validate(clip)
     index = {
         "version": VERSION,
         "title": title,
