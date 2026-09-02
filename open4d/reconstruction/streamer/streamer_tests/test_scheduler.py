@@ -308,6 +308,122 @@ def test_an_http_error_rejects_and_leaves_nothing_pending(tmp_path):
     assert result["pending"] == 0
 
 
+# ------------------------------------------------------- decoded-frame life ---
+
+# Stubs for the browser bits a pixel frame touches. `Image` resolves on the next
+# tick, like a real decode, and every createObjectURL/revokeObjectURL is
+# recorded so a test can assert on the lifetime rather than the tidiness.
+IMAGE_HARNESS = """
+    globalThis.created = [];
+    globalThis.revoked = [];
+    globalThis.Blob = class { constructor(parts, options) { this.options = options; } };
+    globalThis.URL = {
+      createObjectURL: () => {
+        const url = `blob:${globalThis.created.length}`;
+        globalThis.created.push(url);
+        return url;
+      },
+      revokeObjectURL: (url) => { globalThis.revoked.push(url); },
+    };
+    globalThis.Image = class {
+      set src(value) {
+        this._src = value;
+        setTimeout(() => this.onload && this.onload(), 0);
+      }
+      get src() { return this._src; }
+    };
+    globalThis.fetch = (url) => Promise.resolve({
+      ok: true,
+      headers: { get: () => "image/jpeg" },
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+    });
+    const clipOf = (n) => ({
+      frames: Array.from({length: n}, (_, i) => `f${i}.jpg`),
+      dependency: null,
+    });
+"""
+
+
+@requires_node
+def test_a_decoded_frames_src_is_still_usable_when_a_pane_assigns_it(tmp_path):
+    """The regression this exists for.
+
+    A pane shows a pixel frame by copying the decoded frame's `src` onto its own
+    <img>. Revoking the object URL as soon as the decode finished left that copy
+    pointing at a dead blob -- and assigning a dead blob URL is not an error, so
+    every pixel pane went silently blank while the Gaussian one kept working.
+    """
+    body = IMAGE_HARNESS + """
+        const s = new Scheduler(clipOf(4), "", decodeImage, {cacheSize: 4});
+        (async () => {
+          const frame = await s.seek(0);
+          process.stdout.write(JSON.stringify({
+            src: frame.src,
+            revokedYet: globalThis.revoked,
+            usable: !globalThis.revoked.includes(frame.src),
+          }));
+        })();
+    """
+    result = run_js(
+        _extract("decodeImage") + body, tmp_path, name="life.mjs"
+    )
+    assert result["revokedYet"] == []
+    assert result["usable"] is True
+    assert result["src"].startswith("blob:")
+
+
+@requires_node
+def test_eviction_releases_the_blob(tmp_path):
+    """The other half: held for as long as it is cached, and no longer."""
+    body = IMAGE_HARNESS + """
+        const s = new Scheduler(clipOf(6), "", decodeImage, {cacheSize: 2});
+        (async () => {
+          for (const i of [0, 1, 2]) await s.seek(i);
+          process.stdout.write(JSON.stringify({
+            created: globalThis.created.length,
+            revoked: globalThis.revoked,
+            cached: s.snapshot().cached,
+          }));
+        })();
+    """
+    result = run_js(_extract("decodeImage") + body, tmp_path, name="evict.mjs")
+    assert result["created"] == 3
+    assert result["revoked"] == ["blob:0"]      # only the evicted one
+    assert result["cached"] == 2
+
+
+@requires_node
+def test_release_frees_everything_a_scheduler_still_holds(tmp_path):
+    """A pane changing clip replaces its scheduler; the old one must let go."""
+    body = IMAGE_HARNESS + """
+        const s = new Scheduler(clipOf(4), "", decodeImage, {cacheSize: 4});
+        (async () => {
+          for (const i of [0, 1, 2]) await s.seek(i);
+          s.release();
+          process.stdout.write(JSON.stringify({
+            revoked: globalThis.revoked.sort(),
+            cached: s.snapshot().cached,
+          }));
+        })();
+    """
+    result = run_js(_extract("decodeImage") + body, tmp_path, name="release.mjs")
+    assert result["revoked"] == ["blob:0", "blob:1", "blob:2"]
+    assert result["cached"] == 0
+
+
+@requires_node
+def test_a_geometry_frame_has_nothing_to_release(tmp_path):
+    """release must be safe on frames that hold no browser resource."""
+    body = """
+        globalThis.URL = { revokeObjectURL: () => { throw new Error("called"); } };
+        Scheduler.release(undefined);
+        Scheduler.release(null);
+        Scheduler.release({count: 3, positions: []});
+        process.stdout.write(JSON.stringify("ok"));
+    """
+    assert run_js(body, tmp_path, name="norelease.mjs") == "ok"
+
+
 # ---------------------------------------------------------- the wire format ---
 
 

@@ -1154,14 +1154,37 @@ class Scheduler {
 
   get length() { return this.clip.frames.length; }
 
+  /* A decoded frame may hold a resource the browser will not reclaim on its own
+   * -- an image decoded from a blob keeps that blob alive through its object
+   * URL. Evicting the frame has to let it go, or a long scrub leaks every frame
+   * it ever showed, which is the bug the old unbounded image cache had in a
+   * different form. */
+  static release(value) {
+    if (value && value.objectUrl) {
+      URL.revokeObjectURL(value.objectUrl);
+      value.objectUrl = null;
+    }
+  }
+
   _touch(index, value) {
     // Insertion-ordered Map as an LRU: re-inserting moves a key to the end, so
     // the oldest is always the first key.
     this.cache.delete(index);
     this.cache.set(index, value);
     while (this.cache.size > this.cacheSize) {
-      this.cache.delete(this.cache.keys().next().value);
+      const oldest = this.cache.keys().next().value;
+      Scheduler.release(this.cache.get(oldest));
+      this.cache.delete(oldest);
     }
+  }
+
+  /* Drop everything, releasing each frame. Called when a pane changes clip or
+   * goes away: the scheduler is replaced, and whatever it still held would
+   * otherwise never be reclaimed. */
+  release() {
+    for (const value of this.cache.values()) Scheduler.release(value);
+    this.cache.clear();
+    this.pending.clear();
   }
 
   async _decodeOne(index) {
@@ -1255,7 +1278,13 @@ function decodeImage(buffer, url, mediaType) {
     const blob = new Blob([buffer], mediaType ? { type: mediaType } : undefined);
     const objectUrl = URL.createObjectURL(blob);
     const image = new Image();
-    image.onload = () => { URL.revokeObjectURL(objectUrl); resolve(image); };
+    // The URL stays alive for as long as this frame is cached, and is revoked
+    // when the Scheduler evicts it (see `release`). Revoking it here on load
+    // looks tidy and is wrong: a decoded frame's `src` is what a pane assigns to
+    // its own <img>, so a revoked URL leaves the pane showing nothing at all --
+    // silently, because assigning a dead blob URL is not an error.
+    image.objectUrl = objectUrl;
+    image.onload = () => resolve(image);
     image.onerror = () => {
       URL.revokeObjectURL(objectUrl);
       reject(new Error(`could not decode ${url}`));
@@ -1316,6 +1345,7 @@ class Pane {
   }
 
   setClip(clip) {
+    if (this.source && this.source.release) this.source.release();
     this.clip = clip;
     this.loaded = -1;
     this.sortKey = "";
@@ -1351,6 +1381,8 @@ class Pane {
    * that goes away has to say so, or a few method changes silently exhaust the
    * budget and the surviving canvases start losing their contexts. */
   dispose() {
+    if (this.source && this.source.release) this.source.release();
+    this.source = null;
     if (this.gl) {
       const lose = this.gl.getExtension("WEBGL_lose_context");
       if (lose) lose.loseContext();
@@ -1415,7 +1447,8 @@ class Pane {
 /* ---------------------------------------------------------------- session --- */
 const app = {
   index: null, scenes: {}, scene: null, mode: "explore", frame: 0, station: 0,
-  methods: [], panes: [], playing: false, lastAdvance: 0, fps: 30, wipe: false,
+  methods: [], panes: [], playing: false, lastAdvance: 0, advancing: false,
+  fps: 30, wipe: false,
 };
 
 function setStatus(text) { statusEl.textContent = text; statusEl.hidden = false; }
@@ -1690,6 +1723,8 @@ async function showFrame(index) {
   frameLabel.textContent = `${app.frame + 1} / ${total}`;
   try {
     await Promise.all(app.panes.map((pane) => pane.show(app.frame)));
+    (app.shownAt = app.shownAt || []).push(performance.now());
+    if (app.shownAt.length > 30) app.shownAt.shift();
     statusEl.hidden = true;
   } catch (error) {
     setStatus(String(error.message || error));
@@ -1717,9 +1752,26 @@ function basisFactory() {
 function tick(now) {
   requestAnimationFrame(tick);
   if (!app.panes.length) return;
-  if (app.playing && now - app.lastAdvance >= 1000 / app.fps) {
-    app.lastAdvance = now;
-    showFrame(app.frame + 1);
+  /* Advance on the buffer, not on a wall clock.
+   *
+   * This used to fire `showFrame` whenever 1/fps had elapsed and not wait for
+   * it. `showFrame` is async -- a fetch and a parse, tens of milliseconds at
+   * best and far more over a link -- so calls overlapped, each one moving
+   * `app.frame`, and they resolved in whatever order they finished. The counter
+   * raced ahead of the pictures and the panes showed whichever decode landed
+   * last, which is not slow playback but wrong playback.
+   *
+   * So: at most one advance in flight, and the next interval is timed from when
+   * the last frame was actually shown. A clip the machine can keep up with
+   * plays at `fps`; one it cannot plays as fast as it can decode, in order,
+   * which is the honest failure mode. `--fps` becomes a ceiling rather than a
+   * promise. */
+  if (app.playing && !app.advancing && now - app.lastAdvance >= 1000 / app.fps) {
+    app.advancing = true;
+    showFrame(app.frame + 1).finally(() => {
+      app.advancing = false;
+      app.lastAdvance = performance.now();
+    });
   }
   const aspect = app.mode === "compare" && rig() ? rig().width / rig().height : 0;
   const basis = basisFactory();
@@ -1730,6 +1782,16 @@ function togglePlay() {
   app.playing = !app.playing;
   playPause.textContent = app.playing ? "❚❚" : "▶";
   app.lastAdvance = 0;
+}
+
+/* How far playback is behind the rate it was asked for. Reported rather than
+ * hidden: a clip at 129 MB a second of decoded frames cannot play at 30 fps
+ * over any link, and saying so is more useful than appearing to stutter. */
+function playbackRate() {
+  return app.shownAt && app.shownAt.length > 1
+    ? 1000 * (app.shownAt.length - 1) /
+      (app.shownAt[app.shownAt.length - 1] - app.shownAt[0])
+    : null;
 }
 
 function setStation(value) {
