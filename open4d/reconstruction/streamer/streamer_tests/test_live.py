@@ -36,7 +36,8 @@ def test_a_live_clip_is_same_origin_and_records_its_upstream():
     browser on a laptop viewing a tunnelled page cannot, so the pane stays blank
     and nothing reports why -- which is exactly what happened before this.
     """
-    clip = live.mjpeg(URL, name="wall", scene="Vega live wall", method="vega-live")
+    clip = live.mjpeg(URL, name="wall", origin="rendered", scene="Vega live wall",
+                       method="vega-live")
     assert clip.stream["url"] == "live/wall"
     assert clip.stream["upstream"] == URL
     assert clip.stream["protocol"] == "mjpeg"
@@ -47,13 +48,13 @@ def test_a_live_clip_is_same_origin_and_records_its_upstream():
 def test_a_clip_name_must_be_one_path_segment():
     """It becomes a route, so a slash would proxy something else entirely."""
     with pytest.raises(ValueError, match="single path segment"):
-        live.mjpeg(URL, name="a/b")
+        live.mjpeg(URL, name="a/b", origin="rendered")
 
 
 def test_upstreams_reads_the_mapping_out_of_a_manifest(tmp_path):
     clips = [
-        live.mjpeg(URL, name="wall"),
-        live.mjpeg("http://127.0.0.1:8760/stream", name="nevo"),
+        live.mjpeg(URL, name="wall", origin="rendered"),
+        live.mjpeg("http://127.0.0.1:8760/stream", name="nevo", origin="replay"),
         bundle.Clip(name="static", representation="pixels", frames=["static/f0.jpg"]),
     ]
     bundle.write(tmp_path, title="t", source="s", clips=clips)
@@ -65,16 +66,16 @@ def test_upstreams_reads_the_mapping_out_of_a_manifest(tmp_path):
 
 def test_it_is_pixels_because_that_is_what_arrives():
     """Whatever the server rendered from, the client receives an image."""
-    assert live.mjpeg(URL, name="w").representation == "pixels"
+    assert live.mjpeg(URL, name="w", origin="rendered").representation == "pixels"
 
 
 def test_the_scene_defaults_to_the_clip_name():
     """Its own scene, so Compare never presents it as sharing a rig pose."""
-    assert live.mjpeg(URL, name="wall").scene == "wall"
+    assert live.mjpeg(URL, name="wall", origin="rendered").scene == "wall"
 
 
 def test_the_notes_say_it_is_live_and_that_it_is_proxied():
-    notes = " ".join(live.mjpeg(URL, name="w").notes)
+    notes = " ".join(live.mjpeg(URL, name="w", origin="rendered").notes)
     assert "nothing to scrub" in notes
     assert "proxied" in notes
     assert "127.0.0.1:8768" in notes
@@ -83,7 +84,7 @@ def test_the_notes_say_it_is_live_and_that_it_is_proxied():
 def test_a_non_http_url_is_refused():
     for bad in ("rtsp://host/stream", "/local/path", "ws://host/s"):
         with pytest.raises(ValueError, match="not an http"):
-            live.mjpeg(bad, name="w")
+            live.mjpeg(bad, name="w", origin="rendered")
 
 
 # ---------------------------------------------------------- the wire format ---
@@ -103,7 +104,7 @@ def test_validation_rejects_a_protocol_the_client_cannot_play():
             bundle.Clip(
                 name="w",
                 representation="pixels",
-                stream={"url": URL, "protocol": "webrtc"},
+                stream={"url": URL, "protocol": "webrtc", "origin": "rendered"},
             )
         )
 
@@ -115,7 +116,7 @@ def test_validation_rejects_a_live_clip_that_also_lists_frames():
                 name="w",
                 representation="pixels",
                 frames=["w/f0.jpg"],
-                stream={"url": URL, "protocol": "mjpeg"},
+                stream={"url": URL, "protocol": "mjpeg", "origin": "rendered"},
             )
         )
 
@@ -131,11 +132,11 @@ def test_validation_rejects_a_clip_with_neither(tmp_path):
 
 
 def test_a_live_clip_round_trips_through_a_manifest(tmp_path):
-    clip = live.mjpeg(URL, name="wall", scene="Vega live wall")
+    clip = live.mjpeg(URL, name="wall", origin="rendered", scene="Vega live wall")
     bundle.write(tmp_path, title="t", source="s", clips=[clip])
     stored = bundle.read(tmp_path)["clips"][0]
     assert stored["stream"] == {"url": "live/wall", "protocol": "mjpeg",
-                                "upstream": URL}
+                                "upstream": URL, "origin": "rendered"}
     assert stored["frames"] == []
 
 
@@ -147,7 +148,7 @@ def test_live_and_static_clips_coexist_in_one_bundle(tmp_path):
         tmp_path,
         title="t",
         source="s",
-        clips=[static, live.mjpeg(URL, name="wall", scene="live")],
+        clips=[static, live.mjpeg(URL, name="wall", origin="rendered", scene="live")],
     )
     stored = bundle.read(tmp_path)["clips"]
     assert [c.get("stream") is not None for c in stored] == [False, True]
@@ -215,7 +216,9 @@ def test_the_transport_bar_is_disabled_for_a_live_scene():
     body = page[start : page.index("\n}\n", start)]
     assert "scrubFrame.disabled" in body
     assert "playPause.disabled" in body
-    assert '"live"' in body
+    # The readout names what the panes are rather than hardcoding "live", so a
+    # replay-only scene does not claim to be live.
+    assert "streamLabel(pane.clip)" in body
 
 
 # ---------------------------------------------------------------- the proxy ---
@@ -259,7 +262,7 @@ def test_the_proxy_relays_the_upstream_body(tmp_path):
         tmp_path,
         title="t",
         source="s",
-        clips=[live.mjpeg(f"http://127.0.0.1:{port}/stream", name="wall")],
+        clips=[live.mjpeg(f"http://127.0.0.1:{port}/stream", name="wall", origin="rendered")],
     )
     server = serve(tmp_path, port=0, block=False)
     try:
@@ -284,7 +287,7 @@ def test_an_unknown_live_name_is_a_404(tmp_path):
         tmp_path,
         title="t",
         source="s",
-        clips=[live.mjpeg("http://127.0.0.1:1/stream", name="wall")],
+        clips=[live.mjpeg("http://127.0.0.1:1/stream", name="wall", origin="rendered")],
     )
     server = serve(tmp_path, port=0, block=False)
     try:
@@ -308,7 +311,7 @@ def test_an_unreachable_renderer_is_a_502_naming_the_upstream(tmp_path):
         tmp_path,
         title="t",
         source="s",
-        clips=[live.mjpeg("http://127.0.0.1:1/stream", name="wall")],
+        clips=[live.mjpeg("http://127.0.0.1:1/stream", name="wall", origin="rendered")],
     )
     server = serve(tmp_path, port=0, block=False)
     try:
@@ -343,3 +346,56 @@ def test_a_bundle_with_no_live_clips_has_no_proxy_route(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ------------------------------------------------- live is not the same as replay ---
+
+
+def test_origin_is_required_so_a_replay_cannot_be_mislabelled_by_omission():
+    with pytest.raises(TypeError):
+        live.mjpeg(URL, name="w")          # no origin
+
+
+def test_origin_must_be_one_of_the_two():
+    with pytest.raises(ValueError, match="origin must be one of"):
+        live.mjpeg(URL, name="w", origin="streaming")
+
+
+def test_the_notes_distinguish_the_two():
+    rendered = " ".join(live.mjpeg(URL, name="w", origin="rendered").notes)
+    replay = " ".join(live.mjpeg(URL, name="w", origin="replay").notes)
+    assert "decoded and drawn per frame while you watch" in rendered
+    assert "nothing is being computed while you watch" in replay
+    assert "replay" not in rendered.split("proxied")[0]
+
+
+def test_validation_rejects_a_stream_with_no_origin():
+    """The transport carries both equally, so it cannot be inferred."""
+    with pytest.raises(ValueError, match="origin of 'rendered' or 'replay'"):
+        bundle.validate(
+            bundle.Clip(
+                name="w",
+                representation="pixels",
+                stream={"url": "live/w", "protocol": "mjpeg", "upstream": URL},
+            )
+        )
+
+
+@requires_node
+def test_the_client_labels_a_replay_as_a_replay(tmp_path):
+    script = tmp_path / "label.mjs"
+    script.write_text(
+        _cut("streamLabel")
+        + """
+        process.stdout.write(JSON.stringify([
+          streamLabel({stream: {origin: "rendered"}}),
+          streamLabel({stream: {origin: "replay"}}),
+          streamLabel({}),
+        ]));
+        """
+    )
+    finished = subprocess.run(
+        [NODE, str(script)], capture_output=True, text=True, timeout=120
+    )
+    assert finished.returncode == 0, finished.stderr
+    assert json.loads(finished.stdout) == ["live", "replay", "live"]

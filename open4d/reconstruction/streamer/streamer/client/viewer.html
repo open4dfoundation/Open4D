@@ -1081,6 +1081,12 @@ function isPixels(clip) { const s = spec(clip); return s !== undefined && !s.geo
 /* A clip rendered as it is watched: a URL instead of a frame list, so there is
  * no scheduler, no cache and nothing to scrub. See streamer/live.py. */
 function isLive(clip) { return !!(clip && clip.stream); }
+/* What a streamed pane should call itself. The transport is the same either
+ * way; what differs is whether anything is being computed while you watch, and
+ * calling a replay "live" is a claim the software does not support. */
+function streamLabel(clip) {
+  return clip && clip.stream && clip.stream.origin === "replay" ? "replay" : "live";
+}
 
 /* ------------------------------------------------------------- scheduling ---
  * When a frame can only be decoded after another one, requesting it and hoping
@@ -1376,7 +1382,7 @@ class Pane {
       this.source = null;
       this.image.src = clip.stream.url;
       this.loaded = 0;
-      this.label.textContent = `${this.method} · live`;
+      this.label.textContent = `${this.method} · ${streamLabel(clip)}`;
       return;
     }
     const make = kind.renderer;
@@ -1547,7 +1553,10 @@ function updateTransport() {
   if (live) {
     app.playing = false;
     playPause.textContent = "▶";
-    frameLabel.textContent = "live";
+    // Names what the panes actually are. All-replay reads "replay"; a mix says
+    // so rather than picking the flattering one.
+    const kinds = [...new Set(app.panes.map((pane) => streamLabel(pane.clip)))];
+    frameLabel.textContent = kinds.join(" + ");
   }
 }
 
@@ -1772,7 +1781,11 @@ async function showFrame(index) {
   app.frame = ((index % total) + total) % total;
   scrubFrame.value = String(app.frame);
   writeHash();
-  frameLabel.textContent = allPanesLive() ? "live" : `${app.frame + 1} / ${total}`;
+  if (allPanesLive()) {
+    updateTransport();
+  } else {
+    frameLabel.textContent = `${app.frame + 1} / ${total}`;
+  }
   try {
     await Promise.all(app.panes.map((pane) => pane.show(app.frame)));
     (app.shownAt = app.shownAt || []).push(performance.now());

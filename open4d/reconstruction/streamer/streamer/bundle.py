@@ -113,6 +113,13 @@ def validate(clip: Clip) -> Clip:
     if clip.stream is not None:
         if not isinstance(clip.stream, Mapping) or not clip.stream.get("url"):
             raise ValueError(f"{clip.name}: stream needs a url")
+        if clip.stream.get("origin") not in ("rendered", "replay"):
+            raise ValueError(
+                f"{clip.name}: stream needs an origin of 'rendered' or 'replay' "
+                "— the transport does not say whether pixels are being computed "
+                "now or replayed, and presenting a replay as live is a claim the "
+                "software does not support"
+            )
         protocol = clip.stream.get("protocol")
         if protocol not in STREAM_PROTOCOLS:
             raise ValueError(
