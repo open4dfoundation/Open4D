@@ -101,10 +101,39 @@ make them viewable:
   write. Its only decoder is its own, and that only runs under Python 3.8. The
   adapter runs `rerf_render.py` and bundles the **images** it produces.
 
-Both land in the same shape -- a directory of frames plus a `view.json` -- and
-`gs-tools view` serves it with a self-contained WebGL2 splat viewer, which is
+- **QUEEN and 3DGStream** already store 3DGS PLYs, so the exporter copies them
+  and writes a manifest -- no decode, no conversion. Three unrelated on-disk
+  layouts are resolved by `gs_tools.outputs.gaussian_frames`: QUEEN's
+  `frames/NNNN/`, 3DGStream's per-frame `frameNNNNNN/point_cloud/iteration_N/`,
+  and a single frame's `point_cloud/iteration_N/`. The highest iteration is the
+  frame; 3DGStream's `added/` is skipped, since it holds only that frame's new
+  Gaussians rather than the scene.
+
+All land in the same shape -- a directory of frames plus a `view.json` -- and
+`gs-tools view` serves it to the browser client in `streamer.client`, which is
 the point: the GPU box usually has no display, and SIBR needs one (X11
-forwarding does not help, see below).
+forwarding does not help, see below). The streaming half of this -- the manifest,
+the server and that client -- lives in `../streamer`; this module produces
+bundles and does not serve them.
+
+    # a 3DGS run, its own PLYs, copied
+    gs-tools view -i ~/runs/coffee_martini --scene-name coffee_martini --method-name queen
+
+    # the same run at 32 bytes per Gaussian instead of 248
+    gs-tools export -i ~/runs/coffee_martini --frame-format splat -o /tmp/bundle
+
+`--frame-format splat` re-encodes to `gs_tools.io.splat`'s fixed 32 bytes:
+measured 5.2x smaller on a degree-3 QUEEN run (73.8 MB -> 14.1 MB a frame).
+Position and scale survive exactly; colour, opacity and rotation quantise to 8
+bits; **every SH band above degree 0 is dropped**, so appearance stops changing
+with view direction. Worth it for delivery, wrong as an archive -- the PLY stays
+the source of truth.
+
+`--scene-name` is what lets a 3DGS run share a `Compare` viewport with another
+method's clip of the same subject. Without it the scene is named after the run
+directory, because a 3DGS run records its subject nowhere reliable. Note that
+`--scene-name` and `--method-name` apply to *every* source in one invocation, so
+two runs of different subjects want two `export` calls.
 
     # what is this directory?
     gs-tools inspect -i ~/nevo_runs/g_basketball
