@@ -65,6 +65,50 @@ def render_view(sequence, frame, camera: Camera, chunk: int = 1 << 19) -> np.nda
     return image.clamp(0.0, 1.0).cpu().numpy()
 
 
+def training_cameras(corpus_dir, frame_index: int = 0) -> "list":
+    """Every camera the trainer saw for one frame, in the trainer's own order.
+
+    ``load_NHR`` sorts views by file path before stacking, so that order *is*
+    the view index the rest of this package means by ``view=k``.
+
+    Image dimensions come from the PNG header rather than a decode -- the
+    intrinsics in ``cams_*.json`` carry no size, and a camera whose width and
+    height disagree with its principal point renders an offset image.
+
+    Split out from :func:`training_view` so `stream.BitstreamPlayer` can render
+    the trainer's viewpoints without a ground-truth image to load, and so there
+    stays exactly one place that turns a corpus entry into a `Camera`.
+    """
+    return [camera for camera, _ in _training_entries(corpus_dir, frame_index)]
+
+
+def _training_entries(corpus_dir, frame_index: int):
+    """``(camera, entry)`` per training view, ordered as the trainer saw them."""
+    from PIL import Image
+
+    path = Path(corpus_dir) / ("cams_%d.json" % frame_index)
+    with open(path) as handle:
+        entries = sorted(json.load(handle)["frames"], key=lambda d: d["file"])
+    found = []
+    for view, entry in enumerate(entries):
+        intrinsic = np.asarray(entry["intrinsic"], dtype=np.float64)
+        width, height = Image.open(entry["file"]).size
+        found.append((
+            Camera(
+                camera_id=view,
+                width=int(width),
+                height=int(height),
+                fx=float(intrinsic[0, 0]),
+                fy=float(intrinsic[1, 1]),
+                cx=float(intrinsic[0, 2]),
+                cy=float(intrinsic[1, 2]),
+                c2w=np.asarray(entry["extrinsic"], dtype=np.float64),
+            ),
+            entry,
+        ))
+    return found
+
+
 def training_view(sequence, frame_index: int, view: int = 0) -> Tuple[Camera, np.ndarray]:
     """A camera and its ground-truth image, straight from the corpus.
 
@@ -72,29 +116,14 @@ def training_view(sequence, frame_index: int, view: int = 0) -> Tuple[Camera, np
     config: ``lib.load_data`` does ``rgb * alpha + (1 - alpha)`` before the
     trainer ever sees it.
     """
-    with open(sequence.corpus_dir / ("cams_%d.json" % frame_index)) as handle:
-        frames = sorted(json.load(handle)["frames"], key=lambda d: d["file"])
-    if view >= len(frames):
+    entries = _training_entries(sequence.corpus_dir, frame_index)
+    if view >= len(entries):
         raise IndexError(
-            f"cams_{frame_index}.json lists {len(frames)} training cameras; {view} is not one "
+            f"cams_{frame_index}.json lists {len(entries)} training cameras; {view} is not one "
             "of them (a held-out camera is absent by design -- use held_out_view)"
         )
-    entry = frames[view]
-    truth = _composite(entry["file"], entry["mask"])
-
-    intrinsic = np.asarray(entry["intrinsic"], dtype=np.float64)
-    height, width = truth.shape[:2]
-    camera = Camera(
-        camera_id=view,
-        width=width,
-        height=height,
-        fx=float(intrinsic[0, 0]),
-        fy=float(intrinsic[1, 1]),
-        cx=float(intrinsic[0, 2]),
-        cy=float(intrinsic[1, 2]),
-        c2w=np.asarray(entry["extrinsic"], dtype=np.float64),
-    )
-    return camera, truth
+    camera, entry = entries[view]
+    return camera, _composite(entry["file"], entry["mask"])
 
 
 def _composite(image_path, mask_path) -> np.ndarray:
