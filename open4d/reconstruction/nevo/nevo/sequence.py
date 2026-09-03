@@ -72,6 +72,31 @@ class ReRFFrame:
         return entries * (1 + self.feature_dim) * 4
 
 
+def inward_near_far(corpus_dir) -> Tuple[float, float]:
+    """Reproduce ``lib.load_data.inward_nearfar_heuristic`` for a corpus.
+
+    Read off ``cams_0.json`` rather than by loading the corpus: the heuristic
+    only looks at camera positions, and decoding 48 views of every frame to
+    learn two scalars costs a minute and several GB.
+
+    Module level rather than a method because `stream.BitstreamPlayer` needs
+    the same numbers and has no trained run to hang them off -- and they must
+    be the *same* numbers, since a near plane that disagrees with the trainer's
+    moves where the ray-march starts.
+    """
+    with open(Path(corpus_dir) / "cams_0.json") as handle:
+        frames = json.load(handle)["frames"]
+    # load_NHR sorts views by file path before stacking, so the positions here
+    # are the same set the trainer saw, whatever the json order.
+    positions = np.asarray(
+        [np.asarray(f["extrinsic"], dtype=np.float64)[:3, 3]
+         for f in sorted(frames, key=lambda d: d["file"])]
+    )
+    distance = np.linalg.norm(positions[:, None] - positions, axis=-1)
+    far = float(distance.max() * 1.4)
+    return far * 0.05, far
+
+
 class ReRFSequence:
     """A trained ReRF sequence on disk, indexed by frame."""
 
@@ -116,23 +141,8 @@ class ReRFSequence:
 
     # ------------------------------------------------------------- near / far
     def near_far(self) -> Tuple[float, float]:
-        """Reproduce ``lib.load_data.inward_nearfar_heuristic`` for this corpus.
-
-        Read off ``cams_0.json`` rather than by loading the corpus: the
-        heuristic only looks at camera positions, and decoding 48 views of
-        every frame to learn two scalars costs a minute and several GB.
-        """
-        with open(self.corpus_dir / "cams_0.json") as handle:
-            frames = json.load(handle)["frames"]
-        # load_NHR sorts views by file path before stacking, so the positions
-        # here are the same set the trainer saw, whatever the json order.
-        positions = np.asarray(
-            [np.asarray(f["extrinsic"], dtype=np.float64)[:3, 3]
-             for f in sorted(frames, key=lambda d: d["file"])]
-        )
-        distance = np.linalg.norm(positions[:, None] - positions, axis=-1)
-        far = float(distance.max() * 1.4)
-        return far * 0.05, far
+        """This corpus's near and far planes. See :func:`inward_near_far`."""
+        return inward_near_far(self.corpus_dir)
 
     def render_kwargs(self) -> dict:
         near, far = self.near_far()
