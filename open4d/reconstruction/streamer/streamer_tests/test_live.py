@@ -399,3 +399,100 @@ def test_the_client_labels_a_replay_as_a_replay(tmp_path):
     )
     assert finished.returncode == 0, finished.stderr
     assert json.loads(finished.stdout) == ["live", "replay", "live"]
+
+
+# ------------------------------------------------------ attaching to a bundle ---
+
+
+def a_bundle(root, clips=None):
+    from streamer import bundle
+
+    bundle.write(
+        root,
+        title="t",
+        source="s",
+        clips=clips if clips is not None else [
+            bundle.Clip(name="prepared", representation="mesh", frames=["prepared/f.ply"])
+        ],
+        fps=24,
+        scenes={"basketball": {"poses": []}},
+        detail={"sources": [{"exporter": "vega"}]},
+    )
+    return root
+
+
+def test_attach_adds_a_live_clip_without_touching_the_others(tmp_path):
+    """The workflow: a renderer starts, and joins a bundle exported hours ago."""
+    from streamer import bundle, live
+
+    a_bundle(tmp_path)
+    live.attach(tmp_path, live.mjpeg(
+        "http://127.0.0.1:8802/stream", name="nevo-live", origin="rendered"))
+
+    index = bundle.read(tmp_path)
+    names = [clip["name"] for clip in index["clips"]]
+    assert names == ["prepared", "nevo-live"]
+    assert index["clips"][0]["frames"] == ["prepared/f.ply"]
+
+
+def test_attach_preserves_the_rest_of_the_manifest(tmp_path):
+    """Rewriting the index must not quietly drop the rig or the fps."""
+    from streamer import bundle, live
+
+    a_bundle(tmp_path)
+    live.attach(tmp_path, live.mjpeg(
+        "http://127.0.0.1:8802/stream", name="live", origin="rendered"))
+    index = bundle.read(tmp_path)
+    assert index["fps"] == 24
+    assert "basketball" in index["scenes"]
+    assert index["detail"]["sources"][0]["exporter"] == "vega"
+    assert index["title"] == "t" and index["source"] == "s"
+
+
+def test_attach_refuses_to_shadow_a_clip_silently(tmp_path):
+    from streamer import live
+
+    a_bundle(tmp_path)
+    live.attach(tmp_path, live.mjpeg(
+        "http://127.0.0.1:8802/stream", name="live", origin="rendered"))
+    with pytest.raises(ValueError, match="already has a clip named"):
+        live.attach(tmp_path, live.mjpeg(
+            "http://127.0.0.1:9000/stream", name="live", origin="rendered"))
+
+
+def test_attach_can_replace_a_clip_whose_renderer_moved(tmp_path):
+    """Restarting a renderer on a new port is the case this is for."""
+    from streamer import bundle, live
+
+    a_bundle(tmp_path)
+    live.attach(tmp_path, live.mjpeg(
+        "http://127.0.0.1:8802/stream", name="live", origin="rendered"))
+    live.attach(tmp_path, live.mjpeg(
+        "http://127.0.0.1:9000/stream", name="live", origin="rendered"), replace=True)
+
+    index = bundle.read(tmp_path)
+    assert [clip["name"] for clip in index["clips"]] == ["prepared", "live"]
+    assert live.upstreams(index) == {"live": "http://127.0.0.1:9000/stream"}
+
+
+def test_attach_revalidates_every_clip(tmp_path):
+    """A rewrite is a write, so the invariants apply to what was already there."""
+    from streamer import bundle, live
+
+    a_bundle(tmp_path)
+    index = bundle.read(tmp_path)
+    # Corrupt an existing clip the way a hand-edited manifest would.
+    index["clips"][0]["frames"] = []
+    (tmp_path / bundle.INDEX_NAME).write_text(json.dumps(index))
+
+    with pytest.raises(ValueError, match="needs either frames or a stream"):
+        live.attach(tmp_path, live.mjpeg(
+            "http://127.0.0.1:8802/stream", name="live", origin="rendered"))
+
+
+def test_attach_needs_a_bundle(tmp_path):
+    from streamer import live
+
+    with pytest.raises(FileNotFoundError, match="view.json"):
+        live.attach(tmp_path, live.mjpeg(
+            "http://127.0.0.1:8802/stream", name="live", origin="rendered"))
