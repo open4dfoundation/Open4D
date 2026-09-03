@@ -731,10 +731,15 @@ class MeshRenderer {
  * whether a free camera is meaningful -- so adding one is an entry here plus a
  * renderer, not a new branch in every function that touches a clip.
  *
- * `geometry` is core's `Representation.has_geometry`. Note the two are not the
- * same question as "can this be played here": `mesh` and `points` have geometry
- * in core but have no browser renderer yet, so they are deliberately absent and
- * a clip declaring one is reported as unplayable rather than rendering blank.
+ * `geometry` is core's `Representation.has_geometry`, and decides whether a free
+ * camera is meaningful: pixels carry none, so such a pane shows whatever camera
+ * the renderer chose and its controls say so.
+ *
+ * Every representation core defines is registered here. Being in this table is
+ * still the separate question of whether playback is possible at all, which is
+ * what a clip naming an unregistered representation runs into -- it is reported
+ * as unplayable rather than rendering a blank pane, and that is what the next
+ * representation to arrive here without a renderer will get.
  */
 const REPRESENTATIONS = {
   mesh: {
@@ -770,19 +775,6 @@ const REPRESENTATIONS = {
   },
 };
 
-
-/* The parser for one frame, or a refusal that names what was missing.
- *
- * A frame in a format nothing here decodes is the failure this whole registry
- * exists to make legible: `streamer.codecs` may well know the format and say it
- * decodes server-side, in which case the producer should have rendered it to
- * pixels rather than shipping the bitstream. Saying which suffixes *are*
- * handled turns that from a blank pane into a sentence. */
-
-function decodeFrame(representation) {
-  return (buffer, url, mediaType) =>
-    codecFor(representation, url)(buffer, url, mediaType);
-}
 
 /* view.json v1 called these `kind`. Bundles already on disk are worth keeping
  * readable, so the field is migrated on load rather than requiring a re-export. */
