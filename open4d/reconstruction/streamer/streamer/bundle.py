@@ -17,15 +17,21 @@ flattening them would lose which frame belongs to what. Every clip declares its
 model name the same things the same way:
 
 ``gaussians``
-    3DGS PLY per frame (see ``gs_tools.io.ply``). Free camera in the viewer.
+    3DGS PLY or ``.splat`` per frame (see ``gs_tools.io``). Free camera in the
+    viewer.
+``mesh``
+    ``.ply`` or Draco per frame, which is what `streamer.export` writes for any
+    sequence `open4d.load` reads. Free camera.
+``points``
+    The same two formats, drawn as points rather than a surface. Free camera.
 ``pixels``
-    Pre-rendered images per frame, for a representation that cannot be decoded
-    in the consumer's process at all. The camera is whatever the renderer used,
-    and that is recorded in ``notes``.
+    Pre-rendered images per frame, or a live MJPEG stream (`streamer.live`), for
+    a representation that cannot be decoded in the consumer's process at all.
+    The camera is whatever the renderer used, and that is recorded in ``notes``.
 
-``mesh`` and ``points`` are part of the same vocabulary and are what a mesh or
-point-cloud exporter would write; the bundled viewer has no renderer for them
-yet and says so rather than showing an empty pane.
+Which suffixes actually travel for each of these is `streamer.codecs`, not this
+module: a bundle records what a frame *is*, and the codec registry records what
+it is *in*.
 
 Paths in ``frames`` are relative to the bundle root, so the whole directory can
 be moved or served over HTTP unchanged.

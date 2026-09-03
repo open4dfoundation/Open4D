@@ -42,11 +42,20 @@ The pieces, smallest first:
 ``client``
     Playback. One self-contained browser page, no build step and no CDN.
 
-What is deliberately *not* here yet is the scheduler: `open4d.core.Dependency`
-declares that a codec's frames may need a key frame first, or that its decode
-stream cannot be rewound, and a client that seeks in such a stream needs to plan
-the chain rather than request a frame and hope. The declaration exists and is
-tested; the scheduler that consumes it is the next piece, and belongs here.
+The scheduler that consumes `open4d.core.Dependency` lives in the client rather
+than in this package, because seeking is the client's side of the problem: a
+codec's frames may need the group's key frame decoded first (``gop``), or its
+decode stream may not rewind at all (``sequential``), and a client that requests
+a frame and hopes gets the wrong picture. ``Scheduler`` in
+``client/viewer.html`` plans the chain a seek needs, then caches and prefetches
+along it. Its ``chain`` is a transcription of `Dependency.chain` into
+JavaScript, which is the liability two implementations of one rule always carry,
+so ``streamer_tests/test_scheduler.py`` runs both over the same cases.
+
+What is deliberately *not* here is adaptation. `monitor` records what a playback
+cost and decides nothing with it: a bundle carries one quality per clip, so
+there is nothing yet to adapt between, and a monitor that chose would be a
+second scheduler with no second option to choose from.
 """
 
 from __future__ import annotations
