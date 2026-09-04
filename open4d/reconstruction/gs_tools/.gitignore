@@ -1,0 +1,9 @@
+# Upstream checkouts, cloned rather than vendored: 223 MB of embedded git
+# repositories that `git add -A` in this directory otherwise sweeps into the
+# index as gitlinks. That has happened twice, and both times the commit had to
+# be amended, so it is stated here rather than remembered.
+#
+# These are *checkouts* with their own .git, unlike the other methods' upstream
+# trees (`vega/`, `rerf/upstream/`) which are vendored copies and are tracked.
+upstream/3dgstream/
+upstream/queen/
