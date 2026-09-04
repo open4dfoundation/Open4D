@@ -60,6 +60,12 @@ The pieces, smallest first:
     made the budget `policy` needs unmeasurable and any throughput figure a
     statement about the disk. Shaped in the server rather than with ``tc``,
     for reproducibility -- see the module docstring for what that costs.
+``playback``
+    A buffer, and what happens to it. `policy` makes one decision; a playback
+    is thousands, and the questions a comparison asks -- did this stall, how
+    much did its quality jump about, which method survives a bad link -- only
+    exist once frames are arriving at one rate and being consumed at another.
+    Simulated on a virtual clock, so a run is exact and repeatable.
 ``client``
     Playback. One self-contained browser page, no build step and no CDN.
 
@@ -73,14 +79,13 @@ along it. Its ``chain`` is a transcription of `Dependency.chain` into
 JavaScript, which is the liability two implementations of one rule always carry,
 so ``streamer_tests/test_scheduler.py`` runs both over the same cases.
 
-All five pieces of the loop now exist: a method declares its output, a link
-constrains its delivery, `link.observed` says what arrived, `metrics` says what
-it was worth, and `policy` chooses. What is deliberately *not* here is a
-**buffer model** -- occupancy per clip, a deliberate freeze told apart from a
-stall, churn charged across segments. `policy.switch_penalty` is the one piece
-of that which can be tested without a client that plays continuously against a
-trace, and building the rest before that client exists would mean writing
-policy no test could reach.
+The loop is closed: a method declares its output, a link constrains its
+delivery, the client measures what arrives, `metrics` says what it was worth,
+`policy` chooses, and `playback` scores what a viewer actually got. What is
+deliberately *not* here is a **second chooser to compare against**. Everything
+measured so far measures one policy under different links; the instrument's
+point is comparing policies, and that needs someone to bring a second one.
+`Playback(chooser=...)` is where it goes.
 """
 
 from __future__ import annotations
@@ -93,6 +98,7 @@ from . import (
     link,
     live,
     monitor,
+    playback,
     representations,
     server,
     transfer,
@@ -152,6 +158,7 @@ __all__ = [
     "from_sequence",
     "from_source",
     "monitor",
+    "playback",
     "representations",
     "server",
     "serve",

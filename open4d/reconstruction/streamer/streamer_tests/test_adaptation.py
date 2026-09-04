@@ -290,11 +290,60 @@ def test_adaptation_can_be_pinned_off():
 def test_the_client_splits_the_budget_evenly():
     """The decision that separates this from `streamer.policy`. If it ever
     becomes a utility maximisation, this test should be the thing that objects.
+
+    Split across the panes still *playing*, not all of them: a frozen pane is
+    fetching nothing, so counting it would leave its share unspent.
     """
     page = viewer_path().read_text()
     start = page.index("function chooseRungs(")
     body = page[start:page.index("\n}\n", start)]
-    assert "rate / panes.length" in body
+    assert "rate / playing.length" in body
+    assert "utility" not in body and "weight" not in body
+
+
+def test_the_client_freezes_under_deficit_rather_than_starving_everything():
+    """Measured in `streamer.playback`: on a collapsing trace this turned 30
+    seconds of stall into 56 of freeze -- the same shortfall taken as a
+    decision instead of a failure."""
+    page = viewer_path().read_text()
+    start = page.index("function chooseRungs(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "playing.pop()" in body
+    assert "pane.source.frozen = frozen.has(pane)" in body
+
+
+def test_the_freeze_is_sticky():
+    """Reconsidering from scratch would thaw one pane and freeze another, and a
+    viewer would see panes flickering rather than a stable subset playing."""
+    page = viewer_path().read_text()
+    start = page.index("function chooseRungs(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "froze(a) - froze(b)" in body
+
+
+def test_a_frozen_pane_is_not_shown():
+    """The difference between a freeze and a stall is that the rest of the view
+    stays in motion."""
+    page = viewer_path().read_text()
+    start = page.index("async function showFrame(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "pane.source.frozen" in body
+    assert ".filter(" in body
+
+
+def test_the_client_budget_matches_the_measured_rule():
+    """`bufferBudget` mirrors `streamer.playback.buffer_budget`, where the same
+    rule is measured. Two implementations of one rule drift, so the clamp is
+    pinned on both sides."""
+    from streamer.playback import buffer_budget
+
+    page = viewer_path().read_text()
+    start = page.index("function bufferBudget(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "0.5" in body and "1.5" in body
+    # And the Python side agrees at both ends of the clamp.
+    assert buffer_budget(10e6, 0.0, 4.0) == pytest.approx(5e6)
+    assert buffer_budget(10e6, 99.0, 4.0) == pytest.approx(15e6)
 
 
 def test_live_panes_are_left_alone():

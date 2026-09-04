@@ -943,6 +943,34 @@ function rungsOf(clip, fps) {
   return rungs.sort((a, b) => a.bitsPerSecond - b.bitsPerSecond);
 }
 
+/* The budget to spend, given the rate and how full this pane's buffer is.
+ *
+ * Rate alone is a lagging average, so a client that trusts it keeps buying the
+ * rung the link *used* to afford and drains its buffer doing so. Occupancy is
+ * the state that says whether the last few decisions were affordable.
+ *
+ * Clamped to [0.5, 1.5] of the estimate: unclamped, an empty buffer would pick
+ * the floor and never climb out, and a full one would overshoot the link and
+ * empty itself. Mirrors `streamer.playback.buffer_budget`, where the same rule
+ * is measured -- worth 0.7 dB there, which is honest about how much it buys. */
+function bufferBudget(rate, seconds, target) {
+  if (target <= 0) return rate;
+  return rate * Math.max(0.5, Math.min(1.5, seconds / target));
+}
+
+/* Seconds of decoded playback a pane has ahead of the frame being shown.
+ *
+ * Read off the scheduler's cache rather than tracked separately: the cache
+ * *is* the buffer, and a second counter would be a second thing to get wrong.
+ * Only frames ahead of the playhead count -- ones behind it are cached for a
+ * scrub backwards and buy no time. */
+function bufferedSeconds(pane, frame, fps) {
+  if (!pane.source || !pane.source.cache) return 0;
+  let ahead = 0;
+  for (const index of pane.source.cache.keys()) if (index >= frame) ahead += 1;
+  return ahead / fps;
+}
+
 /* The best rung a share affords, or the cheapest when nothing does.
  *
  * Falling back to the cheapest rather than showing nothing: a pane that has
@@ -1378,6 +1406,10 @@ const app = {
   // ladder -- and where there is one, the default should be the behaviour the
   // ladder was built for.
   adapt: true, decision: null,
+  // Seconds of decoded playback to aim to keep ahead. Small, because a pane
+  // caches a handful of frames rather than seconds of them: the cache is the
+  // buffer, and a Gaussian frame is megabytes.
+  targetBuffer: 0.15,
 };
 
 function setStatus(text) { statusEl.textContent = text; statusEl.hidden = false; }
@@ -1591,8 +1623,13 @@ function refreshPanel() {
       }
       const picked = laddered.map((pane) => {
         const snap = pane.source.snapshot();
-        return `${pane.method.slice(-5)}=${snap.rung}`;
+        return `${pane.method.slice(-5)}=`
+          + (pane.source.frozen ? "frozen" : snap.rung);
       });
+      if (app.decision && app.decision.frozen) {
+        rows.push(["frozen", `${app.decision.frozen} of ${app.decision.ladders}`
+          + " panes holding their last frame so the rest keep playing"]);
+      }
       rows.push([app.adapt ? "rungs" : "rungs (pinned)", picked.join(" ")]);
       const switches = laddered.reduce(
         (sum, pane) => sum + (pane.source.stats.switches || 0), 0);
@@ -1721,7 +1758,12 @@ async function showFrame(index) {
     frameLabel.textContent = `${app.frame + 1} / ${total}`;
   }
   try {
-    await Promise.all(app.panes.map((pane) => pane.show(app.frame)));
+    // A frozen pane is skipped, not shown: it keeps whatever is on its canvas
+    // while the others advance. That is the whole difference between a freeze
+    // and a stall -- the rest of the view stays in motion.
+    await Promise.all(app.panes
+      .filter((pane) => !(pane.source && pane.source.frozen))
+      .map((pane) => pane.show(app.frame)));
     (app.shownAt = app.shownAt || []).push(performance.now());
     if (app.shownAt.length > 30) app.shownAt.shift();
     statusEl.hidden = true;
@@ -1796,29 +1838,55 @@ function chooseRungs() {
   if (!panes.length) return;
 
   if (!app.adapt) {
-    for (const pane of panes) pane.source.useRung(null);
+    for (const pane of panes) { pane.source.useRung(null); pane.source.frozen = false; }
     app.decision = null;
     return;
   }
   const rate = meter.bitsPerSecond;
   if (!rate) return;                 // nothing measured yet; leave as-is
 
-  // An even split. See the note above `RateMeter`: a comparison view must not
-  // decide that one method gets the bandwidth.
-  const share = rate / panes.length;
+  const laddered = panes.filter((pane) => rungsOf(pane.clip, app.fps).length > 1);
+  if (!laddered.length) { app.decision = null; return; }
+
+  /* Deficit first. When the rate cannot carry every pane's cheapest rung,
+   * freezing some so the rest play beats starving all of them: a frozen pane
+   * holds its last frame while the others keep moving, and `streamer.playback`
+   * measures that trade -- on a collapsing trace it turned 30 seconds of stall
+   * into 56 of freeze, the same shortfall taken as a decision instead of a
+   * failure.
+   *
+   * Frozen by fullest buffer, and stickily: a pane already frozen stays frozen
+   * unless the rate recovers. Reconsidering from scratch each time would thaw
+   * one pane and freeze another, and panes would visibly flicker. */
+  const buffered = new Map(laddered.map(
+    (pane) => [pane, bufferedSeconds(pane, app.frame, app.fps)]));
+  const order = [...laddered].sort((a, b) => {
+    const froze = (pane) => (pane.source.frozen ? 1 : 0);
+    return froze(a) - froze(b) || buffered.get(a) - buffered.get(b);
+  });
+  const floor = (pane) => rungsOf(pane.clip, app.fps)[0].bitsPerSecond;
+  const playing = [...order];
+  while (playing.length
+         && playing.reduce((sum, pane) => sum + floor(pane), 0) > rate) {
+    playing.pop();
+  }
+  const frozen = new Set(laddered.filter((pane) => !playing.includes(pane)));
+
+  const share = playing.length ? rate / playing.length : 0;
   let spent = 0;
-  let ladders = 0;
-  for (const pane of panes) {
+  for (const pane of laddered) {
+    pane.source.frozen = frozen.has(pane);
     const rungs = rungsOf(pane.clip, app.fps);
-    if (rungs.length < 2) continue;  // one rendition is not a choice
-    ladders += 1;
-    const rung = affordable(rungs, share);
+    if (frozen.has(pane)) continue;  // holds its last frame; nothing fetched
+    const budget = bufferBudget(share, buffered.get(pane), app.targetBuffer);
+    const rung = affordable(rungs, budget);
     pane.source.useRung(rung && rung.name === "default" ? null : rung);
     spent += rung ? rung.bitsPerSecond : 0;
   }
-  app.decision = ladders
-    ? { rate, share, spent, panes: panes.length, ladders }
-    : null;
+  app.decision = {
+    rate, share, spent, panes: panes.length,
+    ladders: laddered.length, frozen: frozen.size,
+  };
 }
 
 function togglePlay() {
