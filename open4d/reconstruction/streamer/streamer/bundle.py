@@ -227,6 +227,66 @@ def write(
     return path
 
 
+def add(
+    out_dir: Path | str,
+    clips: "Clip | list[Clip]",
+    *,
+    replace: bool = False,
+) -> Path:
+    """Add clips to a bundle that already exists, and rewrite its index.
+
+    The workflow this exists for: content is produced after the bundle was
+    written -- a renderer starts, or an exporter finishes a second method --
+    and re-exporting the whole bundle to include it would re-copy every frame
+    of everything already there.
+
+    ``clips`` may be one clip or many, and many is not a convenience: a
+    16-clip export would otherwise rewrite the manifest 16 times, and a reader
+    that loaded it midway through would see a partial bundle.
+
+    Every clip is validated on the way out, not just the new ones. A rewrite is
+    a write, and writing back a manifest whose older clips no longer satisfy
+    the invariants would be a silent downgrade.
+
+    Note for a running server: `streamer.server.serve` reads live upstreams
+    once, at startup, so it must be restarted before it will proxy a newly
+    added live clip. Deliberate -- re-reading per request would make every
+    frame fetch depend on a file a producer may be halfway through writing.
+    """
+    root = Path(out_dir)
+    index = read(root)
+    if not index:
+        raise FileNotFoundError(f"{root} has no {INDEX_NAME}")
+
+    incoming = [clips] if isinstance(clips, Clip) else list(clips)
+    names = [clip.name for clip in incoming]
+    duplicated = {name for name in names if names.count(name) > 1}
+    if duplicated:
+        raise ValueError(
+            f"two incoming clips are both named {', '.join(sorted(duplicated))}; "
+            "one would overwrite the other's entry"
+        )
+
+    existing = [Clip(**entry) for entry in index.get("clips", [])]
+    taken = sorted({clip.name for clip in existing} & set(names))
+    if taken and not replace:
+        raise ValueError(
+            f"{root} already has a clip named {', '.join(taken)}; pass "
+            "replace=True to swap them, which is what re-exporting needs"
+        )
+    kept = [clip for clip in existing if clip.name not in set(names)]
+
+    return write(
+        root,
+        title=index.get("title", root.name),
+        source=index.get("source", str(root)),
+        clips=kept + incoming,
+        fps=index.get("fps", 30),
+        scenes=index.get("scenes") or {},
+        detail=index.get("detail"),
+    )
+
+
 def read(out_dir: Path | str) -> dict[str, Any]:
     """The bundle index, or an empty dict if the directory has none."""
     path = Path(out_dir) / INDEX_NAME

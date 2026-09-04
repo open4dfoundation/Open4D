@@ -350,13 +350,23 @@ class BitstreamPlayer:
                 return
 
     # ------------------------------------------------------------ the render ---
-    def render(self, camera: Camera, *, chunk: int = 1 << 19) -> np.ndarray:
-        """Ray-march the currently installed frame, as ``[H, W, 3]`` in [0, 1].
+    def render(self, camera: Camera, *, depth: bool = False, chunk: int = 1 << 19):
+        """Ray-march the currently installed frame.
 
-        Chunked because one ray per pixel at 1280x960 is 1.2 million rays and
-        the intermediate samples per ray do not fit in memory at once.
+        Returns ``[H, W, 3]`` in [0, 1], or ``(colour, depth)`` when ``depth``
+        is set. Chunked because one ray per pixel at 1280x960 is 1.2 million
+        rays and the samples along them do not fit in memory at once.
+
+        The depth map is **relative, not metric**: upstream accumulates
+        ``weights * step_id``, so it is in ray-march steps, and it is returned
+        normalised into [0, 1] with near bright -- the same convention
+        upstream's own render script writes. Useful for seeing what geometry a
+        frame reconstructed; not a distance in world units.
         """
         torch = self._torch
+        wanted = dict(self.render_kwargs)
+        if depth:
+            wanted["render_depth"] = True
         with torch.no_grad():
             c2w = torch.tensor(camera.c2w, dtype=torch.float32, device="cuda")
             intrinsics = torch.tensor(
@@ -371,14 +381,24 @@ class BitstreamPlayer:
             origins = origins.flatten(0, -2)
             directions = directions.flatten(0, -2)
             viewdirs = viewdirs.flatten(0, -2)
-            pieces = [
-                self.model(
+            colour_pieces, depth_pieces = [], []
+            for begin in range(0, len(origins), chunk):
+                result = self.model(
                     origins[begin:begin + chunk].contiguous(),
                     directions[begin:begin + chunk].contiguous(),
                     viewdirs[begin:begin + chunk].contiguous(),
-                    **self.render_kwargs,
-                )["rgb_marched"]
-                for begin in range(0, len(origins), chunk)
-            ]
-            image = torch.cat(pieces).reshape(camera.height, camera.width, 3)
-        return image.clamp(0.0, 1.0).cpu().numpy()
+                    **wanted,
+                )
+                colour_pieces.append(result["rgb_marched"])
+                if depth:
+                    depth_pieces.append(result["depth"])
+            shape = (camera.height, camera.width)
+            image = torch.cat(colour_pieces).reshape(*shape, 3)
+            image = image.clamp(0.0, 1.0).cpu().numpy()
+            if not depth:
+                return image
+            distance = torch.cat(depth_pieces).reshape(*shape).cpu().numpy()
+        span = float(distance.max())
+        # Near bright, far dark, and a flat frame stays white rather than
+        # dividing by zero.
+        return image, (1.0 - distance / span) if span > 0 else np.ones(shape, np.float32)

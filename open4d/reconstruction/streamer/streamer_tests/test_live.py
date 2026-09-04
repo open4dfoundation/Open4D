@@ -496,3 +496,29 @@ def test_attach_needs_a_bundle(tmp_path):
     with pytest.raises(FileNotFoundError, match="view.json"):
         live.attach(tmp_path, live.mjpeg(
             "http://127.0.0.1:8802/stream", name="live", origin="rendered"))
+
+
+# ------------------------------------------------------- many clips at once ---
+
+
+def test_add_takes_many_clips_in_one_rewrite(tmp_path):
+    """A 16-clip export would otherwise rewrite the manifest 16 times, and a
+    reader loading it midway would see a partial bundle."""
+    a_bundle(tmp_path)
+    bundle.add(tmp_path, [
+        bundle.Clip(name=f"c{n}", representation="pixels",
+                    frames=[f"c{n}/frame_0000.jpg"])
+        for n in range(4)
+    ])
+    names = [clip["name"] for clip in bundle.read(tmp_path)["clips"]]
+    assert names == ["prepared", "c0", "c1", "c2", "c3"]
+
+
+def test_add_refuses_two_incoming_clips_with_one_name(tmp_path):
+    """One would silently overwrite the other's entry."""
+    a_bundle(tmp_path)
+    with pytest.raises(ValueError, match="both named"):
+        bundle.add(tmp_path, [
+            bundle.Clip(name="same", representation="pixels", frames=["a/f.jpg"]),
+            bundle.Clip(name="same", representation="pixels", frames=["b/f.jpg"]),
+        ])
