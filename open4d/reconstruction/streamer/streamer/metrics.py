@@ -469,6 +469,14 @@ def write_back(bundle_dir: Path | str, report: Report) -> Path:
     rung entry to put it in, so it goes in the clip's ``detail["quality"]`` --
     the same shape, one level up.
 
+    The default's **byte count** is recorded here too, as
+    ``detail["bytes_per_frame"]``. A variant states its own size because an
+    exporter wrote it; the default's size is only on disk, so a consumer that
+    cannot stat the files -- a browser, which is the consumer that matters --
+    had no way to know what the rendition it plays by default actually costs.
+    Without it a client can compare rungs it might switch to and not the one it
+    is already on.
+
     Only clips this report actually scored are touched: a partial run should
     fill in what it measured and leave the rest alone rather than blanking it.
     """
@@ -489,6 +497,12 @@ def write_back(bundle_dir: Path | str, report: Report) -> Path:
         measured = scored.get((clip.name, None))
         if measured:
             clip.detail = dict(clip.detail, quality=measured)
+        if clip.frames and not clip.stream:
+            total = sum((root / path).stat().st_size for path in clip.frames)
+            clip.detail = dict(
+                clip.detail,
+                bytes_per_frame=round(total / len(clip.frames), 1),
+            )
         if clip.variants:
             updated = []
             for raw in clip.variants:

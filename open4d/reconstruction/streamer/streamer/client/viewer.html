@@ -146,6 +146,10 @@
     <ul id="notes"></ul>
     <h2>stats</h2>
     <dl id="stats"></dl>
+    <label id="adaptRow" hidden>
+      <input type="checkbox" id="adapt" checked>
+      adapt to the measured link
+    </label>
     <h2>controls</h2>
     <ul id="controlHelp"></ul>
   </div>
@@ -858,6 +862,100 @@ function decodeFrame(representation) {
   return (buffer, url) => decoder.decode(representation, buffer, url);
 }
 
+/* ------------------------------------------------------------- adaptation ---
+ * Three pieces: measure what the link delivers, read the ladder a clip
+ * carries, and pick a rung per pane.
+ *
+ * The rule here is deliberately *not* the one `streamer.policy` implements.
+ * That one maximises total weighted quality under a budget, which is right for
+ * a player -- and wrong for a comparison, because the way to maximise a sum is
+ * to make the panes unequal, spending on whichever gains most per byte. A
+ * viewer whose whole purpose is judging two methods against each other must
+ * not decide that one of them gets the bandwidth.
+ *
+ * So the budget is split evenly and each pane takes the best rung its share
+ * affords. Equal shares, equal treatment, and the comparison stays honest.
+ * `policy.choose` is still what answers "what would an optimising client do",
+ * from Python, where it can be measured -- and it is not transcribed here,
+ * which also means there is no second implementation of it to drift.
+ */
+
+class RateMeter {
+  /* What the link is actually delivering, as an exponentially weighted mean.
+   *
+   * Measured from this client's own fetches rather than told: a browser cannot
+   * see the server's configured capacity, and a client that trusted a number
+   * it was handed would not be estimating anything. Weighted by bytes, so a
+   * 33 kB frame counts for more than a 3 kB one -- an unweighted mean over
+   * mixed sizes is dominated by whichever rung happens to be small.
+   *
+   * Only samples above `minBytes` count. A cache hit or a 304 completes in
+   * microseconds and would read as a gigabit link, which is exactly the
+   * over-estimate that then overshoots the real one.
+   */
+  constructor({ halfLife = 8, minBytes = 2048 } = {}) {
+    this.halfLife = halfLife;          // samples, not seconds
+    this.minBytes = minBytes;
+    this.bitsPerSecond = 0;
+    this.samples = 0;
+    this.bytes = 0;
+  }
+
+  record(bytes, seconds) {
+    if (bytes < this.minBytes || seconds <= 0) return;
+    const rate = (bytes * 8) / seconds;
+    this.samples += 1;
+    this.bytes += bytes;
+    if (this.samples === 1) { this.bitsPerSecond = rate; return; }
+    const alpha = 1 - Math.pow(0.5, 1 / this.halfLife);
+    this.bitsPerSecond += alpha * (rate - this.bitsPerSecond);
+  }
+
+  reset() { this.bitsPerSecond = 0; this.samples = 0; this.bytes = 0; }
+}
+
+const meter = new RateMeter();
+
+/* A clip's renditions, cheapest first: the default plus whatever variants the
+ * manifest carries. The default's size is `detail.bytes_per_frame`, which
+ * `streamer.metrics --write` records -- a variant states its own size, but the
+ * default's is only on disk, so without that a client can compare the rungs it
+ * might move to and not the one it is on. */
+function rungsOf(clip, fps) {
+  if (!clip || !clip.frames || !clip.frames.length) return [];
+  const detail = clip.detail || {};
+  const rungs = [];
+  if (detail.bytes_per_frame) {
+    rungs.push({
+      name: "default", frames: clip.frames,
+      bitsPerSecond: detail.bytes_per_frame * 8 * fps,
+      quality: detail.quality || {},
+    });
+  }
+  for (const variant of clip.variants || []) {
+    if (!variant.frames || !variant.frames.length) continue;
+    rungs.push({
+      name: variant.name, frames: variant.frames,
+      bitsPerSecond: (variant.bytes / variant.frames.length) * 8 * fps,
+      quality: variant.quality || {},
+    });
+  }
+  return rungs.sort((a, b) => a.bitsPerSecond - b.bitsPerSecond);
+}
+
+/* The best rung a share affords, or the cheapest when nothing does.
+ *
+ * Falling back to the cheapest rather than showing nothing: a pane that has
+ * gone blank tells a viewer less than a pane that is visibly coarse, and the
+ * frames are on disk either way -- this is a bundle, not a live encoder, so
+ * the only cost of overrunning is that it arrives late. */
+function affordable(rungs, share) {
+  if (!rungs.length) return null;
+  let chosen = rungs[0];
+  for (const rung of rungs) if (rung.bitsPerSecond <= share) chosen = rung;
+  return chosen;
+}
+
 /* ------------------------------------------------------------- scheduling ---
  * When a frame can only be decoded after another one, requesting it and hoping
  * is wrong. `open4d.core.Dependency` is where that is declared -- a codec's
@@ -918,20 +1016,50 @@ function chain(dependency, index, decoded = null) {
  * that nothing yet declares a dependency to honour.
  */
 class Scheduler {
-  constructor(clip, root, decode, { cacheSize = 6, lookAhead = 3 } = {}) {
+  constructor(clip, root, decode,
+              { cacheSize = 6, lookAhead = 3, meter = null } = {}) {
     this.clip = clip;
     this.root = root;
     this.decode = decode;
+    // Passed in rather than reached for as a page global. A scheduler that
+    // read one could not be exercised outside a page -- and this one is, by
+    // `streamer_tests/test_scheduler.py`, which runs it as shipped under Node.
+    this.meter = meter;
     this.dependency = dependencyOf(clip);
     this.cacheSize = Math.max(1, cacheSize);
     this.lookAhead = lookAhead;
     this.cache = new Map();          // index -> decoded frame, insertion-ordered
     this.pending = new Map();        // index -> in-flight promise
     this.decoded = null;             // where a stateful decoder currently sits
+    this.rung = null;                // chosen rendition, or null for the default
     this.stats = { decodes: 0, bytes: 0, hits: 0, misses: 0, replays: 0 };
   }
 
   get length() { return this.clip.frames.length; }
+
+  /* The frame list in force. Every rendition shares the clip's timeline -- the
+   * manifest refuses one that does not -- so an index means the same instant
+   * whichever rung is playing, and switching mid-clip cannot jump in time. */
+  get frames() {
+    return this.rung && this.rung.frames ? this.rung.frames : this.clip.frames;
+  }
+
+  /* Move to a different rendition.
+   *
+   * Cached frames are *kept*. They hold the same content at a different
+   * quality, so a frame already decoded is still the right picture for its
+   * index; dropping the cache would re-fetch what is already in hand and stall
+   * playback at exactly the moment the link is under pressure. The new rung
+   * applies to frames not yet fetched, which is where it can still help.
+   */
+  useRung(rung) {
+    const before = this.rung ? this.rung.name : null;
+    const after = rung ? rung.name : null;
+    if (before === after) return false;
+    this.rung = rung;
+    this.stats.switches = (this.stats.switches || 0) + 1;
+    return true;
+  }
 
   /* A decoded frame may hold a resource the browser will not reclaim on its own
    * -- an image decoded from a blob keeps that blob alive through its object
@@ -969,10 +1097,18 @@ class Scheduler {
   async _decodeOne(index) {
     if (this.cache.has(index)) return this.cache.get(index);
     if (this.pending.has(index)) return this.pending.get(index);
-    const url = this.root + this.clip.frames[index];
+    const url = this.root + this.frames[index];
+    const began = performance.now();
     const task = fetch(url).then(async (response) => {
       if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
       const buffer = await response.arrayBuffer();
+      // Timed to the last byte, and reported before decoding: the decode is
+      // this machine's problem, and folding it in would make a slow GPU look
+      // like a slow link -- which is the error that then picks a lower rung
+      // and does not help.
+      if (this.meter) {
+        this.meter.record(buffer.byteLength, (performance.now() - began) / 1000);
+      }
       // The response's own Content-Type, which the server takes from the
       // representation registry -- so an image is decoded as the type it was
       // served as rather than by leaving a browser to sniff a typeless blob.
@@ -1030,6 +1166,7 @@ class Scheduler {
       cached: this.cache.size,
       pending: this.pending.size,
       mode: this.dependency.mode,
+      rung: this.rung ? this.rung.name : "default",
     };
   }
 }
@@ -1156,7 +1293,7 @@ class Pane {
     if (make) make.kind = clip.representation;
     this._surface(kind.surface, make);
     this.source = new Scheduler(clip, "./", kind.decode, {
-      cacheSize: kind.cacheSize,
+      cacheSize: kind.cacheSize, meter,
     });
     this.label.textContent = clip.camera === null || clip.camera === undefined
       ? this.method : `${this.method} · cam ${clip.camera}`;
@@ -1236,6 +1373,11 @@ const app = {
   index: null, scenes: {}, scene: null, mode: "explore", frame: 0, station: 0,
   methods: [], panes: [], playing: false, lastAdvance: 0, advancing: false,
   fps: 30, wipe: false,
+  // Adapt to the measured link by default. A bundle whose clips have one
+  // rendition each is unaffected, so this costs nothing where there is no
+  // ladder -- and where there is one, the default should be the behaviour the
+  // ladder was built for.
+  adapt: true, decision: null,
 };
 
 function setStatus(text) { statusEl.textContent = text; statusEl.hidden = false; }
@@ -1431,6 +1573,31 @@ function refreshPanel() {
       + (totals.pending ? ` (+${totals.pending} in flight)` : "")]);
     rows.push(["decoded", `${totals.decodes} frames · `
       + `${(totals.bytes / 1e6).toFixed(1)} MB`]);
+    // The adaptation loop, when there is a ladder to adapt on. Reported as
+    // measured rate and chosen rung rather than a single "quality" number: the
+    // two can disagree -- a rate that has just dropped shows up here before
+    // the rung moves -- and collapsing them would hide the lag that is the
+    // most interesting thing about an adaptive client.
+    const laddered = active.filter(
+      (pane) => rungsOf(pane.clip, app.fps).length > 1);
+    if (laddered.length) {
+      document.getElementById("adaptRow").hidden = false;
+      rows.push(["link", meter.samples
+        ? `${(meter.bitsPerSecond / 1e6).toFixed(1)} Mbit/s measured`
+        : "not measured yet"]);
+      if (app.adapt && app.decision) {
+        rows.push(["share", `${(app.decision.share / 1e6).toFixed(1)} Mbit/s `
+          + `each across ${app.decision.panes} panes`]);
+      }
+      const picked = laddered.map((pane) => {
+        const snap = pane.source.snapshot();
+        return `${pane.method.slice(-5)}=${snap.rung}`;
+      });
+      rows.push([app.adapt ? "rungs" : "rungs (pinned)", picked.join(" ")]);
+      const switches = laddered.reduce(
+        (sum, pane) => sum + (pane.source.stats.switches || 0), 0);
+      if (switches) rows.push(["switches", String(switches)]);
+    }
     const modes = new Set(active.map((pane) => pane.source.snapshot().mode));
     if (!(modes.size === 1 && modes.has("independent"))) {
       // Only worth the row when something is not independent: a replay count of
@@ -1600,6 +1767,9 @@ function tick(now) {
    * promise. */
   if (app.playing && !app.advancing && now - app.lastAdvance >= 1000 / app.fps) {
     app.advancing = true;
+    // Before the fetch, so a decision applies to the frame about to be asked
+    // for rather than the one after it.
+    chooseRungs();
     showFrame(app.frame + 1).finally(() => {
       app.advancing = false;
       app.lastAdvance = performance.now();
@@ -1608,6 +1778,47 @@ function tick(now) {
   const aspect = app.mode === "compare" && rig() ? rig().width / rig().height : 0;
   const basis = basisFactory();
   for (const pane of app.panes) pane.draw(basis, aspect);
+}
+
+/* Decide a rung for every pane, from what the link is delivering.
+ *
+ * Called from the playback loop rather than on a timer, so decisions happen at
+ * a rate tied to what is being watched -- and stop when playback stops, which
+ * a timer would not.
+ *
+ * `app.adapt` off pins every pane to the default rendition. That is not a
+ * debug switch: comparing two methods usually means wanting both at their best
+ * regardless of what the link can sustain, and letting the link decide would
+ * silently make the comparison about bandwidth instead.
+ */
+function chooseRungs() {
+  const panes = app.panes.filter((pane) => pane.source && !isLive(pane.clip));
+  if (!panes.length) return;
+
+  if (!app.adapt) {
+    for (const pane of panes) pane.source.useRung(null);
+    app.decision = null;
+    return;
+  }
+  const rate = meter.bitsPerSecond;
+  if (!rate) return;                 // nothing measured yet; leave as-is
+
+  // An even split. See the note above `RateMeter`: a comparison view must not
+  // decide that one method gets the bandwidth.
+  const share = rate / panes.length;
+  let spent = 0;
+  let ladders = 0;
+  for (const pane of panes) {
+    const rungs = rungsOf(pane.clip, app.fps);
+    if (rungs.length < 2) continue;  // one rendition is not a choice
+    ladders += 1;
+    const rung = affordable(rungs, share);
+    pane.source.useRung(rung && rung.name === "default" ? null : rung);
+    spent += rung ? rung.bitsPerSecond : 0;
+  }
+  app.decision = ladders
+    ? { rate, share, spent, panes: panes.length, ladders }
+    : null;
 }
 
 function togglePlay() {
@@ -1656,6 +1867,17 @@ function bindWipe(handle) {
 }
 
 function bindControls() {
+  const adapt = document.getElementById("adapt");
+  adapt.checked = app.adapt;
+  adapt.addEventListener("change", () => {
+    app.adapt = adapt.checked;
+    // Applied immediately rather than at the next advance: the switch is most
+    // useful while paused, comparing the same frame at two rungs.
+    chooseRungs();
+    meter.reset();          // the pinned rung's rate says nothing about the other
+    refreshPanel();
+  });
+
   let dragging = null;
   panesEl.addEventListener("contextmenu", (event) => event.preventDefault());
   panesEl.addEventListener("pointerdown", (event) => {

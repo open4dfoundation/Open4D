@@ -222,6 +222,7 @@ class Link:
         self._reservations = 0
         self._queued = 0.0
         self._retransmit = 0.0
+        self._busy = 0.0
 
     # ----------------------------------------------------------- the model ---
     def capacity_at(self, when: float) -> float:
@@ -258,6 +259,7 @@ class Link:
             self._reservations += 1
             self._queued += queued
             self._retransmit += retransmit
+            self._busy += duration
             return Reservation(
                 bytes=size, starts_at=starts_at,
                 finishes_at=self._free_at + retransmit,
@@ -283,16 +285,39 @@ class Link:
     def observed(self) -> dict[str, Any]:
         """What the link actually delivered.
 
-        ``bits_per_second`` here is the number `policy` wants as a budget: not
-        the configured capacity, which a client cannot know, but the rate the
-        bytes came in at -- which is what a rate estimator would have measured.
+        ``bits_per_second`` is the rate while it was *delivering*, not averaged
+        over the link's lifetime. The distinction is the whole usefulness of the
+        number and getting it wrong is not subtle: a client that fetches eight
+        frames and then waits has an idle link most of the time, and dividing
+        by wall clock reported 0.3 Mbit/s for a 25 Mbit/s pipe. A chooser
+        handed that drops every pane.
+
+        Both are **cumulative since the link started**, which makes this a
+        summary of a run and not a current reading. A link on a trace has no
+        single rate, and once the trace has cycled these average every phase
+        of it together. A client that has to track a changing link needs a
+        recent-window estimate instead -- an exponentially weighted mean over
+        its own last few transfers, which is what ``RateMeter`` in
+        `streamer.client` is for. Use :meth:`reset` to scope this to a phase.
+
+        So two numbers, because they answer different questions:
+
+        ``bits_per_second``
+            Bytes over the seconds the link spent transmitting them. An
+            estimate of *capacity*, which is what a budget wants.
+        ``utilisation``
+            The fraction of the elapsed time it was transmitting at all. How
+            much of the pipe was being used, which is what says whether the
+            link is the constraint.
         """
         with self._lock:
             elapsed = self._clock() - self._started
+            busy = self._busy
             payload = {
                 "bytes": self._bytes,
                 "reservations": self._reservations,
                 "elapsed_seconds": round(elapsed, 4),
+                "busy_seconds": round(busy, 4),
                 "queued_seconds": round(self._queued, 4),
                 "retransmit_seconds": round(self._retransmit, 4),
                 "configured_bits_per_second": (
@@ -302,13 +327,15 @@ class Link:
                 "loss": self.loss,
             }
         payload["bits_per_second"] = (
-            round(payload["bytes"] * 8 / elapsed, 1) if elapsed > 0 else None
+            round(payload["bytes"] * 8 / busy, 1) if busy > 0 else None
         )
-        # Saturation, as the fraction of transfer time spent waiting for the
-        # link rather than using it. A client below this is not being limited.
-        total = payload["queued_seconds"] + payload["retransmit_seconds"]
+        payload["utilisation"] = round(busy / elapsed, 4) if elapsed > 0 else None
+        # Saturation: the share of the time bytes were in the system that they
+        # spent waiting for the link rather than using it. High means the queue
+        # is the constraint, which is when a chooser has to act.
+        total = self._queued + self._retransmit
         payload["queueing_fraction"] = (
-            round(total / elapsed, 4) if elapsed > 0 else None
+            round(total / (total + busy), 4) if total + busy > 0 else None
         )
         return payload
 
@@ -321,6 +348,7 @@ class Link:
             self._reservations = 0
             self._queued = 0.0
             self._retransmit = 0.0
+            self._busy = 0.0
 
 
 def described(link: Link | None) -> str:

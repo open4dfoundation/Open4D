@@ -230,26 +230,55 @@ def test_a_different_seed_gives_a_different_pattern():
 # ------------------------------------------------------------ what it saw ---
 
 
-def test_the_observed_rate_is_what_arrived_not_what_was_configured():
-    """The number a rate estimator would read, and the one `policy` wants as a
-    budget: a client cannot know the configured capacity."""
+def test_the_delivered_rate_ignores_idle_time():
+    """The distinction that makes the number usable as a budget.
+
+    A client that fetches a few frames and then waits leaves the link idle most
+    of the time. Dividing bytes by wall clock reported 0.3 Mbit/s for a
+    25 Mbit/s pipe, and a chooser handed that drops every pane. So the rate is
+    over the seconds spent transmitting, and how busy the link was is a
+    separate number.
+    """
     clock = Ticks()
     link = Link(capacity=8_000_000, latency=0.0, clock=clock)
-    link.reserve(1_000_000)
-    clock.advance(2.0)                       # half the time was idle
+    link.reserve(1_000_000)                  # one second of transmission
+    clock.advance(2.0)                       # and one more second idle
     seen = link.observed()
     assert seen["bytes"] == 1_000_000
-    assert seen["bits_per_second"] == pytest.approx(4_000_000, rel=0.01)
+    assert seen["bits_per_second"] == pytest.approx(8_000_000, rel=0.01)
+    assert seen["utilisation"] == pytest.approx(0.5, rel=0.01)
     assert seen["configured_bits_per_second"] == 8_000_000
 
 
-def test_queueing_fraction_shows_saturation():
+def test_a_saturated_link_is_fully_utilised():
+    clock = Ticks()
+    link = Link(capacity=8_000_000, latency=0.0, clock=clock)
+    for _ in range(3):
+        link.reserve(1_000_000)
+    clock.advance(3.0)
+    seen = link.observed()
+    assert seen["utilisation"] == pytest.approx(1.0, rel=0.01)
+    assert seen["bits_per_second"] == pytest.approx(8_000_000, rel=0.01)
+
+
+def test_queueing_fraction_shows_the_queue_is_the_constraint():
+    """Four seconds of work booked at once: most of the time bytes spend in the
+    system is spent waiting behind other bytes."""
     clock = Ticks()
     link = Link(capacity=8_000_000, latency=0.0, clock=clock)
     for _ in range(4):
-        link.reserve(1_000_000)              # 4 s of work booked instantly
+        link.reserve(1_000_000)
     clock.advance(4.0)
     assert link.observed()["queueing_fraction"] > 0.5
+
+
+def test_an_unqueued_link_reports_no_contention():
+    clock = Ticks()
+    link = Link(capacity=8_000_000, latency=0.0, clock=clock)
+    link.reserve(1_000_000)
+    clock.advance(5.0)                       # long idle, so nothing queued
+    link.reserve(1_000_000)
+    assert link.observed()["queueing_fraction"] == pytest.approx(0.0)
 
 
 def test_an_unused_link_reports_nothing_rather_than_dividing_by_zero():
