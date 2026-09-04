@@ -29,6 +29,7 @@ from functools import partial
 from pathlib import Path
 
 from .. import bundle, live, representations
+from ..link import Link, described
 from ..client import viewer_path
 from ..monitor import Monitor
 
@@ -91,6 +92,39 @@ def _parse_range(header: str, size: int):
     return start, min(end, size - 1)
 
 
+class _ShapedWriter:
+    """Wraps a socket's write file so every byte is paced by a `Link`.
+
+    Wrapping the file rather than pacing each route is what makes the shaping
+    total: headers, bodies, range responses and the live proxy all leave
+    through here, and a route added later is shaped without knowing a link
+    exists. Pacing at the routes instead would have left whichever one was
+    written next unshaped, and an unshaped route in a measurement is not a
+    smaller effect -- it is the whole result, since that is where the bytes go.
+
+    The propagation delay is charged on the first write of each response, not
+    per chunk: a stream of bytes already in flight pays the flight time once.
+    """
+
+    def __init__(self, wfile, link: Link) -> None:
+        self._wfile = wfile
+        self._link = link
+        self._fresh = True
+
+    def restart(self) -> None:
+        """Called per request, so each response pays propagation once."""
+        self._fresh = True
+
+    def write(self, data):
+        if data:
+            self._link.send(len(data), propagate=self._fresh)
+            self._fresh = False
+        return self._wfile.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._wfile, name)
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """Static files from the bundle, plus the client page and the counters.
 
@@ -142,6 +176,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
     timeout = 30
 
     monitor: Monitor | None = None
+    #: A shared bottleneck, or None for an unshaped loopback server. Shared on
+    #: purpose: concurrent panes have to contend for one pipe, or the budget a
+    #: chooser is given means nothing.
+    link: Link | None = None
     #: Clip name -> upstream URL, from the manifest. Empty for a bundle with no
     #: live clips, which makes the proxy route 404 rather than exist unused.
     upstreams: dict = {}
@@ -232,7 +270,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         if self.monitor is None:
             self.send_error(404, "this server keeps no counters")
             return
-        payload = json.dumps(self.monitor.snapshot(), indent=2).encode()
+        snapshot = self.monitor.snapshot()
+        if self.link is not None:
+            snapshot["link"] = self.link.observed()
+        payload = json.dumps(snapshot, indent=2).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -321,7 +362,14 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self._size = int(value)
         super().send_header(keyword, value)
 
+    def setup(self):
+        super().setup()
+        if self.link is not None:
+            self.wfile = _ShapedWriter(self.wfile, self.link)
+
     def handle_one_request(self):
+        if isinstance(self.wfile, _ShapedWriter):
+            self.wfile.restart()
         self._status, self._size, started = 200, 0, time.monotonic()
         super().handle_one_request()
         if self.monitor is not None and self.path:
@@ -378,6 +426,7 @@ def serve(
     open_browser: bool = False,
     block: bool = True,
     monitor: Monitor | None = None,
+    link: Link | None = None,
 ) -> _Server:
     """Serve ``bundle_dir`` with the client at ``/`` and counters at ``/stats.json``.
 
@@ -409,7 +458,7 @@ def serve(
     handler_class = type(
         "_BundleHandler",
         (_Handler,),
-        {"monitor": counters, "upstreams": live.upstreams(index)},
+        {"monitor": counters, "link": link, "upstreams": live.upstreams(index)},
     )
     handler = partial(handler_class, directory=str(bundle_dir))
     try:
@@ -423,6 +472,7 @@ def serve(
         server = _Server((host, 0), handler)
         print(f"port {port} is already in use; using {server.server_address[1]} instead")
     server.monitor = counters
+    server.link = link
     url = _reachable_address(host, server.server_address[1])
 
     clips = index.get("clips", [])
@@ -433,6 +483,7 @@ def serve(
             f"  ({clip.get('representation')})"
         )
     print(f"\nserving {bundle_dir}\n  {url}")
+    print(f"  link: {described(link)}")
     print(f"  counters at {url.rstrip('/')}{STATS_ROUTE}")
     for name, upstream in live.upstreams(index).items():
         print(f"  live {name} <- {upstream}")
