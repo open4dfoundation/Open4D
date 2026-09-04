@@ -455,6 +455,59 @@ def render_table(report: Report, *, per_clip: bool = False) -> str:
     return "\n".join(lines)
 
 
+def write_back(bundle_dir: Path | str, report: Report) -> Path:
+    """Store measured quality into the bundle, beside the bytes.
+
+    This is what closes the loop. An exporter knows a rung's *size* -- it wrote
+    the files -- but not its quality, because quality is a comparison against a
+    reference the exporter has no opinion about. So the rung arrives with
+    ``bytes`` filled in and ``quality`` empty, and something has to put the
+    other half in. Until it does, a chooser reading the ladder can see what
+    each rung costs and not what it buys, which is half a decision.
+
+    A rung's own ``quality`` mapping holds it. The default rendition has no
+    rung entry to put it in, so it goes in the clip's ``detail["quality"]`` --
+    the same shape, one level up.
+
+    Only clips this report actually scored are touched: a partial run should
+    fill in what it measured and leave the rest alone rather than blanking it.
+    """
+    root = Path(bundle_dir).expanduser().resolve()
+    index = bundle.read(root)
+    if not index:
+        raise FileNotFoundError(f"{root} has no {bundle.INDEX_NAME}")
+
+    scored: dict = {}
+    for score in report.scores:
+        scored[(score.clip, score.variant)] = {
+            "psnr": round(score.psnr, 3), "ssim": round(score.ssim, 5),
+        }
+
+    clips = []
+    for entry in index.get("clips", []):
+        clip = bundle.Clip(**entry)
+        measured = scored.get((clip.name, None))
+        if measured:
+            clip.detail = dict(clip.detail, quality=measured)
+        if clip.variants:
+            updated = []
+            for raw in clip.variants:
+                found = scored.get((clip.name, raw.get("name")))
+                updated.append(dict(raw, quality=found) if found else raw)
+            clip.variants = updated
+        clips.append(clip)
+
+    return bundle.write(
+        root,
+        title=index.get("title", root.name),
+        source=index.get("source", str(root)),
+        clips=clips,
+        fps=index.get("fps", 30),
+        scenes=index.get("scenes") or {},
+        detail=index.get("detail"),
+    )
+
+
 def main(argv=None) -> int:
     import argparse
 
@@ -468,10 +521,17 @@ def main(argv=None) -> int:
     parser.add_argument("--per-clip", action="store_true",
                         help="one row per clip instead of a per-method rollup")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--write", action="store_true",
+                        help="store the measured quality into the bundle, beside each "
+                             "rung's byte count, so a chooser can read both")
     args = parser.parse_args(argv)
 
     report = measure(args.bundle, scene=args.scene, every=args.every,
                      limit=args.limit)
+    if args.write:
+        write_back(args.bundle, report)
+        print(f"wrote quality for {len(report.scores)} renditions into "
+              f"{args.bundle}\n")
     if args.json:
         print(json.dumps(report.as_dict(), indent=2))
     else:

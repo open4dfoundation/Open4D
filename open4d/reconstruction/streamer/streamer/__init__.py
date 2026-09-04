@@ -49,6 +49,11 @@ The pieces, smallest first:
     says what a playback cost; this says what it was worth, and a comparison
     needs both. It works on a bundle rather than on a method, which is the only
     arrangement under which two methods' numbers mean the same thing.
+``policy``
+    Which rung to send, under a budget. The last piece of the loop: `bundle`
+    carries the ladder, `metrics` fills in what each rung buys, and this picks.
+    A multiple-choice knapsack, solved exactly, because greedy spends
+    everything on the first pane it looks at.
 ``client``
     Playback. One self-contained browser page, no build step and no CDN.
 
@@ -62,12 +67,12 @@ along it. Its ``chain`` is a transcription of `Dependency.chain` into
 JavaScript, which is the liability two implementations of one rule always carry,
 so ``streamer_tests/test_scheduler.py`` runs both over the same cases.
 
-What is deliberately *not* here is a policy. A clip can now carry quality rungs
-(`bundle.Variant`) with measured rate and measured quality, and `metrics` fills
-the quality in -- so there is something to adapt between, and nothing that
-chooses. `monitor` still only counts, which is the right split: a chooser needs
-a rate estimate, a buffer model and a notion of what the viewer is looking at,
-and none of those belong in a byte counter.
+What is deliberately *not* here is a **rate estimate**. `policy` decides what to
+send for a budget it is given, and nothing measures what the budget should be:
+`monitor` counts bytes after the fact and does not predict. Nor is there a
+buffer model, and both gaps have the same cause -- every transport here is
+loopback, so there is no link that can starve a client, and a policy written
+against a situation that cannot be produced could not be tested either.
 """
 
 from __future__ import annotations
@@ -97,7 +102,7 @@ from .transfer import fetch
 #: "found in sys.modules ... prior to execution" -- on every invocation of a
 #: documented command. Lazy keeps ``streamer.metrics.measure(...)`` working as
 #: an import while leaving the command line quiet.
-_LAZY = ("adopt", "metrics")
+_LAZY = ("adopt", "metrics", "policy")
 
 
 def __getattr__(name: str):
@@ -130,6 +135,7 @@ __all__ = [
     "live",
     "fetch",
     "metrics",
+    "policy",
     "from_sequence",
     "from_source",
     "monitor",
