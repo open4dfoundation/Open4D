@@ -180,80 +180,8 @@ def _rerf_bitstream(root: Path, frames: int = 4) -> Path:
     return root
 
 
-def test_rig_render_dir_names_the_views_and_frames(tmp_path):
-    assert rerf.rig_render_dir(tmp_path, (0, 2), 30).name == "render_rig_v0-2_f30"
-    # Upstream's own name carries only the frame count, which is why two
-    # bitstreams overwrite each other; this one cannot.
-    assert rerf.rig_render_dir(tmp_path, (0,), 30).name != rerf.rig_render_dir(tmp_path, (2,), 30).name
-
-
-def test_rig_render_writes_a_plan_and_refuses_without_permission(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf")
-    (tmp_path / "config.py").write_text("expname = 'g_x'\n")
-    options = rerf.RerfRenderOptions(rig_views=(0, 2), frames=3)
-    with pytest.raises(RuntimeError, match="--render was not given"):
-        rerf.render_at_rig(tmp_path, root, options)
-    plan = json.loads((rerf.rig_render_dir(tmp_path, (0, 2), 3) / "plan.json").read_text())
-    assert plan["views"] == [0, 2]
-    assert plan["times"] == [0, 1, 2]
-    assert Path(plan["nevo_tree"]).name == "nevo"
-
-
-def test_rig_render_refuses_more_frames_than_exist(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf", frames=4)
-    (tmp_path / "config.py").write_text("expname = 'g_x'\n")
-    with pytest.raises(ValueError, match="4 compressed frames"):
-        rerf.render_at_rig(tmp_path, root,
-                           rerf.RerfRenderOptions(rig_views=(0,), frames=9, render=True))
-
-
-def test_collect_rig_unpacks_timestep_major_view_minor_order(tmp_path):
-    images = tmp_path / "render_rig_v0-2_f3"
-    images.mkdir()
-    views, times = [0, 2], [0, 1, 2]
-    # The plan renders every view of one instant before moving on, so index
-    # step*len(views)+position is the only correct way back.
-    for step in times:
-        for position, view in enumerate(views):
-            index = step * len(views) + position
-            (images / f"{index:03d}.jpg").write_bytes(f"v{view}t{step}".encode())
-            (images / f"{index:03d}_depth.jpg").write_bytes(b"d")
-    clips = rerf.collect_rig(images, tmp_path / "out", "run-rerf", views, times,
-                             rerf.RerfRenderOptions(depth=False), scene="subject", method="rerf")
-    assert [(c.method, c.camera) for c in clips] == [("rerf", 0), ("rerf", 2)]
-    for clip, view in zip(clips, views):
-        for step in times:
-            got = (tmp_path / "out" / clip.frames[step]).read_bytes()
-            assert got == f"v{view}t{step}".encode()
-
-
-def test_collect_rig_reports_a_short_render(tmp_path):
-    images = tmp_path / "render_rig_v0_f3"
-    images.mkdir()
-    (images / "000.jpg").write_bytes(b"x")
-    with pytest.raises(FileNotFoundError, match="did not produce"):
-        rerf.collect_rig(images, tmp_path / "out", "run", [0], [0, 1, 2],
-                         rerf.RerfRenderOptions(depth=False))
-
-
 def test_scene_name_strips_the_corpus_prefix():
     assert rerf.scene_name("g_basketball") == "basketball"
     assert rerf.scene_name("basketball") == "basketball"
 
 
-def test_rig_runner_anchors_still_match_the_vendored_script():
-    """The injected patch anchors on two exact lines of upstream's renderer.
-
-    If a pin bump moves or rewords either, the runner must fail loudly rather
-    than render something subtly different -- so the anchors are checked here
-    too, where it costs nothing to notice.
-    """
-    from gs_tools import paths
-    from gs_tools.methods import _rerf_rig_render as runner
-
-    script = paths.upstream("nevo") / "rerf" / "rerf_render.py"
-    if not script.is_file():
-        pytest.skip("vendored ReRF is not checked out")
-    source = script.read_text()
-    assert runner.CALLBACK_ANCHOR in source
-    assert runner.OUTPUT_ANCHOR in source

@@ -168,19 +168,14 @@ def _options_for(module, args: argparse.Namespace):
         )
     return rerf.RerfRenderOptions(
         frames=args.frames,
-        force=args.force,
-        render=args.render,
         depth=not args.no_depth,
         bitstream=args.bitstream,
         pca=None if args.pca is None else args.pca,
         pca_chs=tuple(int(n) for n in args.pca_chs.split(",")) if args.pca_chs else None,
         group_size=args.group_size,
-        python=Path(args.rerf_python).expanduser() if args.rerf_python else None,
         config=Path(args.config).expanduser() if args.config else None,
-        rig_views=tuple(int(v) for v in args.rig_views) if args.rig_views else (),
         fps=args.fps,
         dry_run=getattr(args, "dry_run", False),
-        passthrough=tuple(args.passthrough),
     )
 
 
@@ -404,26 +399,15 @@ def build_parser() -> argparse.ArgumentParser:
                                  "(default: the run manifest's, else 'gaussian')")
         target.add_argument("--device", help="Vega only: torch device for the colour decode")
         # ReRF
-        target.add_argument("--render", action="store_true",
-                            help="ReRF only: run ReRF's renderer (minutes of GPU time) instead of "
-                                 "requiring an existing render")
         target.add_argument("--force", action="store_true",
-                            help="rebuild the bundle even if one is already there; for ReRF this "
-                                 "also re-renders rather than reusing an existing render")
+                            help="rebuild the bundle even if one is already there")
         target.add_argument("--no-depth", action="store_true", dest="no_depth",
                             help="ReRF only: skip ReRF's depth maps")
-        target.add_argument("--rig-views", nargs="+", dest="rig_views",
-                            help="ReRF only: render at these capture-rig cameras instead of "
-                                 "upstream's synthetic orbit, so the result is comparable with "
-                                 "other methods and with the captured image at the same pose")
         target.add_argument("--bitstream",
-                            help="ReRF only: which bitstream directory in the run to render "
-                                 "(default: bundle the renders already present)")
+                            help="ReRF only: which bitstream directory in the run to consider, "
+                                 "when a run holds several and none has been rendered. "
+                                 "Rendering one is `python -m rerf_stream.export`.")
         target.add_argument("--config", help="ReRF only: ReRF config (default: <run>/config.py)")
-        target.add_argument("--rerf-python", dest="rerf_python",
-                            help=f"ReRF only: the Python 3.8 interpreter that can import ReRF's "
-                                 f"entropy coder (default: ${rerf.PYTHON_ENV_VAR}, else a sibling "
-                                 f"`{rerf.DEFAULT_ENV_NAME}` conda env)")
         target.add_argument("--group-size", type=int, dest="group_size",
                             help="ReRF only: override the inferred ReRF key-frame interval")
         target.add_argument("--pca-chs", dest="pca_chs",

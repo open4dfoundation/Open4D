@@ -274,52 +274,6 @@ def test_bitstream_info_needs_a_bitstream(tmp_path):
         rerf.bitstream_info(tmp_path)
 
 
-def test_render_command_passes_the_inferred_codec_configuration(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf", frames=6, group_size=3)
-    info = rerf.bitstream_info(root)
-    config = tmp_path / "config.py"
-    config.write_text("expname = 'g_x'\n")
-    command = rerf.render_command(config, root, 6, info, rerf.RerfRenderOptions())
-    assert command[1:4] == ["-m", "orbitnevo.rerf_cli", "rerf_render.py"]
-    # Upstream defaults --frame_num to 20000 and derives group_size from it, so
-    # omitting either silently changes which frames decode as key frames.
-    for flag, value in (("--render_360", "6"), ("--frame_num", "6"),
-                        ("--group_size", "3"), ("--pca_chs", "7,13")):
-        assert command[command.index(flag) + 1] == value
-    assert "--pca" in command
-
-
-def test_render_command_honours_overrides(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf", frames=6, group_size=3)
-    info = rerf.bitstream_info(root)
-    config = tmp_path / "config.py"
-    config.write_text("expname = 'g_x'\n")
-    options = rerf.RerfRenderOptions(pca=False, group_size=2)
-    command = rerf.render_command(config, root, 6, info, options)
-    assert "--pca" not in command
-    assert command[command.index("--group_size") + 1] == "2"
-
-
-def test_render_refuses_without_permission_and_says_how(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf")
-    (tmp_path / "config.py").write_text("expname = 'g_x'\n")
-    with pytest.raises(RuntimeError, match="--render was not given"):
-        rerf.render(tmp_path, root, rerf.RerfRenderOptions())
-
-
-def test_render_refuses_more_frames_than_were_compressed(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf", frames=4)
-    with pytest.raises(ValueError, match="4 compressed frames"):
-        rerf.render(tmp_path, root, rerf.RerfRenderOptions(frames=10, render=True))
-
-
-def test_render_reports_a_missing_corpus(tmp_path):
-    root = _rerf_bitstream(tmp_path / "rerf")
-    (tmp_path / "config.py").write_text("data = dict(\n    datadir='/nonexistent/corpus',\n)\n")
-    with pytest.raises(FileNotFoundError, match="corpus /nonexistent/corpus"):
-        rerf.render(tmp_path, root, rerf.RerfRenderOptions(render=True))
-
-
 def test_collect_separates_colour_from_depth(tmp_path):
     images = tmp_path / "render_360_rerf_3"
     images.mkdir()
@@ -389,3 +343,58 @@ def test_serve_refuses_a_directory_that_is_not_a_bundle(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="view.json"):
         view.serve(tmp_path, port=0, block=False)
+
+
+# ------------------------------------------------- rendering moved out ---
+
+
+def test_a_bitstream_with_no_render_names_the_renderer(tmp_path):
+    """Rendering left this module for `rerf_stream.export`, which renders at
+    the corpus's own intrinsics, can write quality rungs and emits the capture
+    rig. The error has to say so: the alternative is a person concluding that
+    ReRF cannot be bundled at all.
+    """
+    _rerf_bitstream(tmp_path / "rerf")
+    (tmp_path / "config.py").write_text("expname = 'g_x'\n")
+    with pytest.raises(RuntimeError) as raised:
+        rerf.build_clips(tmp_path, tmp_path / "out", rerf.RerfRenderOptions())
+    message = str(raised.value)
+    assert rerf.RENDERER in message
+    assert "streamer.adopt" in message
+    assert "--compression-path" in message
+
+
+def test_the_module_no_longer_carries_a_renderer():
+    """Structural: a leftover would shell out to a tree that is gone."""
+    for name in ("render", "render_command", "render_dir", "render_at_rig",
+                 "rig_render_dir", "collect_rig", "rerf_python"):
+        assert not hasattr(rerf, name), name
+
+
+def test_it_points_at_the_tree_reef_is_actually_vendored_in():
+    """`gs_tools.env` records the upstream commit a manifest's frames came
+    from, and it resolves this name. Pointing at the old tree made it None."""
+    from gs_tools import paths
+
+    assert rerf.upstream == "rerf"
+    assert (paths.upstream(rerf.upstream) / "upstream" / "run.py").is_file()
+
+
+def test_an_existing_render_is_still_bundled(tmp_path):
+    """What this module is still the right home for: turning an image sequence
+    that already exists into clips."""
+    run = tmp_path / "g_x"
+    images = run / "render_360_rerf_3"
+    images.mkdir(parents=True)
+    # config.py is what makes a directory a ReRF *run* rather than unknown.
+    (run / "config.py").write_text("expname = 'g_x'\n")
+    for index in range(3):
+        # collect() copies without decoding, so the bytes need not be an image.
+        (images / f"{index:03d}.jpg").write_bytes(b"colour")
+    _rerf_bitstream(run / "rerf")
+    title, clips, detail = rerf.build_clips(
+        run, tmp_path / "out", rerf.RerfRenderOptions(depth=False))
+    assert clips and all(clip.representation == "pixels" for clip in clips)
+    # A run with a render prefers it and ignores the bitstream beside it: an
+    # existing render says which condition it is, a bitstream name does not.
+    assert "bitstreams" not in detail
