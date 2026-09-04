@@ -426,21 +426,79 @@ than exercised: they are what a producer serving a bitstream *as* its frames
 would need, and building them afterwards would mean changing the client at the
 same time as trusting a new encoder.
 
+## Choosing a rung, and a link to choose against
+
+```bash
+python -m streamer.metrics ~/bundles/basketball --write   # fill in what rungs buy
+python -m streamer.policy  ~/bundles/basketball --scene thomas
+```
+
+```
+   budget    spent    mean  cam00    cam01    cam02    cam03    cam04    cam05
+     6.4M     6.4M   40.47  low      low      low      low      low      low
+    38.8M    34.0M   44.43  medium   default  medium   medium   medium   medium
+    71.3M    71.3M   46.16  default  default  default  default  default  default
+```
+
+The choice is a **multiple-choice knapsack**, solved exactly by dynamic
+programming. Greedy "best quality per byte" is the usual approximation and it
+is wrong in a way that matters here: with rungs 3.2× and 10.6× apart it spends
+everything on the first pane it considers and leaves the rest at their floor,
+which is precisely the lopsided allocation a comparison view must not have.
+Nine clips by three rungs makes exactness free.
+
+Weights decide who gets headroom, and who is dropped when even the floor does
+not fit — there is no rung cheaper than the cheapest, so something has to go,
+and it is named rather than silently missing. `switch_penalty` charges churn
+against a previous selection.
+
+Rate and quality are **measured, not predicted**, which is what removes the
+trained regressors a system choosing before encoding would need.
+`metrics --write` puts the quality half into the manifest beside the bytes.
+
+### The link
+
+```python
+from streamer import Link, Trace, serve
+
+serve(bundle_dir, link=Link(capacity=20e6, latency=0.020))
+serve(bundle_dir, link=Link(trace=Trace.read("walk.trace")))
+```
+
+Until this existed every transport here ran on loopback, which made the budget
+`policy` needs unmeasurable and any throughput figure a statement about the
+disk. `Link` is a single-queue bottleneck: bytes leave in request order, at the
+capacity in force, after a propagation delay, and queueing emerges from
+contention — which is the behaviour that matters when panes share a pipe. It is
+shared by every connection on purpose.
+
+Shaped in the server rather than with `tc`. Kernel shaping is more faithful and
+was rejected because it needs root, perturbs the whole machine, and cannot be
+exercised by a test — which for a measurement instrument is disqualifying.
+Measured accuracy: **2.6% at 5 Mbit/s, 7.4% at 20, 15% at 50**, always
+*under*-delivering, and latency within 1 ms. What it does not reproduce is TCP:
+no congestion window, no slow start. Loss is charged as the delay a
+retransmission costs, because that is what an application above TCP sees.
+
+`link.observed()` reports what actually arrived — which is the budget a chooser
+wants, since a client cannot know the configured capacity. Worth knowing what
+that number is: probing with six serial requests over a 10 ms link measures
+10.7 Mbit/s on a 20 Mbit/s pipe, because 60 ms of that was round trips. That is
+the honest budget *for that request pattern*, not a measurement error.
+
 ## What is deliberately missing
 
-**A policy that reads the ladder.** Rungs exist, with measured rate and
-measured quality, and nothing chooses between them: playback takes the default
-rendition every time. That choice — which rung, per clip, under a bandwidth
-budget, weighted by where the viewer is looking — is the adaptation half of a
-streaming system, and it is the next piece. What makes it tractable now is that
-the manifest already holds the `(rate, quality)` pairs such a chooser consumes,
-measured rather than predicted, so it needs no trained model.
+**A buffer model.** Per-clip buffer occupancy, a deliberate freeze
+told apart from a stall, churn charged across segments. `policy` allocates for
+a budget at an instant; none of it plays continuously against a trace and
+reacts. `switch_penalty` is the only part of that dynamics testable today, and
+the rest needs a client that streams for minutes rather than a function that
+returns a selection.
 
-**A constrained link.** Everything here runs on loopback or through a tunnel:
-no bandwidth limit, no loss, no meaningful round trip. So the transport is
-worth measuring through, and nothing has yet measured anything through it. A
-figure like "129 MB/s at 30 fps for decoded Gaussians" is what the content
-*demands*, not what a link delivered.
+**A client that uses any of this.** The browser page still fetches the default
+rendition. Nothing wires `link.observed` to `policy.choose` to what the
+`Scheduler` requests, so the loop is demonstrable from Python and not yet from
+the viewer.
 
 **A held-out camera.** Every rig camera was a training view for both Vega and
 ReRF, so the numbers `metrics` reports measure reconstruction rather than
