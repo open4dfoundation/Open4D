@@ -120,47 +120,14 @@ def mjpeg(
     )
 
 
-def attach(bundle_dir, clip: bundle.Clip, *, replace: bool = False) -> Path:
-    """Add a live clip to a bundle that already exists, and rewrite its index.
+def attach(bundle_dir, clip, *, replace: bool = False) -> Path:
+    """Add a live clip to an existing bundle. See `bundle.add`.
 
-    The workflow this exists for: a renderer is started on the GPU machine and
-    should show up beside content that was exported hours ago. Re-exporting the
-    whole bundle to add one URL would re-copy every frame of every other clip.
-
-    Every clip is validated on the way back out, not just the new one -- a
-    manifest is rewritten here, and writing back a bundle whose older clips no
-    longer satisfy the invariants would be a silent downgrade.
-
-    The bundle server reads live upstreams once, when `streamer.server.serve`
-    is called, so a server already running against this bundle has to be
-    restarted before it will proxy the new clip. That is not an oversight to
-    route around: the alternative is re-reading the manifest per request, which
-    would make every frame fetch depend on a file that a producer may be
-    halfway through writing.
+    Kept as a name here because starting a renderer and pointing a bundle at it
+    is one action from a producer's point of view, and this is where the other
+    half of it lives.
     """
-    root = Path(bundle_dir)
-    index = bundle.read(root)
-    if not index:
-        raise FileNotFoundError(f"{root} has no {bundle.INDEX_NAME}")
-
-    existing = [bundle.Clip(**entry) for entry in index.get("clips", [])]
-    taken = [item for item in existing if item.name == clip.name]
-    if taken and not replace:
-        raise ValueError(
-            f"{root} already has a clip named {clip.name!r}; pass replace=True "
-            "to swap it, which is what restarting a renderer on a new port needs"
-        )
-    clips = [item for item in existing if item.name != clip.name] + [clip]
-
-    return bundle.write(
-        root,
-        title=index.get("title", root.name),
-        source=index.get("source", str(root)),
-        clips=clips,
-        fps=index.get("fps", 30),
-        scenes=index.get("scenes") or {},
-        detail=index.get("detail"),
-    )
+    return bundle.add(bundle_dir, clip, replace=replace)
 
 
 def upstreams(index: dict) -> dict[str, str]:
