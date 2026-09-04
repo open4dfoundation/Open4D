@@ -35,6 +35,7 @@ rerf_stream/
   bitstream.py         decode the bitstream frame by frame, ray-march a view
   mjpeg.py             push JPEG frames over multipart/x-mixed-replace
   serve.py             the live stream, and the rate ladder
+  export.py            render prepared clips, at one quality or several
 rerf_stream_tests/
 ```
 
@@ -94,18 +95,59 @@ Measured on `g_basketball`, one RTX 4090, via `--report-ladder`:
 | medium | 640×480 | 88 | 20.4 | 12.8 | 2.1 |
 | low | 320×240 | 80 | 25.9 | 4.1 | 0.9 |
 
+Note what that table says, because it is the opposite of what adaptive
+streaming usually assumes. Dropping from high to medium cuts bytes per frame by
+3.2× but bitrate only by 1.2×, because the frame rate more than doubles. **Live,
+a rung mostly buys frame rate, not bandwidth** — the ray-march is the
+constraint, not the link, so adapting this method is trading GPU time. Even at
+its best it emits 2.6 Mbit/s, which streams over anything.
+
+A *prepared* clip is different: it plays at the bundle's fixed fps, so there the
+same rung cuts bitrate by the full 3.4× (see the table below). Same content,
+two different scarcities, depending on whether the frames are being made now.
+
 **For a server-rendered method the ladder is pixels, not features.** What
 travels is JPEG, so what a receiver can be offered is resolution and JPEG
 quality — both available on a bitstream that already exists. Changing the
 *bitstream's* quality would mean re-encoding, which needs the training
 checkpoints (see below).
 
-Note what the table says: dropping from high to medium cuts bytes per frame by
-3.2× but bitrate only by 1.2×, because the frame rate more than doubles. The
-rung mostly buys **frame rate**, not bandwidth. A platform adapting this method
-is trading GPU time, not link capacity — which is the opposite of what adaptive
-streaming normally assumes, and worth knowing before wiring a bitrate
-controller to it.
+The same rungs can be written into a bundle as a clip's quality levels, so
+something downstream can choose between them:
+
+```bash
+python -m rerf_stream.export --config <run>/config.py \
+    --compression-path <run>/rerf --out ~/rerf-clips \
+    --name g_thomas --scene thomas --depth --captured \
+    --rungs high,medium,low
+```
+
+The highest rung becomes the clip's default rendition — a reader that knows
+nothing about rungs then sees the method at its best — and the others become
+variants beside it. Scored with `python -m streamer.metrics`, on `g_thomas`:
+
+| rung | resolution | kB/frame | Mbit/s @30 | PSNR | SSIM |
+| --- | --- | --- | --- | --- | --- |
+| default | 1280×960 q92 | 33.5 | 8.04 | 45.91 | 0.9902 |
+| medium | 640×480 q88 | 9.9 | 2.38 | 43.72 | 0.9853 |
+| low | 320×240 q80 | 3.0 | 0.73 | 40.45 | 0.9723 |
+
+A lower rung is **resampled from the same ray-march**, not marched again at a
+lower resolution. Re-marching would sample the volume differently and give a
+slightly different picture — fine as an image, wrong as a rendition, because
+two renditions have to be the same content for a switch between them to be a
+rate change rather than a visible cut. It is also free: the march is the
+expensive step at ~90 ms, and a resize is not.
+
+## Reproducibility
+
+Re-rendering the same frame at the same camera is **reproducible but not
+bit-identical**: the ray-march sums along each ray with CUDA reductions, whose
+accumulation order is not fixed. Measured by re-exporting `g_basketball`, 73 of
+480 frames differed, by at most 2 levels of 255 on 18–185 of 3.7 million
+samples — 0.003%, which moves PSNR by far less than 0.01 dB. So "diff the two
+exports" is not a valid check that nothing changed; compare the numbers
+`streamer.metrics` reports instead.
 
 ## What is missing, and why
 
