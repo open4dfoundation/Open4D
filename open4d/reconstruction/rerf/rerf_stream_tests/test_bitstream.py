@@ -372,3 +372,66 @@ def test_depth_comes_back_alongside_colour():
     # Normalised, near bright. An all-white frame would mean the span was zero.
     assert 0.0 <= float(depth.min()) and float(depth.max()) <= 1.0
     assert float(depth.max()) > float(depth.min())
+
+
+# ---------------------------------------------------------------- the rig ---
+
+
+def a_corpus(root, cameras=3):
+    """A corpus manifest shaped like prepare.py's, with known camera axes."""
+    import json as _json
+
+    root.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for index in range(cameras):
+        # A c2w whose columns are distinguishable, so a transposed read shows up.
+        c2w = [
+            [1.0, 0.0, 0.0, 10.0 + index],
+            [0.0, 2.0, 0.0, 20.0 + index],
+            [0.0, 0.0, 3.0, 30.0 + index],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        entries.append({
+            "camera_id": index, "fx": 1300.0, "fy": 1300.0,
+            "cx": 640.0, "cy": 480.0, "c2w_world": c2w,
+        })
+    (root / "nevo_corpus.json").write_text(_json.dumps({
+        "width": 1280, "height": 960,
+        "world_bounds_min": [-1.0, 2.0, -3.0],
+        "world_bounds_max": [1.0, 4.0, -1.0],
+        "cameras": list(reversed(entries)),        # out of order on purpose
+    }))
+    return root
+
+
+def test_the_rig_carries_one_pose_per_camera_in_index_order(tmp_path):
+    """A viewer selects a *station* by index, so the order is the contract:
+    shuffled poses would show two methods at different cameras and call it a
+    comparison."""
+    rig = camera_module.capture_rig(a_corpus(tmp_path / "corpus"))
+    assert len(rig["poses"]) == 3
+    assert [pose["position"][0] for pose in rig["poses"]] == [10.0, 11.0, 12.0]
+
+
+def test_the_rig_reads_the_camera_axes_from_the_columns(tmp_path):
+    """c2w is camera-to-world, so its columns are right/down/forward. Reading
+    rows instead still produces a plausible rig pointing the wrong way."""
+    rig = camera_module.capture_rig(a_corpus(tmp_path / "corpus"))
+    pose = rig["poses"][0]
+    assert pose["right"] == [1.0, 0.0, 0.0]
+    assert pose["down"] == [0.0, 2.0, 0.0]
+    assert pose["forward"] == [0.0, 0.0, 3.0]
+    assert pose["position"] == [10.0, 20.0, 30.0]
+
+
+def test_the_rig_uses_world_bounds_not_normalised_ones(tmp_path):
+    """The shared frame, because a geometry method added to this scene has to
+    line up with it in 3D."""
+    rig = camera_module.capture_rig(a_corpus(tmp_path / "corpus"))
+    assert rig["bounds_min"] == [-1.0, 2.0, -3.0]
+    assert rig["bounds_max"] == [1.0, 4.0, -1.0]
+
+
+def test_the_rigs_field_of_view_comes_from_the_intrinsics(tmp_path):
+    rig = camera_module.capture_rig(a_corpus(tmp_path / "corpus"))
+    assert abs(rig["fov_y"] - 2.0 * np.arctan(960 * 0.5 / 1300.0)) < 1e-12
