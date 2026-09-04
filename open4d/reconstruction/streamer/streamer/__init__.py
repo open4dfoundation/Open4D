@@ -73,13 +73,11 @@ and none of those belong in a byte counter.
 from __future__ import annotations
 
 from . import (
-    adopt,
     bundle,
     client,
     codecs,
     export,
     live,
-    metrics,
     monitor,
     representations,
     server,
@@ -93,6 +91,28 @@ from .codecs import CodecSpec
 from .representations import RepresentationSpec
 from .server import DEFAULT_PORT, serve
 from .transfer import fetch
+
+#: Imported on first access rather than eagerly. Both are ``python -m`` entry
+#: points, and a package that has already imported them makes runpy warn --
+#: "found in sys.modules ... prior to execution" -- on every invocation of a
+#: documented command. Lazy keeps ``streamer.metrics.measure(...)`` working as
+#: an import while leaving the command line quiet.
+_LAZY = ("adopt", "metrics")
+
+
+def __getattr__(name: str):
+    if name in _LAZY:
+        import importlib
+
+        module = importlib.import_module(f".{name}", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY))
+
 
 __all__ = [
     "Clip",
