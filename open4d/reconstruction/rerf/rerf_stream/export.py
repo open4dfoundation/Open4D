@@ -20,6 +20,14 @@ is right and the framing is not, and the previously exported clips carried a
 note apologising for it. Reading the camera straight from ``cams_<n>.json``
 gives 1280x960 here, matching the photographs the renders are compared against.
 
+**Re-rendering is reproducible but not bit-identical.** The ray-march sums
+along each ray with CUDA reductions, whose accumulation order is not fixed, so
+two runs of the same frame at the same camera can differ in the last level of a
+few pixels. Measured by re-exporting ``g_basketball``: 73 of 480 frames
+differed, by at most 2 levels of 255 on 18-185 of 3.7 million samples --
+0.003%, which moves PSNR by far less than 0.01 dB. Worth knowing before
+diffing two exports and concluding something changed.
+
 Two environments, one handoff. This runs on Python 3.8 because ReRF's entropy
 coder does; `streamer` needs 3.10. So this writes the frames plus a
 ``clips.json`` describing them, and the bundle side reads that. Neither imports
