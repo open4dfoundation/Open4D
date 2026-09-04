@@ -203,11 +203,14 @@ def _load(path: Path, size=None):
 
 @dataclass
 class ClipScore:
-    """One reconstruction clip, scored against its reference."""
+    """One rendition of one reconstruction clip, scored against its reference."""
 
     scene: str
     method: str
     clip: str
+    #: Which rung this is. ``None`` for the clip's default rendition, which is
+    #: what a clip with a single quality level has.
+    variant: str | None
     reference: str
     camera: int | None
     frames: int
@@ -222,6 +225,7 @@ class ClipScore:
     def as_dict(self) -> dict[str, Any]:
         payload = {
             "scene": self.scene, "method": self.method, "clip": self.clip,
+            "variant": self.variant,
             "reference": self.reference, "camera": self.camera,
             "frames": self.frames, "psnr": round(self.psnr, 3),
             "ssim": round(self.ssim, 5), "worst_psnr": round(self.worst_psnr, 3),
@@ -281,6 +285,8 @@ def measure(
     if not index:
         raise FileNotFoundError(f"{root} has no {bundle.INDEX_NAME}")
 
+    from PIL import Image
+
     clips = index.get("clips", [])
     references = _references(clips)
     report = Report()
@@ -331,8 +337,6 @@ def measure(
             report.unmeasured.append({"clip": name, "why": "no overlapping frames"})
             continue
 
-        from PIL import Image
-
         size = Image.open(root / truth_frames[0]).size
         rendered_size = Image.open(root / clip["frames"][0]).size
         resized = (
@@ -340,22 +344,38 @@ def measure(
             else f"{rendered_size[0]}x{rendered_size[1]} -> {size[0]}x{size[1]}"
         )
 
-        peaks, structures = [], []
-        for position in sampled:
-            prediction = _load(root / clip["frames"][position], size)
-            truth = _load(root / truth_frames[position])
-            peaks.append(psnr(prediction, truth))
-            structures.append(ssim(prediction, truth))
+        # Every rendition, not just the default: a ladder whose rungs have no
+        # measured quality is a ladder nothing can choose sensibly between.
+        renditions = [(None, clip["frames"], resized)]
+        for rung in bundle.variants_of(clip):
+            rung_size = Image.open(root / rung.frames[0]).size
+            renditions.append((
+                rung.name, rung.frames,
+                None if rung_size == size
+                else f"{rung_size[0]}x{rung_size[1]} -> {size[0]}x{size[1]}",
+            ))
 
-        finite = [value for value in peaks if math.isfinite(value)]
-        report.scores.append(ClipScore(
-            scene=clip.get("scene"), method=clip.get("method"), clip=name,
-            reference=reference, camera=clip.get("camera"), frames=len(sampled),
-            psnr=sum(finite) / len(finite) if finite else float("inf"),
-            ssim=sum(structures) / len(structures),
-            worst_psnr=min(peaks),
-            resized=resized,
-        ))
+        for rung_name, frames, note in renditions:
+            peaks, structures = [], []
+            for position in sampled:
+                if position >= len(frames):
+                    break
+                prediction = _load(root / frames[position], size)
+                truth = _load(root / truth_frames[position])
+                peaks.append(psnr(prediction, truth))
+                structures.append(ssim(prediction, truth))
+            if not peaks:
+                continue
+            finite = [value for value in peaks if math.isfinite(value)]
+            report.scores.append(ClipScore(
+                scene=clip.get("scene"), method=clip.get("method"), clip=name,
+                variant=rung_name, reference=reference,
+                camera=clip.get("camera"), frames=len(peaks),
+                psnr=sum(finite) / len(finite) if finite else float("inf"),
+                ssim=sum(structures) / len(structures),
+                worst_psnr=min(peaks),
+                resized=note,
+            ))
 
     return report
 
@@ -368,41 +388,55 @@ def _mean(values) -> float:
 def render_table(report: Report, *, per_clip: bool = False) -> str:
     """The report as text: per scene and method, or per clip."""
     lines = []
+    def rung(score):
+        return score.variant or "default"
+
     if per_clip:
-        lines.append(f"{'clip':<36}{'method':<12}{'cam':>4}{'PSNR':>8}{'SSIM':>9}"
-                     f"{'worst':>8}")
-        lines.append("-" * 77)
+        lines.append(f"{'clip':<34}{'method':<11}{'rung':<9}{'cam':>4}"
+                     f"{'PSNR':>8}{'SSIM':>9}{'worst':>8}")
+        lines.append("-" * 83)
         for score in report.scores:
             lines.append(
-                f"{score.clip:<36}{score.method:<12}"
+                f"{score.clip:<34}{score.method:<11}{rung(score):<9}"
                 f"{'' if score.camera is None else score.camera:>4}"
                 f"{score.psnr:>8.2f}{score.ssim:>9.4f}{score.worst_psnr:>8.2f}"
             )
     else:
-        lines.append(f"{'scene':<20}{'method':<12}{'clips':>6}{'PSNR':>8}"
-                     f"{'SSIM':>9}{'worst':>8}")
-        lines.append("-" * 63)
-        for scene, scores in sorted(report.by_scene().items(), key=lambda kv: str(kv[0])):
-            for method, group in sorted(
-                {s.method: [t for t in scores if t.method == s.method]
-                 for s in scores}.items()
-            ):
-                lines.append(
-                    f"{str(scene):<20}{method:<12}{len(group):>6}"
-                    f"{_mean(s.psnr for s in group):>8.2f}"
-                    f"{_mean(s.ssim for s in group):>9.4f}"
-                    f"{min(s.worst_psnr for s in group):>8.2f}"
-                )
-        lines.append("-" * 63)
-        for method, group in sorted(report.by_method().items()):
+        # Rolled up per rung as well as per method: the whole point of a ladder
+        # is what each step costs and gains, and a mean across rungs would
+        # average that away into one meaningless number.
+        lines.append(f"{'scene':<18}{'method':<11}{'rung':<9}{'clips':>6}"
+                     f"{'PSNR':>8}{'SSIM':>9}{'worst':>8}")
+        lines.append("-" * 69)
+        grouped: dict = {}
+        for score in report.scores:
+            grouped.setdefault(
+                (str(score.scene), score.method, rung(score)), []
+            ).append(score)
+        for (scene, method, name), group in sorted(grouped.items()):
             lines.append(
-                f"{'all':<20}{method:<12}{len(group):>6}"
+                f"{scene:<18}{method:<11}{name:<9}{len(group):>6}"
+                f"{_mean(s.psnr for s in group):>8.2f}"
+                f"{_mean(s.ssim for s in group):>9.4f}"
+                f"{min(s.worst_psnr for s in group):>8.2f}"
+            )
+        lines.append("-" * 69)
+        overall: dict = {}
+        for score in report.scores:
+            overall.setdefault((score.method, rung(score)), []).append(score)
+        for (method, name), group in sorted(overall.items()):
+            lines.append(
+                f"{'all':<18}{method:<11}{name:<9}{len(group):>6}"
                 f"{_mean(s.psnr for s in group):>8.2f}"
                 f"{_mean(s.ssim for s in group):>9.4f}"
                 f"{min(s.worst_psnr for s in group):>8.2f}"
             )
 
-    resized = [score for score in report.scores if score.resized]
+    # A lower rung is smaller by design, so only flag a resize on a default
+    # rendition -- there it means two methods were compared at different sizes,
+    # which is the thing worth knowing.
+    resized = [score for score in report.scores
+               if score.resized and score.variant is None]
     if resized:
         lines.append("")
         lines.append(f"{len(resized)} clip(s) were resampled to their reference's "

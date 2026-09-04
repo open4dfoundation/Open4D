@@ -435,3 +435,50 @@ def test_the_rig_uses_world_bounds_not_normalised_ones(tmp_path):
 def test_the_rigs_field_of_view_comes_from_the_intrinsics(tmp_path):
     rig = camera_module.capture_rig(a_corpus(tmp_path / "corpus"))
     assert abs(rig["fov_y"] - 2.0 * np.arctan(960 * 0.5 / 1300.0)) < 1e-12
+
+
+# ------------------------------------------------------------- quality rungs ---
+
+
+def test_resampling_a_rung_keeps_the_aspect_ratio():
+    """A rung is the *same content* at a lower rate. Re-marching at a lower
+    resolution would sample the volume differently and give a slightly
+    different picture -- fine as an image, wrong as a rendition, because
+    switching between them would be a visible cut rather than a rate change."""
+    image = np.zeros((480, 640, 3), dtype=np.float32)
+    smaller = export._resample(image, 0.5)
+    assert smaller.shape[:2] == (240, 320)
+    assert abs(smaller.shape[1] / smaller.shape[0]
+               - image.shape[1] / image.shape[0]) < 1e-9
+
+
+def test_resampling_by_one_is_a_no_op():
+    image = np.zeros((8, 8, 3), dtype=np.float32)
+    assert export._resample(image, 1.0) is image
+
+
+def test_resampling_never_reaches_zero_pixels():
+    small = export._resample(np.zeros((40, 40, 3), dtype=np.float32), 0.0001)
+    assert small.shape[0] >= 16 and small.shape[1] >= 16
+
+
+def test_the_rungs_are_the_ones_serve_defines():
+    """One ladder for this method, not two definitions that can disagree."""
+    assert export.RUNGS is serve.RUNGS
+
+
+def test_an_unknown_rung_reaches_run_to_be_refused():
+    """Parsed as text and validated in run(), where the known set lives, so the
+    error can name what is available rather than just rejecting the string."""
+    parsed = export.parse_args([
+        "--config", "c.py", "--compression-path", "b", "--out", "o",
+        "--scene", "s", "--rungs", "high,nope",
+    ])
+    assert parsed.rungs == "high,nope"
+
+
+def test_no_rungs_means_a_single_rendition():
+    parsed = export.parse_args([
+        "--config", "c.py", "--compression-path", "b", "--out", "o", "--scene", "s",
+    ])
+    assert parsed.rungs == ""
