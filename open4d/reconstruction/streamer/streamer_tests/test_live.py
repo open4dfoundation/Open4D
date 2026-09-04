@@ -522,3 +522,109 @@ def test_add_refuses_two_incoming_clips_with_one_name(tmp_path):
             bundle.Clip(name="same", representation="pixels", frames=["a/f.jpg"]),
             bundle.Clip(name="same", representation="pixels", frames=["b/f.jpg"]),
         ])
+
+
+# ---------------------------------------------------------- quality rungs ---
+
+
+def a_variant(name, frames, size):
+    return bundle.Variant(name=name, frames=frames, bytes=size).as_dict()
+
+
+def test_a_clip_can_carry_several_renditions(tmp_path):
+    """Inside the clip, not as sibling clips: a consumer has to be able to
+    change its mind between them mid-playback, and three clips would be three
+    panes with nothing able to switch."""
+    a_bundle(tmp_path)
+    bundle.add(tmp_path, bundle.Clip(
+        name="laddered", representation="pixels", frames=["hi/f0.jpg", "hi/f1.jpg"],
+        variants=[a_variant("low", ["lo/f0.jpg", "lo/f1.jpg"], 1000),
+                  a_variant("medium", ["md/f0.jpg", "md/f1.jpg"], 4000)],
+    ))
+    clip = next(c for c in bundle.read(tmp_path)["clips"] if c["name"] == "laddered")
+    assert [v.name for v in bundle.variants_of(clip)] == ["low", "medium"]
+
+
+def test_variants_come_back_cheapest_first(tmp_path):
+    """So walking the list is walking the ladder, not the write order."""
+    clip = bundle.Clip(name="c", representation="pixels", frames=["a"], variants=[
+        a_variant("medium", ["m"], 5000), a_variant("low", ["l"], 900),
+        a_variant("high", ["h"], 20000),
+    ])
+    assert [v.name for v in bundle.variants_of(clip)] == ["low", "medium", "high"]
+
+
+def test_a_variants_bitrate_is_derived_from_measured_bytes():
+    variant = bundle.Variant(name="low", frames=["a", "b", "c", "d"], bytes=12000)
+    assert variant.bytes_per_frame == 3000
+    assert variant.bitrate(30) == 3000 * 8 * 30
+
+
+def test_a_clip_with_no_variants_has_one_rendition():
+    clip = bundle.Clip(name="c", representation="pixels", frames=["a"])
+    assert bundle.variants_of(clip) == ()
+    with pytest.raises(KeyError, match="has one rendition"):
+        bundle.variant(clip, "low")
+
+
+def test_asking_for_an_unknown_rung_names_the_known_ones():
+    clip = bundle.Clip(name="c", representation="pixels", frames=["a"],
+                       variants=[a_variant("low", ["l"], 10)])
+    with pytest.raises(KeyError, match="offers low"):
+        bundle.variant(clip, "high")
+
+
+# ------------------------------------------------------- what write refuses ---
+
+
+def test_renditions_must_share_the_timeline(tmp_path):
+    """Something switching at frame n has to land on frame n. A rung with a
+    different frame count would make a switch a jump in time."""
+    with pytest.raises(ValueError, match="share a timeline"):
+        bundle.write(tmp_path, title="t", source="s", clips=[
+            bundle.Clip(name="c", representation="pixels",
+                        frames=["a/0.jpg", "a/1.jpg", "a/2.jpg"],
+                        variants=[a_variant("low", ["b/0.jpg"], 10)]),
+        ])
+
+
+def test_two_rungs_cannot_share_a_name(tmp_path):
+    with pytest.raises(ValueError, match="both named"):
+        bundle.write(tmp_path, title="t", source="s", clips=[
+            bundle.Clip(name="c", representation="pixels", frames=["a/0.jpg"],
+                        variants=[a_variant("low", ["b/0.jpg"], 10),
+                                  a_variant("low", ["c/0.jpg"], 20)]),
+        ])
+
+
+def test_a_rung_needs_a_name_and_frames(tmp_path):
+    for broken, message in (
+        ({"frames": ["b/0.jpg"]}, "needs a name"),
+        ({"name": "low", "frames": []}, "has no frames"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            bundle.write(tmp_path, title="t", source="s", clips=[
+                bundle.Clip(name="c", representation="pixels",
+                            frames=["a/0.jpg"], variants=[broken]),
+            ])
+
+
+def test_a_live_clip_cannot_have_rungs(tmp_path):
+    """There is no frame list to offer at another quality."""
+    clip = live.mjpeg("http://127.0.0.1:9/stream", name="s", origin="rendered")
+    clip.variants = [a_variant("low", ["x/0.jpg"], 10)]
+    with pytest.raises(ValueError, match="cannot have variants"):
+        bundle.write(tmp_path, title="t", source="s", clips=[clip])
+
+
+def test_an_old_reader_still_plays_a_laddered_clip(tmp_path):
+    """The reason `frames` stayed the default rendition instead of moving into
+    the variant list: adding rungs must not require changing any consumer."""
+    a_bundle(tmp_path)
+    bundle.add(tmp_path, bundle.Clip(
+        name="laddered", representation="pixels", frames=["hi/f0.jpg"],
+        variants=[a_variant("low", ["lo/f0.jpg"], 10)]))
+    clip = next(c for c in bundle.read(tmp_path)["clips"] if c["name"] == "laddered")
+    # A reader that has never heard of variants sees a perfectly ordinary clip.
+    assert clip["frames"] == ["hi/f0.jpg"]
+    assert bundle.read(tmp_path)["version"] == bundle.VERSION == 2

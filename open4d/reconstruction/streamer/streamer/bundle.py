@@ -59,6 +59,55 @@ INDEX_NAME = "view.json"
 VERSION = 2
 
 
+@dataclass(frozen=True)
+class Variant:
+    """One quality level of a clip: the same content at a different rate.
+
+    A clip is "this method's output, for this subject, at this station". A
+    variant is one of the ways to *get* it. They live inside the clip rather
+    than as extra clips because a consumer has to be able to change its mind
+    between them mid-playback -- three sibling clips would be three panes, and
+    nothing could switch.
+
+    ``bytes`` and ``quality`` are **measured, not predicted.** A research
+    system that has to choose before encoding must model them; a bundle holds
+    content that already exists, so there is nothing to model. Recording a
+    prediction here would be strictly worse data than the file sizes on disk
+    and a score against the reference.
+
+    Every variant carries the same number of frames as the clip's default, for
+    the same reason a video's renditions share a timeline: something switching
+    at frame *n* has to land on frame *n*, not jump in time.
+    """
+
+    #: Rung id, e.g. "high". Unique within a clip, and stable across scenes so
+    #: a consumer can ask for the same rung of everything.
+    name: str
+    #: This rung's frames, in playback order, relative to the bundle root.
+    frames: list[str] = field(default_factory=list)
+    #: Total bytes of those frames, measured. Divided by the clip's duration
+    #: this is the rung's bitrate, which is what a chooser spends.
+    bytes: int = 0
+    #: What it looks like, measured against the reference: ``{"psnr": ...,
+    #: "ssim": ...}``. Empty when nothing has scored it yet, which is honest --
+    #: an unscored rung should not be presented as if its quality were known.
+    quality: dict[str, float] = field(default_factory=dict)
+    #: How this rung was made: resolution, codec settings, whatever a reader
+    #: needs to reproduce it.
+    detail: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    @property
+    def bytes_per_frame(self) -> float:
+        return self.bytes / len(self.frames) if self.frames else 0.0
+
+    def bitrate(self, fps: int) -> float:
+        """Bits per second at ``fps``. What a chooser is actually spending."""
+        return self.bytes_per_frame * 8 * fps
+
+
 @dataclass
 class Clip:
     """One playable sequence inside a bundle."""
@@ -100,6 +149,16 @@ class Clip:
     #: they write. A producer that serves a bitstream *as* the frames, rather
     #: than decoding it first, is what this field exists for.
     dependency: dict[str, Any] | None = None
+    #: Quality levels this clip is also available at, as `Variant` mappings.
+    #: Empty for a clip with one rendition, which is every clip written before
+    #: this field existed.
+    #:
+    #: ``frames`` above stays the clip's *default* rendition rather than moving
+    #: into here, so a reader that knows nothing about variants plays the clip
+    #: correctly and needs no changes. That is why adding this did not bump
+    #: `VERSION`: it is additive, and an old reader is not wrong, just
+    #: unadaptive.
+    variants: list[dict[str, Any]] = field(default_factory=list)
     #: Anything method-specific worth keeping; not interpreted by the viewer.
     detail: dict[str, Any] = field(default_factory=dict)
 
@@ -139,6 +198,33 @@ def validate(clip: Clip) -> Clip:
             )
     elif not clip.frames:
         raise ValueError(f"{clip.name}: needs either frames or a stream")
+
+    if clip.variants:
+        if clip.stream is not None:
+            raise ValueError(
+                f"{clip.name}: a live clip cannot have variants -- there is no "
+                "frame list to offer at another quality"
+            )
+        seen = set()
+        for entry in clip.variants:
+            if not isinstance(entry, Mapping) or not entry.get("name"):
+                raise ValueError(f"{clip.name}: every variant needs a name")
+            name = entry["name"]
+            if name in seen:
+                raise ValueError(
+                    f"{clip.name}: two variants are both named {name!r}; a "
+                    "consumer asking for that rung would get whichever came first"
+                )
+            seen.add(name)
+            frames = entry.get("frames") or []
+            if not frames:
+                raise ValueError(f"{clip.name}: variant {name!r} has no frames")
+            if len(frames) != len(clip.frames):
+                raise ValueError(
+                    f"{clip.name}: variant {name!r} has {len(frames)} frames "
+                    f"against the clip's {len(clip.frames)}. Renditions share a "
+                    "timeline, so switching at frame n has to land on frame n"
+                )
     return clip
 
 
@@ -169,6 +255,39 @@ def dependency_of(clip: Clip | Mapping[str, Any]) -> Dependency:
     mode = DependencyMode(raw["mode"])
     keys = tuple(raw.get("key_frames") or ())
     return Dependency(mode=mode, key_frames=keys if mode is DependencyMode.GOP else ())
+
+
+def variants_of(clip: Clip | Mapping[str, Any]) -> tuple[Variant, ...]:
+    """A clip's quality levels, as `Variant` objects, cheapest first.
+
+    Ordered by measured bytes so a caller walking the list is walking the rate
+    ladder, rather than whatever order a producer happened to write.
+    """
+    raw = clip.variants if isinstance(clip, Clip) else clip.get("variants") or []
+    found = [
+        Variant(
+            name=entry["name"],
+            frames=list(entry.get("frames") or ()),
+            bytes=int(entry.get("bytes") or 0),
+            quality=dict(entry.get("quality") or {}),
+            detail=dict(entry.get("detail") or {}),
+        )
+        for entry in raw
+    ]
+    return tuple(sorted(found, key=lambda variant: (variant.bytes, variant.name)))
+
+
+def variant(clip: Clip | Mapping[str, Any], name: str) -> Variant:
+    """One named rung of a clip, or a KeyError naming what it does offer."""
+    available = variants_of(clip)
+    for found in available:
+        if found.name == name:
+            return found
+    offered = ", ".join(item.name for item in available)
+    raise KeyError(
+        f"no variant named {name!r}; this clip "
+        + (f"offers {offered}" if available else "has one rendition")
+    )
 
 
 def frame_dir(out_dir: Path | str, name: str) -> Path:
