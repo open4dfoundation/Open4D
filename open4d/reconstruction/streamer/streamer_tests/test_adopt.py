@@ -132,3 +132,76 @@ def test_an_export_with_no_clips_is_refused(tmp_path):
         "format": "rerf-clips", "version": 1, "clips": []}))
     with pytest.raises(ValueError, match="lists no clips"):
         adopt.adopt(export, a_bundle(tmp_path / "view"))
+
+
+# ------------------------------------------------------------ the scene rig ---
+
+
+def a_rig(stations=3):
+    return {
+        "width": 1280, "height": 960, "fov_y": 0.7,
+        "bounds_min": [-1.0, 0.0, -1.0], "bounds_max": [1.0, 2.0, 1.0],
+        "poses": [
+            {"position": [float(n), 0.0, 0.0], "right": [1.0, 0.0, 0.0],
+             "down": [0.0, 1.0, 0.0], "forward": [0.0, 0.0, 1.0]}
+            for n in range(stations)
+        ],
+    }
+
+
+def with_rig(export, rig):
+    payload = json.loads((export / "clips.json").read_text())
+    payload["rig"] = rig
+    (export / "clips.json").write_text(json.dumps(payload))
+    return export
+
+
+def test_the_rig_is_installed_for_a_scene_the_bundle_did_not_know(tmp_path):
+    """Without one, a viewer cannot offer station selection, so the scene's
+    panes are shown but not comparable to each other by pose."""
+    export = with_rig(an_export(tmp_path / "export"), a_rig())
+    root = a_bundle(tmp_path / "view")
+    adopt.adopt(export, root)
+
+    scenes = bundle.read(root)["scenes"]
+    assert "basketball" in scenes
+    assert len(scenes["basketball"]["poses"]) == 3
+    assert scenes["basketball"]["scene"] == "basketball"
+
+
+def test_an_existing_rig_is_not_overwritten(tmp_path):
+    """A rig that came from a geometry method is the authority: that is the
+    output which has to line up in 3D, and silently replacing it would move
+    every other method's camera."""
+    root = a_bundle(tmp_path / "view")
+    index = bundle.read(root)
+    bundle.write(
+        root, title=index["title"], source=index["source"],
+        clips=[bundle.Clip(**c) for c in index["clips"]], fps=index["fps"],
+        scenes={"basketball": dict(a_rig(stations=8), scene="basketball",
+                                   origin="from-geometry")},
+    )
+    adopt.adopt(with_rig(an_export(tmp_path / "export"), a_rig(stations=3)), root)
+
+    scene = bundle.read(root)["scenes"]["basketball"]
+    assert len(scene["poses"]) == 8
+    assert scene["origin"] == "from-geometry"
+
+
+def test_an_export_without_a_rig_still_imports(tmp_path):
+    """Not every method knows the rig, and clips are worth having regardless."""
+    export = an_export(tmp_path / "export")
+    root = a_bundle(tmp_path / "view")
+    adopt.adopt(export, root)
+    assert bundle.read(root)["scenes"] == {"basketball": {"poses": []}}
+    assert any(c["name"] == "obj-cam00" for c in bundle.read(root)["clips"])
+
+
+def test_installing_the_rig_keeps_the_clips_that_were_there(tmp_path):
+    """It rewrites the manifest, so the pre-existing clips have to survive."""
+    export = with_rig(an_export(tmp_path / "export"), a_rig())
+    root = a_bundle(tmp_path / "view")
+    adopt.adopt(export, root)
+    names = [c["name"] for c in bundle.read(root)["clips"]]
+    assert "already" in names
+    assert len(names) == 3

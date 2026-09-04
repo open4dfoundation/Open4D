@@ -110,6 +110,31 @@ def adopt(
             )
         )
 
+    # The scene's camera rig, if the export knows it and the bundle has no real
+    # one. Without a rig a viewer cannot offer station selection for this scene,
+    # so its panes are shown but not comparable to each other by pose.
+    #
+    # A rig that already has poses is left alone: it may have come from a
+    # geometry method, and that is the authority, since its output is what has
+    # to line up in 3D. But a scene entry carrying *no* poses is not an
+    # authority -- it is a placeholder, and filling it is the whole point.
+    rig = payload.get("rig")
+    scene = payload.get("scene")
+    if rig and scene:
+        index = bundle.read(bundle_dir)
+        scenes = dict(index.get("scenes") or {})
+        if not (scenes.get(scene) or {}).get("poses"):
+            scenes[scene] = dict(rig, scene=scene)
+            bundle.write(
+                bundle_dir,
+                title=index.get("title", Path(bundle_dir).name),
+                source=index.get("source", str(bundle_dir)),
+                clips=[bundle.Clip(**entry) for entry in index.get("clips", [])],
+                fps=index.get("fps", 30),
+                scenes=scenes,
+                detail=index.get("detail"),
+            )
+
     bundle.add(bundle_dir, clips, replace=replace)
     return clips
 

@@ -148,3 +148,43 @@ def psnr(prediction: np.ndarray, truth: np.ndarray) -> float:
     if error <= 0.0:
         return float("inf")
     return float(-10.0 * np.log10(error))
+
+
+def capture_rig(corpus_dir) -> dict:
+    """The rig, in world coordinates, as a bundle's ``scenes`` entry wants it.
+
+    A bundle groups clips by subject and lets a viewer pick a *station* -- one
+    physical camera -- so that every method's pane shows the same pose. That
+    needs the rig described once per scene, in the shared world frame rather
+    than the normalised one the network is trained in, because a method whose
+    output is geometry has to line up with it.
+
+    ``c2w_world`` is OpenCV camera-to-world, so its columns are the camera's
+    axes: right, down, forward. Read off the corpus manifest rather than
+    recomputed, so these are the poses the renders were actually taken at.
+    """
+    with open(Path(corpus_dir) / "nevo_corpus.json") as handle:
+        manifest = json.load(handle)
+
+    poses = []
+    for entry in sorted(manifest["cameras"], key=lambda item: int(item["camera_id"])):
+        c2w = np.asarray(entry["c2w_world"], dtype=np.float64)
+        poses.append({
+            "position": c2w[:3, 3].tolist(),
+            "right": c2w[:3, 0].tolist(),
+            "down": c2w[:3, 1].tolist(),
+            "forward": c2w[:3, 2].tolist(),
+        })
+
+    first = manifest["cameras"][0]
+    height = int(manifest["height"])
+    return {
+        "width": int(manifest["width"]),
+        "height": height,
+        # From the intrinsics these views were rendered with, so a geometry
+        # method added to this scene later frames the subject identically.
+        "fov_y": float(2.0 * np.arctan(height * 0.5 / float(first["fy"]))),
+        "bounds_min": list(manifest["world_bounds_min"]),
+        "bounds_max": list(manifest["world_bounds_max"]),
+        "poses": poses,
+    }
