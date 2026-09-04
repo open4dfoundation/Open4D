@@ -278,18 +278,120 @@ server.monitor.snapshot()                                # measure
 reachable in one request, in any order. It binds loopback unless told otherwise
 and has **no authentication of any kind**.
 
-`fetch` pulls a bundle, or `only=[...]` some clips of one, onto the machine
-you are sitting at — because a 30-frame Gaussian clip is over 100 MB as PLY and
-nobody wants that twice over a tunnel. Existing files of the right size are
-skipped, so an interrupted transfer resumes by running it again. That is the
-whole policy; it is not a sync tool.
+It speaks HTTP/1.1 with keep-alive, which is not a detail. The default in
+Python's `http.server` is 1.0, closing after every response: one handshake and
+one fresh slow-start per frame. On loopback that is invisible, which is why it
+survived a long time; over a 20 ms link a 59 kB Draco frame then costs a setup
+round trip plus about three more while the congestion window opens — roughly
+80 ms a frame, a ~12 fps ceiling *regardless of bandwidth*. Any rate measured
+through it would have been measuring that rather than the network.
+
+Keep-alive needs `TCP_NODELAY` to be worth having. Without it a response's two
+writes — headers, then body — hit Nagle's algorithm against the client's
+delayed-ACK timer, and 30 frames took **1.20 s instead of 0.01 s**, 40 ms
+each. Closing the connection had been masking it, so the stall only appeared
+once keep-alive worked. There is a timed regression test.
+
+`fetch` pulls a bundle, or `only=[...]` some clips of one, onto the machine you
+are sitting at — a 30-frame Gaussian clip is over 100 MB as PLY and nobody
+wants that twice over a tunnel. Complete files are skipped and a partial one is
+**continued from where it stopped** with a byte range, so a tunnel that drops
+mid-frame costs what was missed rather than the whole frame. It checks that the
+server actually answered `206` before appending: a `200` means the range was
+ignored, and appending then would build a corrupt file of exactly the size the
+completeness check accepts.
 
 `Monitor` counts requests, bytes, errors and a per-clip rollup, exposed at
-`/stats.json`. NeVo models byte arrival offline — a bandwidth trace gives
-queueing delay, a loss trace gives drops — and this is the same measurement
-taken live rather than simulated. It is counters and nothing more: a monitor
-that decided things would be a second scheduler, and there is not yet a second
-transport to adapt between.
+`/stats.json`. It is counters and nothing more, deliberately: a monitor that
+decided things would be a second scheduler.
+
+## Quality rungs
+
+A clip can carry the same content at several rates:
+
+```python
+bundle.Clip(
+    name="thomas-rerf-cam00", representation="pixels",
+    frames=[...],                                   # the default rendition
+    variants=[bundle.Variant(name="low", frames=[...], bytes=91_000,
+                             quality={"psnr": 40.45, "ssim": 0.9723}).as_dict()],
+)
+```
+
+Measured on `g_thomas`, from one export at `--rungs high,medium,low`:
+
+| rung | resolution | kB/frame | Mbit/s @30 | PSNR | SSIM |
+| --- | --- | --- | --- | --- | --- |
+| default | 1280×960 q92 | 33.5 | 8.04 | 45.91 | 0.9902 |
+| medium | 640×480 q88 | 9.9 | 2.38 | 43.72 | 0.9853 |
+| low | 320×240 q80 | 3.0 | 0.73 | 40.45 | 0.9723 |
+
+Four things about the shape, each of which was a choice:
+
+**Rungs live inside a clip, not as sibling clips.** A clip is one method's
+output for one subject at one station; a variant is one of the ways to get it.
+Three sibling clips would be three panes with nothing able to switch between
+them mid-playback.
+
+**`frames` stays the default rendition** rather than moving into the variant
+list, so a reader that has never heard of variants plays the clip correctly and
+needs no change. That is why this did not bump `VERSION` — it is additive.
+
+**Rate and quality are measured, not predicted.** A system that chooses before
+encoding has to model them; a bundle holds content that already exists, so
+bytes come from the files and quality from `metrics`. A prediction here would
+be strictly worse data than the measurement it stands in for.
+
+**A lower rung is resampled, not re-rendered.** Re-rendering at half
+resolution samples the volume differently and gives a slightly *different*
+picture — fine as an image, wrong as a rendition, because switching between two
+renditions has to be a rate change and not a visible cut.
+
+`write` refuses a ladder a consumer would trip over: renditions must share the
+frame count (something switching at frame *n* has to land on frame *n*), rung
+names must be unique, and a live clip cannot have rungs because it has no frame
+list to offer at another quality.
+
+## Measuring what arrived
+
+```bash
+python -m streamer.metrics ~/bundles/basketball          # per scene and rung
+python -m streamer.metrics ~/bundles/basketball --per-clip --json
+```
+
+`Monitor` says how many bytes moved; this says how good the picture was, which
+is the other half of any comparison. It works on **a bundle, not a method**: a
+scene's `captured` clip at a station is the reference, and every other clip at
+that station is scored against it. Same code, same reference, so two numbers
+are comparable — a metric shipped inside each method would be nine metrics.
+
+It reports what it *could not* measure rather than omitting it. Geometry clips
+have no pixels until something renders them from the reference's pose; live
+clips have no frame list; a depth map is not an attempt to reproduce a
+photograph, which a clip says with `detail["depicts"]`. That last one exists
+because scoring depth against colour yields 0.4 dB — a number that reads as
+catastrophic failure rather than as a comparison that was never meaningful.
+
+SSIM is implemented here rather than imported, so this package still needs only
+`open4d`. That shortcut is checked, not trusted: the tests hold it to
+scikit-image's implementation, and on a real frame the two agree to 2.4×10⁻⁸.
+scipy is used for the blur when present, with a numpy fallback — and the test
+that compares the two backends is what caught them disagreeing, since scipy's
+`reflect` repeats the edge sample and numpy's does not.
+
+## Adopting frames from another interpreter
+
+```bash
+python -m streamer.adopt ~/rerf-clips --bundle ~/bundles/basketball
+```
+
+Some methods cannot be driven from this package at all: ReRF's entropy coder is
+a prebuilt Python 3.8 binary, and this needs 3.10, so neither side can import
+the other. Rather than force one interpreter on both, the exporting side writes
+its frames plus a small `clips.json`, and `adopt` reads that, copies the frames
+in and adds the clips. Every frame the sidecar names is checked to exist first,
+because a clip whose frames are half there plays for two seconds and then 404s
+while the manifest insists nothing is wrong.
 
 ## Planning a seek
 
@@ -326,12 +428,23 @@ same time as trusting a new encoder.
 
 ## What is deliberately missing
 
-**A held-out camera, and numbers.** Compare puts several methods at one rig
-pose, which is the mode a PSNR or SSIM figure could attach to, and nothing
-computes one yet. Two caveats have to travel with it when it lands: every rig
-camera was a training view for both Vega and ReRF, so this measures
-reconstruction rather than generalisation, and ReRF renders at different
-intrinsics from the captured pane.
+**A policy that reads the ladder.** Rungs exist, with measured rate and
+measured quality, and nothing chooses between them: playback takes the default
+rendition every time. That choice — which rung, per clip, under a bandwidth
+budget, weighted by where the viewer is looking — is the adaptation half of a
+streaming system, and it is the next piece. What makes it tractable now is that
+the manifest already holds the `(rate, quality)` pairs such a chooser consumes,
+measured rather than predicted, so it needs no trained model.
+
+**A constrained link.** Everything here runs on loopback or through a tunnel:
+no bandwidth limit, no loss, no meaningful round trip. So the transport is
+worth measuring through, and nothing has yet measured anything through it. A
+figure like "129 MB/s at 30 fps for decoded Gaussians" is what the content
+*demands*, not what a link delivered.
+
+**A held-out camera.** Every rig camera was a training view for both Vega and
+ReRF, so the numbers `metrics` reports measure reconstruction rather than
+generalisation. That caveat has to travel with them.
 
 ## Tests
 
