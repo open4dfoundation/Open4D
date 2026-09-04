@@ -50,10 +50,16 @@ The pieces, smallest first:
     needs both. It works on a bundle rather than on a method, which is the only
     arrangement under which two methods' numbers mean the same thing.
 ``policy``
-    Which rung to send, under a budget. The last piece of the loop: `bundle`
-    carries the ladder, `metrics` fills in what each rung buys, and this picks.
-    A multiple-choice knapsack, solved exactly, because greedy spends
-    everything on the first pane it looks at.
+    Which rung to send, under a budget. `bundle` carries the ladder, `metrics`
+    fills in what each rung buys, and this picks. A multiple-choice knapsack,
+    solved exactly, because greedy spends everything on the first pane it looks
+    at.
+``link``
+    A capacity, a delay and optionally a trace, so a measurement means
+    something. Every transport here ran on loopback until this existed, which
+    made the budget `policy` needs unmeasurable and any throughput figure a
+    statement about the disk. Shaped in the server rather than with ``tc``,
+    for reproducibility -- see the module docstring for what that costs.
 ``client``
     Playback. One self-contained browser page, no build step and no CDN.
 
@@ -67,12 +73,14 @@ along it. Its ``chain`` is a transcription of `Dependency.chain` into
 JavaScript, which is the liability two implementations of one rule always carry,
 so ``streamer_tests/test_scheduler.py`` runs both over the same cases.
 
-What is deliberately *not* here is a **rate estimate**. `policy` decides what to
-send for a budget it is given, and nothing measures what the budget should be:
-`monitor` counts bytes after the fact and does not predict. Nor is there a
-buffer model, and both gaps have the same cause -- every transport here is
-loopback, so there is no link that can starve a client, and a policy written
-against a situation that cannot be produced could not be tested either.
+All five pieces of the loop now exist: a method declares its output, a link
+constrains its delivery, `link.observed` says what arrived, `metrics` says what
+it was worth, and `policy` chooses. What is deliberately *not* here is a
+**buffer model** -- occupancy per clip, a deliberate freeze told apart from a
+stall, churn charged across segments. `policy.switch_penalty` is the one piece
+of that which can be tested without a client that plays continuously against a
+trace, and building the rest before that client exists would mean writing
+policy no test could reach.
 """
 
 from __future__ import annotations
@@ -82,6 +90,7 @@ from . import (
     client,
     codecs,
     export,
+    link,
     live,
     monitor,
     representations,
@@ -94,6 +103,7 @@ from .export import from_sequence, from_source
 from .monitor import Monitor, Transfer
 from .codecs import CodecSpec
 from .representations import RepresentationSpec
+from .link import Link, Trace
 from .server import DEFAULT_PORT, serve
 from .transfer import fetch
 
@@ -123,8 +133,10 @@ __all__ = [
     "Clip",
     "CodecSpec",
     "DEFAULT_PORT",
+    "Link",
     "Monitor",
     "RepresentationSpec",
+    "Trace",
     "Transfer",
     "Variant",
     "adopt",
@@ -132,6 +144,7 @@ __all__ = [
     "client",
     "codecs",
     "export",
+    "link",
     "live",
     "fetch",
     "metrics",
