@@ -47,6 +47,9 @@ CLIENT_PREFIX = "/client/"
 #: Copy size for the proxy. Small, because a frame boundary can fall anywhere
 #: and a large buffer would hold the tail of one frame back until the next.
 PROXY_CHUNK = 8192
+#: Copy size for a range response. Larger than the proxy's: there is no frame
+#: boundary to respect, and a 100 MB clip should not be a million writes.
+RANGE_CHUNK = 1 << 16
 
 #: Content types for client-package assets. `.wasm` matters: a browser refuses
 #: to compile a module served as anything else through the streaming API.
@@ -58,13 +61,85 @@ CLIENT_TYPES = {
 }
 
 
+def _parse_range(header: str, size: int):
+    """``(start, end)`` inclusive for a single byte range, or None if unusable.
+
+    Handles the three forms that occur: ``bytes=0-99`` explicit,
+    ``bytes=500-`` open ended, and ``bytes=-500`` meaning the last 500. None
+    means answer 416, which is what a start past the end of the file deserves
+    -- returning the whole file there would let a resuming client silently
+    append a second copy to what it already had.
+    """
+    if not header.startswith("bytes=") or "," in header:
+        return None
+    spec = header[len("bytes="):].strip()
+    first, _, last = spec.partition("-")
+    try:
+        if not first:                       # bytes=-N, the final N bytes
+            if not last:
+                return None
+            length = int(last)
+            if length <= 0:
+                return None
+            return max(0, size - length), size - 1
+        start = int(first)
+        end = int(last) if last else size - 1
+    except ValueError:
+        return None
+    if start < 0 or start >= size or end < start:
+        return None
+    return start, min(end, size - 1)
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """Static files from the bundle, plus the client page and the counters.
 
     ``monitor`` is set per-server by :func:`serve`; a handler class with no
     monitor still works, which is what keeps this usable as a plain static
     server.
+
+    **HTTP/1.1, so a connection is reused across frames.** The base class
+    defaults to 1.0, which closes after every response -- one TCP handshake and
+    one fresh slow-start per frame. On loopback that is invisible, which is why
+    it survived; over a link with 20 ms of round trip a 59 kB Draco frame then
+    costs a setup RTT plus roughly three more while the congestion window
+    opens, so about 80 ms a frame and a ~12 fps ceiling *regardless of
+    bandwidth*. Any rate this server appears to sustain would be measuring that
+    rather than the network, which makes it the first thing to fix before
+    measuring anything.
+
+    1.1 requires every response to be self-delimiting, or a client waits for a
+    body that never ends. Two consequences, both handled below: every response
+    here carries a ``Content-Length``, and the one that cannot -- the live
+    proxy, whose body is endless -- says ``Connection: close`` and means it.
+
+    It also means an idle client holds a thread until it goes away, so
+    ``timeout`` reaps connections that stop talking.
     """
+
+    protocol_version = "HTTP/1.1"
+
+    #: Turn off Nagle's algorithm. Not an optimisation -- without it keep-alive
+    #: is *slower* than the connection-per-request it replaces, and measurably:
+    #: 30 frames took 1.20 s against 0.01 s, 40 ms each, on loopback.
+    #:
+    #: The cause is Nagle meeting delayed ACK. A response leaves here as two
+    #: writes, headers then body, because the base class buffers the headers
+    #: and flushes them at ``end_headers``. Nagle holds the second small write
+    #: until the first is acknowledged; the client's delayed-ACK timer sits on
+    #: that acknowledgement for ~40 ms. Closing the connection used to mask it,
+    #: since the FIN pushes everything out at once -- so this only appeared
+    #: once keep-alive worked.
+    #:
+    #: 40 ms a frame is a 25 fps ceiling on loopback, which would have made the
+    #: transport worse than before while looking like progress.
+    disable_nagle_algorithm = True
+
+    #: Seconds an idle keep-alive connection is held before it is dropped.
+    #: Without this a browser tab left open pins a thread indefinitely, and a
+    #: threaded server with unbounded idle connections eventually stops
+    #: accepting.
+    timeout = 30
 
     monitor: Monitor | None = None
     #: Clip name -> upstream URL, from the manifest. Empty for a bundle with no
@@ -90,12 +165,67 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return self._proxy_live(self.path[len(LIVE_PREFIX):])
         if self.path.startswith(CLIENT_PREFIX):
             return self._send_client_asset(self.path[len(CLIENT_PREFIX):])
+        self._offer_ranges = True
+        if self.headers.get("Range"):
+            return self._send_range()
         return super().do_GET()
 
     def do_HEAD(self):  # noqa: N802
         if self.path in VIEWER_ROUTES:
             return self._send_viewer(body=False)
+        self._offer_ranges = True
         return super().do_HEAD()
+
+    def end_headers(self):
+        # Advertised here because the base class ends its own headers, leaving
+        # no later point to add one. Only on the static-file path, since that
+        # is the only route that honours a Range.
+        if getattr(self, "_offer_ranges", False):
+            self.send_header("Accept-Ranges", "bytes")
+            self._offer_ranges = False
+        super().end_headers()
+
+    def _send_range(self):
+        """Serve a byte range of a bundle file.
+
+        What this buys is resumption: `streamer.transfer` fetching a 100 MB
+        Gaussian clip over a tunnel that drops can continue from where it
+        stopped instead of starting the file again. Without it the only
+        recovery is re-downloading, which on a big clip is the difference
+        between seconds and minutes.
+
+        Only a single range is honoured. Multipart ranges exist in the
+        standard, are used by essentially nothing, and would need a different
+        body format; asking for several gets the whole file, which is a
+        response the standard permits and every client handles.
+        """
+        path = Path(self.translate_path(self.path))
+        if not path.is_file():
+            return super().do_GET()          # let the base class 404 or index
+        size = path.stat().st_size
+        span = _parse_range(self.headers.get("Range", ""), size)
+        if span is None:
+            self.send_response(416, "Requested Range Not Satisfiable")
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = span
+        length = end - start + 1
+        self.send_response(206, "Partial Content")
+        self.send_header("Content-Type", self.guess_type(str(path)))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            remaining = length
+            while remaining > 0:
+                block = handle.read(min(RANGE_CHUNK, remaining))
+                if not block:
+                    break
+                self.wfile.write(block)
+                remaining -= len(block)
 
     def _send_stats(self):
         """What has gone over the wire, as JSON. Absent without a monitor."""
@@ -161,6 +291,12 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             if value:
                 self.send_header(header, value)
         self.send_header("Cache-Control", "no-store, no-cache, private")
+        # The one response here with no Content-Length: a
+        # multipart/x-mixed-replace body never ends. Under HTTP/1.1 that has to
+        # be delimited by the close, so say so and hold the connection for this
+        # stream alone rather than trying to reuse it afterwards.
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         try:
             while True:

@@ -267,3 +267,294 @@ def test_a_fetched_bundle_can_be_served_again(served, tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ------------------------------------------------------------- the transport ---
+
+
+def a_served_bundle(tmp_path, *, payload=b""):
+    """A bundle with one frame of known content, and a running server."""
+    from streamer import bundle
+    from streamer.server import serve
+
+    (tmp_path / "c").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "c" / "f.ply").write_bytes(payload or bytes(range(256)) * 40)
+    bundle.write(tmp_path, title="t", source="s",
+                 clips=[bundle.Clip(name="c", representation="mesh",
+                                    frames=["c/f.ply"])])
+    server = serve(tmp_path, port=0, block=False)
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def test_the_server_speaks_http_1_1():
+    """1.0 closes after every response: one handshake and one slow-start per
+    frame, which caps the frame rate on any real link regardless of bandwidth.
+    """
+    from streamer.server import _Handler
+
+    assert _Handler.protocol_version == "HTTP/1.1"
+
+
+def test_one_connection_serves_several_requests(tmp_path):
+    """The point of 1.1. Asserted at the socket, because a Connection header
+    can say keep-alive while the server closes anyway."""
+    import socket
+
+    server, base = a_served_bundle(tmp_path)
+    try:
+        port = server.server_address[1]
+        sock = socket.create_connection(("127.0.0.1", port), timeout=10)
+        sock.settimeout(10)
+        statuses = []
+        for _ in range(3):
+            sock.sendall(b"GET /view.json HTTP/1.1\r\nHost: x\r\n\r\n")
+            head = b""
+            while b"\r\n\r\n" not in head:
+                head += sock.recv(1)
+            statuses.append(head.split(b"\r\n", 1)[0])
+            length = int(next(
+                line.split(b":")[1] for line in head.split(b"\r\n")
+                if line.lower().startswith(b"content-length")
+            ))
+            body = b""
+            while len(body) < length:
+                body += sock.recv(length - len(body))
+        sock.close()
+        assert all(b"200" in status for status in statuses)
+        assert len(statuses) == 3
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_range_support_is_advertised_on_frames(tmp_path):
+    import urllib.request
+
+    server, base = a_served_bundle(tmp_path)
+    try:
+        response = urllib.request.urlopen(f"{base}/c/f.ply", timeout=10)
+        assert response.headers["Accept-Ranges"] == "bytes"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_byte_range_returns_exactly_those_bytes(tmp_path):
+    import urllib.request
+
+    content = bytes(range(256)) * 40
+    server, base = a_served_bundle(tmp_path, payload=content)
+    try:
+        request = urllib.request.Request(f"{base}/c/f.ply")
+        request.add_header("Range", "bytes=100-199")
+        response = urllib.request.urlopen(request, timeout=10)
+        body = response.read()
+        assert response.status == 206
+        assert body == content[100:200]
+        assert response.headers["Content-Range"] == f"bytes 100-199/{len(content)}"
+        assert response.headers["Content-Length"] == "100"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_an_open_ended_range_runs_to_the_end(tmp_path):
+    import urllib.request
+
+    content = bytes(range(256)) * 40
+    server, base = a_served_bundle(tmp_path, payload=content)
+    try:
+        request = urllib.request.Request(f"{base}/c/f.ply")
+        request.add_header("Range", f"bytes={len(content) - 10}-")
+        response = urllib.request.urlopen(request, timeout=10)
+        assert response.status == 206
+        assert response.read() == content[-10:]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_range_past_the_end_is_refused(tmp_path):
+    """416 rather than the whole file: a resuming client handed a full body
+    would append a second copy to what it already had."""
+    import urllib.error
+    import urllib.request
+
+    content = b"x" * 100
+    server, base = a_served_bundle(tmp_path, payload=content)
+    try:
+        request = urllib.request.Request(f"{base}/c/f.ply")
+        request.add_header("Range", "bytes=500-600")
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=10)
+        assert raised.value.code == 416
+        assert raised.value.headers["Content-Range"] == "bytes */100"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_live_proxy_closes_because_its_body_has_no_length(tmp_path):
+    """Every other response is self-delimiting; a multipart stream cannot be,
+    so under 1.1 it must be delimited by the close."""
+    import inspect
+
+    from streamer.server import _Handler
+
+    source = inspect.getsource(_Handler._proxy_live)
+    assert 'send_header("Connection", "close")' in source
+    assert "close_connection = True" in source
+
+
+def test_idle_connections_are_reaped(tmp_path):
+    """Keep-alive means a client that stops talking holds a thread."""
+    from streamer.server import _Handler
+
+    assert _Handler.timeout and _Handler.timeout <= 120
+
+
+# -------------------------------------------------------- parsing the header ---
+
+
+@pytest.mark.parametrize("header,size,expected", [
+    ("bytes=0-99", 1000, (0, 99)),
+    ("bytes=500-", 1000, (500, 999)),
+    ("bytes=-100", 1000, (900, 999)),
+    ("bytes=0-5000", 1000, (0, 999)),        # clamped to the file
+    ("bytes=-5000", 1000, (0, 999)),         # more than the file is the file
+    ("bytes=999-999", 1000, (999, 999)),
+])
+def test_ranges_that_parse(header, size, expected):
+    from streamer.server import _parse_range
+
+    assert _parse_range(header, size) == expected
+
+
+@pytest.mark.parametrize("header", [
+    "", "items=0-9", "bytes=abc-def", "bytes=1000-", "bytes=2000-3000",
+    "bytes=50-10", "bytes=-", "bytes=-0", "bytes=0-9,20-29",
+])
+def test_ranges_that_do_not(header):
+    from streamer.server import _parse_range
+
+    assert _parse_range(header, 1000) is None
+
+
+# ------------------------------------------------------------ resuming a fetch ---
+
+
+def test_a_partial_file_is_continued_not_restarted(tmp_path):
+    """The payoff. A 100 MB frame interrupted at 60% should cost the remaining
+    40%, not another 100%."""
+    from streamer import transfer
+
+    content = bytes(range(256)) * 200          # 51200 bytes
+    server, base = a_served_bundle(tmp_path / "src", payload=content)
+    try:
+        destination = tmp_path / "dst"
+        target = destination / "c" / "f.ply"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Pretend an earlier attempt stopped 30000 bytes in.
+        partial = target.with_name(target.name + ".partial")
+        partial.write_bytes(content[:30000])
+
+        written = transfer._download(f"{base}/c/f.ply", target, 10.0)
+        assert target.read_bytes() == content
+        assert written == len(content) - 30000
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_resumed_fetch_reassembles_the_whole_file(tmp_path):
+    from streamer import transfer
+
+    content = bytes(range(256)) * 100
+    server, base = a_served_bundle(tmp_path / "src", payload=content)
+    try:
+        destination = tmp_path / "dst"
+        result = transfer.fetch(base, destination, timeout=10)
+        assert (destination / "c" / "f.ply").read_bytes() == content
+        assert result.bytes == len(content)
+        # Again: nothing to do, so nothing crosses the wire.
+        again = transfer.fetch(base, destination, timeout=10)
+        assert again.bytes == 0
+        assert again.skipped == ("c/f.ply",)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_server_that_ignores_the_range_restarts_the_file(tmp_path):
+    """Rather than appending a second copy, which would be a corrupt file of
+    exactly the size the completeness check accepts."""
+    import http.server
+    import socketserver
+    import threading
+
+    from streamer import transfer
+
+    content = b"abcdefghij" * 100
+
+    class Whole(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):                      # noqa: N802
+            self.send_response(200)            # 200, not 206: range ignored
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Whole)
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02},
+                     daemon=True).start()
+    try:
+        target = tmp_path / "f.bin"
+        partial = target.with_name(target.name + ".partial")
+        partial.write_bytes(b"STALE" * 10)
+        url = f"http://127.0.0.1:{server.server_address[1]}/f.bin"
+        transfer._download(url, target, 10.0)
+        assert target.read_bytes() == content
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_nagle_is_disabled():
+    """Without this, keep-alive is slower than what it replaced.
+
+    A response leaves as two writes, headers then body. Nagle holds the second
+    until the first is acknowledged and the client's delayed-ACK timer sits on
+    that for ~40 ms -- measured at 1.20 s for 30 frames against 0.01 s. Closing
+    the connection used to hide it, because the FIN flushes, so the stall only
+    appears once keep-alive works.
+    """
+    from streamer.server import _Handler
+
+    assert _Handler.disable_nagle_algorithm is True
+
+
+def test_a_keep_alive_batch_is_not_slower_than_closing(tmp_path):
+    """The regression guard for the above, measured rather than asserted about.
+
+    Generous threshold: this is checking for a 40 ms per-request stall, which
+    is two orders of magnitude above the noise, not for a small regression.
+    """
+    import time
+    import urllib.request
+
+    server, base = a_served_bundle(tmp_path, payload=b"x" * 2048)
+    try:
+        opener = urllib.request.build_opener()
+        started = time.monotonic()
+        for _ in range(10):
+            opener.open(f"{base}/c/f.ply", timeout=10).read()
+        elapsed = time.monotonic() - started
+        # Ten stalled requests would be ~0.4 s; ten healthy ones are ~0.01 s.
+        assert elapsed < 0.2, f"{elapsed:.3f}s for 10 requests suggests a stall"
+    finally:
+        server.shutdown()
+        server.server_close()
