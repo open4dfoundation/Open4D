@@ -44,6 +44,21 @@ from pathlib import Path
 import numpy as np
 
 from .bitstream import BitstreamPlayer
+from .cameras import capture_rig, captured_image
+
+#: What each kind of clip needs its viewer told, beyond the shared notes.
+KIND_NOTES = {
+    "colour": [],
+    "depth": [
+        "relative depth in ray-march steps, near bright — not a distance in "
+        "world units",
+    ],
+    "captured": [
+        "the photograph from this rig camera, composited onto the same "
+        "background as the render — this is the reference, not a reconstruction",
+        "a training view: this measures reconstruction, not generalisation",
+    ],
+}
 
 #: JPEG quality for the written frames. High, because these are the reference
 #: renders a method is judged by -- compression artefacts here would be read as
@@ -93,11 +108,16 @@ def run(args) -> int:
     clips = {}
     for view in views:
         clips[f"{args.name}-rerf-cam{view:02d}"] = {
-            "method": "rerf", "camera": view, "depth": False, "frames": [],
+            "method": "rerf", "camera": view, "kind": "colour", "frames": [],
         }
         if args.depth:
             clips[f"{args.name}-rerf-cam{view:02d}-depth"] = {
-                "method": "rerf-depth", "camera": view, "depth": True, "frames": [],
+                "method": "rerf-depth", "camera": view, "kind": "depth", "frames": [],
+            }
+        if args.captured:
+            clips[f"{args.name}-captured-cam{view:02d}"] = {
+                "method": "captured", "camera": view, "kind": "captured",
+                "frames": [],
             }
 
     started = time.time()
@@ -122,6 +142,20 @@ def run(args) -> int:
                 relative = f"{name}/frame_{position:04d}.jpg"
                 total_bytes += write_jpeg(out / relative, depth, args.quality)
                 clips[name]["frames"].append(relative)
+            if args.captured:
+                # The photograph this view reconstructs, composited onto the
+                # same background the render uses. Written here rather than
+                # left to another exporter so a scene arrives comparable: a
+                # reconstruction with nothing to compare against is a pane
+                # nobody can judge.
+                name = f"{args.name}-captured-cam{view:02d}"
+                relative = f"{name}/frame_{position:04d}.jpg"
+                photo = captured_image(
+                    player.corpus_dir, frame.index, view,
+                    background=player.background,
+                )
+                total_bytes += write_jpeg(out / relative, photo, args.quality)
+                clips[name]["frames"].append(relative)
         print(f"  frame {frame.index:3d}  {len(views)} views", flush=True)
 
     camera = cameras[views[0]]
@@ -145,15 +179,18 @@ def run(args) -> int:
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "resolution": [camera.width, camera.height],
         "bitstream_bytes": player.bitstream_bytes,
+        # The scene's camera rig, so a bundle can offer station selection
+        # across methods without being told the geometry separately.
+        "rig": capture_rig(player.corpus_dir),
         "clips": [
             {
                 "name": name,
                 "method": clip["method"],
                 "camera": clip["camera"],
                 "frames": clip["frames"],
-                "notes": shared_notes + (
-                    ["relative depth in ray-march steps, near bright — not a "
-                     "distance in world units"] if clip["depth"] else []
+                "notes": (
+                    KIND_NOTES[clip["kind"]] if clip["kind"] == "captured"
+                    else shared_notes + KIND_NOTES[clip["kind"]]
                 ),
                 "detail": {
                     "source": str(player.path),
@@ -196,6 +233,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="fraction of the corpus resolution")
     parser.add_argument("--depth", action="store_true",
                         help="also write a relative depth map per view")
+    parser.add_argument("--captured", action="store_true",
+                        help="also write the photograph each view reconstructs, so "
+                             "the scene arrives with something to compare against")
     parser.add_argument("--quality", type=int, default=QUALITY)
     parser.add_argument("--overwrite", action="store_true",
                         help="delete --out first, rather than adding to it")
