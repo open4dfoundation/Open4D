@@ -480,11 +480,51 @@ Measured accuracy: **2.6% at 5 Mbit/s, 7.4% at 20, 15% at 50**, always
 no congestion window, no slow start. Loss is charged as the delay a
 retransmission costs, because that is what an application above TCP sees.
 
-`link.observed()` reports what actually arrived — which is the budget a chooser
-wants, since a client cannot know the configured capacity. Worth knowing what
-that number is: probing with six serial requests over a 10 ms link measures
-10.7 Mbit/s on a 20 Mbit/s pipe, because 60 ms of that was round trips. That is
-the honest budget *for that request pattern*, not a measurement error.
+### The viewer adapts
+
+The page measures the link from its own fetches (`RateMeter`, an exponentially
+weighted mean over recent transfers, byte-gated so a cache hit cannot read as a
+gigabit link), reads each clip's ladder, and picks a rung per pane. There is a
+checkbox to pin every pane to its default rendition, and the stats panel shows
+the measured rate, the per-pane share, and which rung each pane is on.
+
+**The client's rule is deliberately not `policy`'s.** `policy` maximises total
+weighted quality, and the way to maximise a sum is to make the panes *unequal*
+— spending on whichever gains most per byte. A viewer whose purpose is judging
+two methods against each other must not decide that one of them gets the
+bandwidth. So the client splits the budget evenly and each pane takes the best
+rung its share affords. `policy` remains what answers "what would an optimising
+client do", from Python, where it can be measured — and not transcribing it
+also means there is no second implementation of it to drift.
+
+Switching rung keeps the cache. Renditions share a timeline, so a decoded frame
+is still the right picture for its index; dropping the cache would re-fetch what
+is already in hand and stall at exactly the moment the link is under pressure.
+
+Tracking a trace end to end, through a link that steps 25 → 3 → 12 Mbit/s:
+
+```
+    t      ewma    share  rung mix
+    0      7.0M    0.87M  low=8
+   26      9.9M    1.23M  low=6 medium=2
+   33      6.2M    0.78M  low=7  dropped 1
+   42      3.4M    0.43M  low=4  dropped 4
+   51      6.1M    0.76M  low=7  dropped 1
+```
+
+The estimate lags the cliff by a few seconds, which is what a half-life of
+eight samples means and is the interesting part of an adaptive client rather
+than a defect. It tops out near 10 Mbit/s on a 25 Mbit/s link because serial
+requests at 15 ms each cannot fill it — the honest budget for that request
+pattern.
+
+`link.observed()` reports what actually arrived, split into the rate while it
+was *delivering* and how much of the time it was busy at all. That split is not
+cosmetic: dividing bytes by wall clock reported **0.3 Mbit/s for a 25 Mbit/s
+pipe** when the client fetched a few frames and then waited, and a chooser
+handed that drops every pane. It is also **cumulative since the link started**,
+so it summarises a run rather than reading a current rate — a client tracking a
+changing link needs the recent-window estimate the page uses instead.
 
 ## What is deliberately missing
 
@@ -494,11 +534,6 @@ a budget at an instant; none of it plays continuously against a trace and
 reacts. `switch_penalty` is the only part of that dynamics testable today, and
 the rest needs a client that streams for minutes rather than a function that
 returns a selection.
-
-**A client that uses any of this.** The browser page still fetches the default
-rendition. Nothing wires `link.observed` to `policy.choose` to what the
-`Scheduler` requests, so the loop is demonstrable from Python and not yet from
-the viewer.
 
 **A held-out camera.** Every rig camera was a training view for both Vega and
 ReRF, so the numbers `metrics` reports measure reconstruction rather than
