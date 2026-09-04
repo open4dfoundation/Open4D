@@ -197,6 +197,12 @@ def run(args) -> int:
                     "view": clip["camera"],
                     "resolution": f"{camera.width}x{camera.height}",
                     "renderer": "rerf_stream.export",
+                    # What these pixels are of. A depth map is not an attempt
+                    # to reproduce the photograph, so scoring it against one
+                    # would produce a number (0.4 dB) that reads as total
+                    # failure rather than as not applicable. See
+                    # streamer.metrics.
+                    "depicts": "depth" if clip["kind"] == "depth" else "appearance",
                 },
             }
             for name, clip in clips.items()
