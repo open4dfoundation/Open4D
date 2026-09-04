@@ -52,6 +52,7 @@ from pathlib import Path
 import numpy as np
 
 from .bitstream import BitstreamPlayer
+from .serve import RUNGS
 from .cameras import capture_rig, captured_image
 
 #: What each kind of clip needs its viewer told, beyond the shared notes.
@@ -74,6 +75,26 @@ KIND_NOTES = {
 QUALITY = 94
 
 
+def _resample(image: np.ndarray, scale: float) -> np.ndarray:
+    """``image`` at a fraction of its size, for a lower rung.
+
+    Resampled rather than re-marched. A second ray-march at a lower resolution
+    would sample the volume differently and produce a slightly different
+    picture -- fine as an image, wrong as a *rendition*, because two renditions
+    have to be the same content for switching between them to be seamless
+    rather than a visible cut.
+    """
+    from PIL import Image
+
+    if scale == 1.0:
+        return image
+    height, width = image.shape[:2]
+    size = (max(16, int(round(width * scale))), max(16, int(round(height * scale))))
+    array = (np.clip(image, 0.0, 1.0) * 255.0).astype(np.uint8)
+    resized = Image.fromarray(array).resize(size, Image.LANCZOS)
+    return np.asarray(resized, np.float32) / 255.0
+
+
 def write_jpeg(path: Path, image: np.ndarray, quality: int = QUALITY) -> int:
     """Write ``image`` in [0, 1] as JPEG, returning bytes written."""
     from PIL import Image
@@ -94,6 +115,20 @@ def run(args) -> int:
         pca_channels=tuple(int(c) for c in args.pca_chs.split(",")),
         group_size=args.group_size or None,
     )
+    rungs = (
+        {"default": (args.scale, args.quality)} if not args.rungs
+        else {name: RUNGS[name] for name in args.rungs.split(",")}
+    )
+    unknown = set(rungs) - set(RUNGS) - {"default"}
+    if unknown:
+        raise SystemExit(
+            f"--rungs {','.join(sorted(unknown))}: known rungs are "
+            f"{', '.join(sorted(RUNGS))}"
+        )
+    # The best rung is the clip's default rendition, so a reader that knows
+    # nothing about variants sees the method at its best rather than at
+    # whatever happened to be listed first.
+    default = max(rungs, key=lambda name: rungs[name][0])
     cameras = [camera.scaled(args.scale) for camera in player.cameras()]
     views = (
         [int(v) for v in args.views.split(",")] if args.views
@@ -142,9 +177,28 @@ def run(args) -> int:
             colour, depth = rendered if args.depth else (rendered, None)
 
             name = f"{args.name}-rerf-cam{view:02d}"
-            relative = f"{name}/frame_{position:04d}.jpg"
-            total_bytes += write_jpeg(out / relative, colour, args.quality)
-            clips[name]["frames"].append(relative)
+            for rung, (scale, quality) in rungs.items():
+                # One ray-march per view, resampled per rung. The march is the
+                # expensive step (~90 ms) and re-marching at a lower resolution
+                # would be a *different* render, not the same content at a
+                # different rate -- which is what a rendition has to be for
+                # switching between them to be seamless.
+                image = colour if scale == 1.0 else _resample(colour, scale)
+                folder = name if rung == default else f"{name}@{rung}"
+                relative = f"{folder}/frame_{position:04d}.jpg"
+                written = write_jpeg(out / relative, image, quality)
+                total_bytes += written
+                if rung == default:
+                    clips[name]["frames"].append(relative)
+                else:
+                    clips[name].setdefault("rungs", {}).setdefault(
+                        rung, {"frames": [], "bytes": 0, "scale": scale,
+                               "quality": quality})
+                    clips[name]["rungs"][rung]["frames"].append(relative)
+                    clips[name]["rungs"][rung]["bytes"] += written
+                if rung == default:
+                    clips[name].setdefault("default_bytes", 0)
+                    clips[name]["default_bytes"] += written
             if args.depth:
                 name = f"{args.name}-rerf-cam{view:02d}-depth"
                 relative = f"{name}/frame_{position:04d}.jpg"
@@ -200,6 +254,22 @@ def run(args) -> int:
                     KIND_NOTES[clip["kind"]] if clip["kind"] == "captured"
                     else shared_notes + KIND_NOTES[clip["kind"]]
                 ),
+                "variants": [
+                    {
+                        "name": rung,
+                        "frames": info["frames"],
+                        "bytes": info["bytes"],
+                        "detail": {
+                            "resolution": "%dx%d" % (
+                                max(16, int(round(camera.width * info["scale"]))),
+                                max(16, int(round(camera.height * info["scale"]))),
+                            ),
+                            "jpeg_quality": info["quality"],
+                            "scale": info["scale"],
+                        },
+                    }
+                    for rung, info in sorted((clip.get("rungs") or {}).items())
+                ],
                 "detail": {
                     "source": str(player.path),
                     "view": clip["camera"],
@@ -219,9 +289,15 @@ def run(args) -> int:
     (out / "clips.json").write_text(json.dumps(payload, indent=2) + "\n")
 
     elapsed = time.time() - started
-    written = sum(len(clip["frames"]) for clip in clips.values())
+    written = sum(
+        len(clip["frames"]) + sum(
+            len(rung["frames"]) for rung in (clip.get("rungs") or {}).values()
+        )
+        for clip in clips.values()
+    )
+    ladder = "" if len(rungs) == 1 else f", {len(rungs)} rungs each"
     print(
-        f"\n{written} frames across {len(clips)} clips in {elapsed:.0f}s "
+        f"\n{written} frames across {len(clips)} clips{ladder} in {elapsed:.0f}s "
         f"({total_bytes / 1e6:.1f} MB)\n"
         f"  decode {decode_s:.1f}s over {len(frames)} frames, "
         f"march {march_s:.1f}s over {written} renders\n"
@@ -251,6 +327,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="also write the photograph each view reconstructs, so "
                              "the scene arrives with something to compare against")
     parser.add_argument("--quality", type=int, default=QUALITY)
+    parser.add_argument("--rungs", default="",
+                        help="comma-separated quality levels to write as variants, "
+                             f"from: {', '.join(sorted(RUNGS))}. The highest becomes "
+                             "the clip's default rendition. Omit for one rendition.")
     parser.add_argument("--overwrite", action="store_true",
                         help="delete --out first, rather than adding to it")
     parser.add_argument("--no-pca", action="store_true")

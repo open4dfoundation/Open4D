@@ -78,10 +78,16 @@ def adopt(
     bundle_dir = Path(bundle_dir).expanduser().resolve()
     payload = read_export(directory)
 
+    def declared(entry):
+        """Every frame path a clip entry names, across all its renditions."""
+        yield from entry["frames"]
+        for rung in entry.get("variants") or []:
+            yield from rung.get("frames") or ()
+
     missing = [
         relative
         for entry in payload["clips"]
-        for relative in entry["frames"]
+        for relative in declared(entry)
         if not (directory / relative).is_file()
     ]
     if missing:
@@ -93,7 +99,7 @@ def adopt(
     clips = []
     for entry in payload["clips"]:
         if copy:
-            for relative in entry["frames"]:
+            for relative in declared(entry):
                 target = bundle_dir / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(directory / relative, target)
@@ -105,6 +111,7 @@ def adopt(
                 method=entry.get("method"),
                 camera=entry.get("camera"),
                 frames=list(entry["frames"]),
+                variants=list(entry.get("variants") or []),
                 notes=list(entry.get("notes") or []),
                 detail=dict(entry.get("detail") or {}),
             )
