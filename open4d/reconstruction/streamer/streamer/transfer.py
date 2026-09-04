@@ -12,8 +12,14 @@ It reads only `view.json`, so it needs to know nothing about representations:
 the manifest already lists every frame, relative to the bundle root. That is the
 same property that lets the client play a bundle it did not write.
 
-Not a sync tool. Existing files of the right size are skipped so an interrupted
-transfer can be resumed by running it again, and that is the whole policy.
+Not a sync tool. Existing files of the right size are skipped, and a partial
+file is continued from where it stopped rather than started again -- that is
+the whole policy.
+
+Resumption is the reason this cares about the transport at all. A 30-frame
+Gaussian clip is over 100 MB; a tunnel that drops halfway through one frame
+used to mean fetching that frame again from zero. With a byte range it costs
+only what was actually missed.
 """
 
 from __future__ import annotations
@@ -54,27 +60,50 @@ def _get(url: str, timeout: float) -> bytes:
 
 
 def _download(url: str, destination: Path, timeout: float) -> int:
-    """Stream ``url`` to ``destination``, returning bytes written.
+    """Stream ``url`` to ``destination``, returning bytes written this call.
 
     Written to a temporary neighbour and moved into place, so an interrupted
     transfer leaves no short file that the size check would later mistake for a
     complete one.
+
+    A ``.partial`` left by an earlier attempt is *continued*, by asking for the
+    bytes after it with a ``Range`` header. Three things have to be true for
+    that to be safe, and all three are checked rather than assumed:
+
+    * the server has to answer ``206`` -- a ``200`` means it ignored the range
+      and is sending the whole file, so the partial is discarded and this
+      becomes a plain download rather than appending a second copy;
+    * the range has to start where the partial ends, which is what was asked
+      for and is verified against ``Content-Range``;
+    * on any failure the partial survives, so the next attempt can try again.
+
+    The file is only moved into place once the transfer completes, so a
+    ``.partial`` is always exactly the prefix that has arrived.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_name(destination.name + ".partial")
+    have = partial.stat().st_size if partial.is_file() else 0
+
+    request = urllib.request.Request(url)
+    if have:
+        request.add_header("Range", f"bytes={have}-")
+
     written = 0
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            with open(partial, "wb") as handle:
-                while True:
-                    block = response.read(CHUNK)
-                    if not block:
-                        break
-                    handle.write(block)
-                    written += len(block)
-        partial.replace(destination)
-    finally:
-        partial.unlink(missing_ok=True)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        resuming = have > 0 and response.status == 206
+        if have and not resuming:
+            # The server sent the whole file despite the range. Start over
+            # rather than append: the alternative is a corrupt file that is
+            # exactly the right size for the check to accept.
+            have = 0
+        with open(partial, "ab" if resuming else "wb") as handle:
+            while True:
+                block = response.read(CHUNK)
+                if not block:
+                    break
+                handle.write(block)
+                written += len(block)
+    partial.replace(destination)
     return written
 
 
@@ -144,6 +173,9 @@ def fetch(
         if target.is_file() and expected is not None and target.stat().st_size == expected:
             skipped.append(path)
         else:
+            # `written` counts what crossed the wire, not the file's size: a
+            # resumed frame reports only the tail, which is what a measurement
+            # of this transfer should say.
             written = _download(source, target, timeout)
             total_bytes += written
             fetched.append(path)
