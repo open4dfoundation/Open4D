@@ -39,6 +39,16 @@ The pieces, smallest first:
     Any `open4d.Sequence` as a bundle -- which is how Open4D's own mesh and
     point-cloud sequences, in any format `open4d.load` reads, reach this
     client.
+``adopt``
+    Frames a method exported in another interpreter, taken into a bundle. Some
+    methods cannot be driven from here at all: ReRF's entropy coder is a
+    prebuilt Python 3.8 binary and this package needs 3.10, so the handoff is a
+    directory plus a small sidecar rather than an import.
+``metrics``
+    How good the picture was, scored against the captured reference. `monitor`
+    says what a playback cost; this says what it was worth, and a comparison
+    needs both. It works on a bundle rather than on a method, which is the only
+    arrangement under which two methods' numbers mean the same thing.
 ``client``
     Playback. One self-contained browser page, no build step and no CDN.
 
@@ -52,26 +62,30 @@ along it. Its ``chain`` is a transcription of `Dependency.chain` into
 JavaScript, which is the liability two implementations of one rule always carry,
 so ``streamer_tests/test_scheduler.py`` runs both over the same cases.
 
-What is deliberately *not* here is adaptation. `monitor` records what a playback
-cost and decides nothing with it: a bundle carries one quality per clip, so
-there is nothing yet to adapt between, and a monitor that chose would be a
-second scheduler with no second option to choose from.
+What is deliberately *not* here is a policy. A clip can now carry quality rungs
+(`bundle.Variant`) with measured rate and measured quality, and `metrics` fills
+the quality in -- so there is something to adapt between, and nothing that
+chooses. `monitor` still only counts, which is the right split: a chooser needs
+a rate estimate, a buffer model and a notion of what the viewer is looking at,
+and none of those belong in a byte counter.
 """
 
 from __future__ import annotations
 
 from . import (
+    adopt,
     bundle,
     client,
     codecs,
     export,
     live,
+    metrics,
     monitor,
     representations,
     server,
     transfer,
 )
-from .bundle import Clip
+from .bundle import Clip, Variant
 from .client import viewer_path
 from .export import from_sequence, from_source
 from .monitor import Monitor, Transfer
@@ -87,12 +101,15 @@ __all__ = [
     "Monitor",
     "RepresentationSpec",
     "Transfer",
+    "Variant",
+    "adopt",
     "bundle",
     "client",
     "codecs",
     "export",
     "live",
     "fetch",
+    "metrics",
     "from_sequence",
     "from_source",
     "monitor",
