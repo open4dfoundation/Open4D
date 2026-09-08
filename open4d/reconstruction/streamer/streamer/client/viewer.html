@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>gs-tools view</title>
+<title>Open4D Streaming Platform</title>
 <!--
   The viewer `gs-tools view` serves. One page, no build step and no CDN: it is
   handed a `view.json` bundle (see gs_tools/io/bundle.py) and plays whichever
@@ -78,7 +78,6 @@
   h1 { font-size: 14px; margin: 0 0 2px; }
   h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
        margin: 18px 0 6px; font-weight: 600; }
-  .sub { color: var(--dim); font-size: 11px; word-break: break-all; margin: 0 0 4px; }
   select, button { font: inherit; color: var(--text); background: #21252c; border: 1px solid var(--edge);
                    border-radius: 6px; padding: 5px 9px; }
   button:hover:not(:disabled), select:hover { border-color: #3d4552; }
@@ -180,8 +179,7 @@
     </div>
   </div>
   <div id="side">
-    <h1 id="title">open4d streamer</h1>
-    <p class="sub" id="source"></p>
+    <h1 id="title">Open4D Streaming Platform</h1>
 
     <h2>subject</h2>
     <select id="sceneSelect"></select>
@@ -3001,8 +2999,17 @@ async function main() {
   app.scenes = index.scenes || {};
   app.fps = index.fps || 30;
   app.camera = new OrbitCamera();
-  document.getElementById("title").textContent = index.title || "gs-tools view";
-  document.getElementById("source").textContent = index.source || "";
+  /* The bundle's title, or the platform's own name.
+   *
+   * The line under this used to print `index.source`, which is every input
+   * path a bundle was built from joined together -- five absolute paths on
+   * this machine, wrapped with `word-break: break-all` because they did not
+   * fit. That is provenance, and it belongs where provenance is read: it is
+   * still in the manifest, and each clip carries its own `detail.source` in
+   * the per-pane notes. A header is for saying what this is. */
+  const title = index.title || "Open4D Streaming Platform";
+  document.getElementById("title").textContent = title;
+  document.title = title;
   if (!index.clips || !index.clips.length) return fail("This bundle has no clips.");
 
   const canvas = document.createElement("canvas");
