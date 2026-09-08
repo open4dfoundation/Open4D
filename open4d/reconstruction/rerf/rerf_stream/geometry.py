@@ -135,6 +135,66 @@ def point_cloud(model, corpus_dir, *, threshold: float = THRESHOLD,
     )
 
 
+def rasterise(cloud: PointCloud, camera, *, radius: int = 2) -> np.ndarray:
+    """The cloud drawn into ``camera``, nearest point winning each pixel.
+
+    Deliberately crude -- a square splat and a depth test, no blending and no
+    per-point size. It exists to put a number on what thresholding the density
+    field costs, not to be the renderer; the browser's point renderer is a
+    different one, so the figure this produces is the cost of the
+    *representation* rather than of any particular rasteriser. Said in the clip
+    note for the same reason.
+    """
+    world_to_camera = np.linalg.inv(camera.c2w)
+    local = cloud.xyz @ world_to_camera[:3, :3].T + world_to_camera[:3, 3]
+    depth = local[:, 2]
+    in_front = depth > 1e-6
+    u = np.rint(camera.fx * local[in_front, 0] / depth[in_front] + camera.cx)
+    v = np.rint(camera.fy * local[in_front, 1] / depth[in_front] + camera.cy)
+    u, v = u.astype(np.int64), v.astype(np.int64)
+    z = depth[in_front]
+    colour = cloud.rgb[in_front].astype(np.float32) / 255.0
+
+    canvas = np.zeros((camera.height, camera.width, 3), np.float32)
+    nearest = np.full((camera.height, camera.width), np.inf, np.float32)
+    for du in range(-radius, radius + 1):
+        for dv in range(-radius, radius + 1):
+            uu, vv = u + du, v + dv
+            inside = ((uu >= 0) & (uu < camera.width)
+                      & (vv >= 0) & (vv < camera.height))
+            iu, iv, iz, ic = uu[inside], vv[inside], z[inside], colour[inside]
+            # Far to near, so a nearer point overwrites a farther one and the
+            # comparison below does not depend on input order.
+            order = np.argsort(-iz)
+            iu, iv, iz, ic = iu[order], iv[order], iz[order], ic[order]
+            closer = iz < nearest[iv, iu]
+            canvas[iv[closer], iu[closer]] = ic[closer]
+            nearest[iv[closer], iu[closer]] = iz[closer]
+    return canvas
+
+
+def fidelity(player, cloud: PointCloud, *, view: int = 0) -> dict:
+    """What this frame's point cloud scores against the photograph, and the
+    ray-march of the same frame for comparison.
+
+    Measured per subject rather than quoted from one. The note used to carry
+    basketball's 31.3 dB on every subject's clip, which states a measurement
+    of one reconstruction as a fact about another -- and the spread turns out
+    to matter, since how much of a density field clears the threshold varies a
+    lot between subjects.
+    """
+    from .cameras import captured_image, psnr, training_cameras
+
+    camera = training_cameras(player.corpus_dir)[view]
+    photograph = captured_image(player.corpus_dir, 0, view,
+                                background=player.background)
+    return {
+        "points_psnr": round(float(psnr(rasterise(cloud, camera), photograph)), 2),
+        "march_psnr": round(float(psnr(player.render(camera), photograph)), 2),
+        "against": f"training camera {view}, frame 0",
+    }
+
+
 def write_ply(path: Path | str, cloud: PointCloud) -> int:
     """Binary little-endian PLY, the one dialect the client's parser reads.
 
@@ -185,7 +245,7 @@ def read_ply(path: Path | str) -> PointCloud:
 
 def export(player, out_dir, *, name: str, scene: str,
            threshold: float = THRESHOLD, azimuth: float = 0.0,
-           frames: int = 0) -> dict:
+           frames: int = 0, measure: bool = True) -> dict:
     """Every frame of ``player`` as a point-cloud clip, plus its sidecar.
 
     One clip rather than one per viewpoint, which is the whole point: this is
@@ -201,11 +261,20 @@ def export(player, out_dir, *, name: str, scene: str,
     wanted = frames if frames > 0 else len(player.frames)
     began = time.time()
     paths, counts, bounds, total = [], [], [], 0
+    scored = None
     for frame in player.play(loop=False):
         if frame.index >= wanted:
             break
         cloud = point_cloud(frame.model, player.corpus_dir,
                             threshold=threshold, azimuth=azimuth)
+        if scored is None and measure:
+            # Frame 0 only: the point is what the conversion costs, and paying
+            # for a ray-march of every frame to average it would double the
+            # export for a figure that moves by tenths.
+            scored = fidelity(player, cloud)
+            print(f"  fidelity: points {scored['points_psnr']} dB, "
+                  f"march {scored['march_psnr']} dB "
+                  f"({scored['against']})", flush=True)
         relative = f"{clip}/frame_{frame.index:04d}.ply"
         total += write_ply(out / relative, cloud)
         paths.append(relative)
@@ -251,11 +320,19 @@ def export(player, out_dir, *, name: str, scene: str,
                 "this is geometry, so the camera is genuinely free: the browser "
                 "rasterises whatever viewpoint is asked for, with no "
                 "pre-rendered viewpoints and nothing to snap to",
-                "coarser than the ray-march of the same frame — 31.3 dB "
-                "against the photograph where the march reaches 45.5 — because "
-                "a threshold discards the soft edges a volume render "
-                "integrates over; compare against the rerf pixel clips to see "
-                "what the conversion costs",
+                (
+                    f"coarser than the ray-march of the same frame — "
+                    f"{scored['points_psnr']} dB against the photograph where "
+                    f"the march reaches {scored['march_psnr']} — because a "
+                    "threshold discards the soft edges a volume render "
+                    "integrates over. Scored with a nearest-z point splat, so "
+                    "it is the cost of the representation rather than of any "
+                    "particular renderer"
+                    if scored else
+                    "coarser than the ray-march of the same frame, because a "
+                    "threshold discards the soft edges a volume render "
+                    "integrates over; export without --no-measure to score it"
+                ),
                 f"colour baked at azimuth {azimuth:g}° and frozen: ReRF's "
                 "colour comes from a view-dependent network and a point's does "
                 "not",
@@ -268,6 +345,7 @@ def export(player, out_dir, *, name: str, scene: str,
                 "colour_azimuth": azimuth,
                 "depicts": "appearance",
                 "grid": "x".join(str(int(v)) for v in player.model.world_size),
+                **({"fidelity": scored} if scored else {}),
             },
         }],
     }
@@ -299,6 +377,9 @@ def main(argv=None) -> int:
     parser.add_argument("--azimuth", type=float, default=0.0,
                         help="direction, in degrees, that colour is baked at")
     parser.add_argument("--frames", type=int, default=0, help="0 means all of them")
+    parser.add_argument("--no-measure", action="store_true",
+                        help="skip scoring the cloud against the photograph, "
+                             "which costs one extra ray-march")
     parser.add_argument("--no-pca", action="store_true")
     parser.add_argument("--pca_chs", default="7,13")
     parser.add_argument("--group-size", type=int, default=0)
@@ -317,7 +398,8 @@ def main(argv=None) -> int:
         group_size=args.group_size,
     )
     export(player, out, name=args.name, scene=args.scene,
-           threshold=args.threshold, azimuth=args.azimuth, frames=args.frames)
+           threshold=args.threshold, azimuth=args.azimuth,
+           frames=args.frames, measure=not args.no_measure)
     return 0
 
 

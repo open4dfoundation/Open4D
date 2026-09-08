@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rerf_stream import geometry
 from rerf_stream.bitstream import BitstreamPlayer
 from rerf_stream.geometry import (
     PointCloud, _world_transform, point_cloud, read_ply, write_ply,
@@ -190,3 +191,109 @@ def test_colour_depends_on_the_azimuth_it_was_baked_at(first_frame):
     behind = point_cloud(frame.model, player.corpus_dir, azimuth=180.0)
     assert np.array_equal(front.xyz, behind.xyz)      # same geometry
     assert not np.array_equal(front.rgb, behind.rgb)  # different colour
+
+
+# ------------------------------------------------- scoring the conversion ---
+# The clip note used to quote basketball's 31.3 dB on every subject's clip,
+# which states a measurement of one reconstruction as a fact about another. It
+# is measured per subject now, and `rasterise` is the part that can be checked
+# without a GPU.
+
+
+class _Camera:
+    """The few fields `rasterise` reads, as `cameras.Camera` exposes them."""
+
+    def __init__(self, width=32, height=24, distance=4.0):
+        self.width, self.height = width, height
+        self.fx = self.fy = float(width)
+        self.cx, self.cy = (width - 1) / 2, (height - 1) / 2
+        # Looking down +z from the origin, which is the convention `c2w`'s
+        # third column carries.
+        self.c2w = np.eye(4)
+        self.c2w[2, 3] = -distance
+
+
+def test_a_point_lands_where_the_projection_puts_it():
+    camera = _Camera()
+    cloud = PointCloud(xyz=np.array([[0.0, 0.0, 0.0]], np.float32),
+                       rgb=np.array([[255, 0, 0]], np.uint8))
+    image = geometry.rasterise(cloud, camera, radius=0)
+    lit = np.argwhere(image.any(axis=-1))
+    assert len(lit) == 1
+    row, column = lit[0]
+    # Dead centre, since the point is on the axis.
+    assert abs(row - camera.cy) <= 1 and abs(column - camera.cx) <= 1
+    assert image[row, column].tolist() == [1.0, 0.0, 0.0]
+
+
+def test_a_nearer_point_hides_a_farther_one():
+    """Without the depth test the result depends on input order, which would
+    make the score depend on how the voxels happened to be enumerated."""
+    camera = _Camera()
+    near_first = PointCloud(
+        xyz=np.array([[0, 0, -1.0], [0, 0, 1.0]], np.float32),
+        rgb=np.array([[255, 0, 0], [0, 255, 0]], np.uint8))
+    far_first = PointCloud(xyz=near_first.xyz[::-1].copy(),
+                           rgb=near_first.rgb[::-1].copy())
+    a = geometry.rasterise(near_first, camera, radius=0)
+    b = geometry.rasterise(far_first, camera, radius=0)
+    assert np.array_equal(a, b)
+    # Sampled where the point actually lands rather than at int(cx), int(cy):
+    # the projection rounds and the centre falls on a half-pixel, so truncating
+    # picks the neighbour.
+    lit = np.argwhere(a.any(axis=-1))
+    assert len(lit) == 1
+    row, column = lit[0]
+    # The one nearer the camera, which sits at z = -4 looking towards +z, so
+    # the point at world z = -1 is in front of the one at z = +1.
+    assert a[row, column].tolist() == [1.0, 0.0, 0.0]
+
+
+def test_a_point_behind_the_camera_is_dropped():
+    """Dividing by a negative depth puts it back in frame, mirrored."""
+    camera = _Camera()
+    behind = PointCloud(xyz=np.array([[0.0, 0.0, -10.0]], np.float32),
+                        rgb=np.array([[255, 255, 255]], np.uint8))
+    assert not geometry.rasterise(behind, camera, radius=0).any()
+
+
+def test_a_point_outside_the_frame_is_dropped_not_wrapped():
+    camera = _Camera()
+    off = PointCloud(xyz=np.array([[9.0, 0.0, 0.0]], np.float32),
+                     rgb=np.array([[255, 255, 255]], np.uint8))
+    assert not geometry.rasterise(off, camera, radius=0).any()
+
+
+def test_a_wider_splat_covers_more():
+    camera = _Camera()
+    cloud = PointCloud(xyz=np.array([[0.0, 0.0, 0.0]], np.float32),
+                       rgb=np.array([[255, 255, 255]], np.uint8))
+    covered = [int(geometry.rasterise(cloud, camera, radius=r).any(axis=-1).sum())
+               for r in (0, 1, 2)]
+    assert covered == [1, 9, 25]
+
+
+def test_an_empty_frame_is_black_not_an_error():
+    """A threshold high enough to clear the grid is refused by `point_cloud`,
+    but a cloud entirely behind the camera reaches here legitimately."""
+    camera = _Camera()
+    cloud = PointCloud(xyz=np.zeros((0, 3), np.float32),
+                       rgb=np.zeros((0, 3), np.uint8))
+    image = geometry.rasterise(cloud, camera)
+    assert image.shape == (camera.height, camera.width, 3)
+    assert not image.any()
+
+
+@requires_bitstream
+def test_the_measured_fidelity_is_recorded_per_subject(first_frame):
+    """And the ray-march scores far better, which is the point of recording it.
+
+    If these came out close, thresholding the field would be free and the
+    pre-rendered pixel clips would have no reason to exist.
+    """
+    player, frame = first_frame
+    cloud = point_cloud(frame.model, player.corpus_dir)
+    scored = geometry.fidelity(player, cloud)
+    assert 20.0 < scored["points_psnr"] < 40.0
+    assert scored["march_psnr"] > scored["points_psnr"] + 5.0
+    assert "training camera 0" in scored["against"]
