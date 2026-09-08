@@ -469,3 +469,118 @@ def test_every_exporter_still_writes_independent_frames(tmp_path):
     clip = export.from_sequence(sequence, tmp_path, name="c")
     assert clip.dependency is None
     assert bundle.dependency_of(clip).mode is DependencyMode.INDEPENDENT
+
+
+# ------------------------------------------ letting go of the last subject ---
+# Explore holds a whole clip resident: for one subject that is ~119 MB (a 56 MB
+# point cloud and a 63 MB Gaussian container, both decoded). Nine subjects
+# browsed in a row is a gigabyte if a switch does not free the last one.
+
+
+@requires_node
+def test_releasing_a_scheduler_frees_every_frame_it_held(tmp_path):
+    body = HARNESS + """
+        const s = new Scheduler(clipOf(8, null), "", decode, {cacheSize: 8});
+        (async () => {
+          for (let i = 0; i < 8; i++) await s.seek(i);
+          const before = s.snapshot().cached;
+          s.release();
+          process.stdout.write(JSON.stringify({
+            before, after: s.snapshot().cached,
+            pending: s.snapshot().pending, abandoned: s.abandoned,
+            resident: s.resident,
+          }));
+        })();
+    """
+    result = run_js(body, tmp_path)
+    assert result["before"] == 8
+    # Nothing held, and marked so a download still in flight stops rather than
+    # decoding into a cache nobody will read.
+    assert result["after"] == 0
+    assert result["pending"] == 0
+    assert result["abandoned"] is True
+    assert result["resident"] is False
+
+
+@requires_node
+def test_a_released_scheduler_stops_decoding_mid_download(tmp_path):
+    """Switching subject during a download must not keep filling the cache.
+
+    Without the `abandoned` check the loop runs to the end of a 63 MB
+    container, decoding every frame into a scheduler whose pane is gone.
+    """
+    body = HARNESS + """
+        let served = 0;
+        globalThis.fetch = (url) => {
+          served += 1;
+          return Promise.resolve({
+            ok: true,
+            arrayBuffer: () => Promise.resolve(new ArrayBuffer(16)),
+          });
+        };
+        const s = new Scheduler(clipOf(30, null), "", decode, {});
+        (async () => {
+          const download = s.downloadAll(null);
+          s.release();                    // the pane moved on
+          const held = await download;
+          process.stdout.write(JSON.stringify({
+            held, cached: s.snapshot().cached, served,
+          }));
+        })();
+    """
+    result = run_js(body, tmp_path)
+    assert result["held"] is False, "a released scheduler must not report success"
+    assert result["cached"] == 0
+    # It stopped early rather than fetching all thirty.
+    assert result["served"] < 30
+
+
+@requires_node
+def test_a_released_scheduler_is_not_downloaded_again(tmp_path):
+    """`downloadSelection` takes its pane list before the first await, so by the
+    time it reaches a pane that pane may belong to another subject."""
+    body = HARNESS + """
+        const s = new Scheduler(clipOf(4, null), "", decode, {});
+        s.release();
+        process.stdout.write(JSON.stringify({abandoned: s.abandoned}));
+    """
+    result = run_js(body, tmp_path)
+    assert result["abandoned"] is True
+
+    page = viewer_path().read_text()
+    start = page.index("async function downloadSelection(")
+    loop = page[start:page.index("\n}\n", start)]
+    # The guard that reads it, so a disposed pane is skipped rather than
+    # reported as a decode failure onto DOM that has left the page.
+    assert "!pane.source || pane.source.abandoned" in loop
+
+
+@requires_node
+def test_a_late_image_decode_does_not_strand_its_blob_url(tmp_path):
+    """The same race, for the resource a browser will not reclaim on its own.
+
+    `release` revokes the object URL of every cached frame and then clears the
+    cache. A decode still in flight resolves after that, so its frame is never
+    in the cache the revoke pass walked -- and an image's blob stays alive for
+    the lifetime of the page. Browsing nine subjects strands one per in-flight
+    frame.
+    """
+    body = """
+        globalThis.revoked = [];
+        globalThis.URL = {
+          createObjectURL: () => "blob:x",
+          revokeObjectURL: (url) => { globalThis.revoked.push(url); },
+        };
+        const s = new Scheduler(
+          {frames: ["f0.bin"], dependency: null}, "", () => {}, {});
+        s.release();
+        // What `_decodeOne` does when its fetch lands late.
+        s._touch(0, {objectUrl: "blob:late"});
+        process.stdout.write(JSON.stringify({
+          cached: s.snapshot().cached, revoked: globalThis.revoked,
+        }));
+    """
+    result = run_js(body, tmp_path)
+    assert result["cached"] == 0
+    # Released rather than dropped on the floor.
+    assert result["revoked"] == ["blob:late"]
