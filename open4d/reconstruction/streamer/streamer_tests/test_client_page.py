@@ -216,3 +216,46 @@ def test_every_playable_representation_has_a_client_entry():
     source = page()
     for spec in representations.playable():
         assert f"\n  {spec.name}: {{" in source, spec.name
+
+
+def test_the_page_names_itself_the_same_way_everywhere():
+    """The tab, the static header, and the fallback all said different things.
+
+    The markup said "open4d streamer", the tab said "gs-tools view", and the
+    fallback when a bundle carries no title said "gs-tools view" too -- so a
+    bundle without a title rendered under a name that appears nowhere else.
+    """
+    page = viewer_path().read_text()
+    assert "<title>Open4D Streaming Platform</title>" in page
+    assert '<h1 id="title">Open4D Streaming Platform</h1>' in page
+    assert 'index.title || "Open4D Streaming Platform"' in page
+    # And nothing *displays* the old name. Matched as the string literal it
+    # would have to be, not as any occurrence: the file's own comment names
+    # `gs-tools view` because that is the command which serves the page, and
+    # forbidding the words would forbid saying so.
+    assert '"gs-tools view"' not in page
+
+
+def test_the_header_does_not_print_the_bundle_s_input_paths():
+    """It used to, and on this bundle that was five absolute paths.
+
+    Provenance is still in the manifest and in each clip's `detail.source`,
+    which the notes surface per pane. A header is for saying what this is.
+    """
+    page = viewer_path().read_text()
+    assert 'id="source"' not in page
+    # Not "the words never appear" -- the comment explaining the removal
+    # mentions it. What must not exist is the assignment that put it on screen.
+    assert "textContent = index.source" not in page
+    assert 'getElementById("source")' not in page
+    # The rule that existed only to wrap those paths went with them. The
+    # selector, not the declaration: the comment above the change quotes the
+    # declaration to explain why it is gone.
+    assert "  .sub {" not in page
+
+
+def test_the_tab_title_follows_the_bundle():
+    """A bundle that names itself should name the tab too, so several open at
+    once are distinguishable."""
+    page = viewer_path().read_text()
+    assert "document.title = title;" in page
