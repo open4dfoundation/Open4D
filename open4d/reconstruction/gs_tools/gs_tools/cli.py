@@ -163,6 +163,7 @@ def _options_for(module, args: argparse.Namespace):
             objects=tuple(args.objects or ()),
             frames=args.frames,
             bake_azimuth_deg=args.bake_azimuth,
+            frame_format=args.frame_format,
             device=args.device,
             fps=args.fps,
         )
@@ -387,9 +388,10 @@ def build_parser() -> argparse.ArgumentParser:
         # 3DGS runs
         target.add_argument("--frame-format", default="ply", choices=gaussian.FORMATS,
                             dest="frame_format",
-                            help="3DGS runs only: 'ply' copies the run's own frames; "
-                                 "'splat' re-encodes to 32 bytes per Gaussian, several "
-                                 "times smaller but degree-0 colour only")
+                            help="Gaussian frames: 'ply' writes 3DGS PLY; 'splat' "
+                                 "re-encodes to 32 bytes per Gaussian, about half the "
+                                 "bytes but degree-0 colour only. For a Vega export that "
+                                 "is free — it bakes colour to degree 0 regardless")
         target.add_argument("--scene-name", dest="scene_name",
                             help="3DGS runs only: subject name, so this clip lines up in "
                                  "Compare with another method's clip of the same subject "

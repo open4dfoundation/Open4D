@@ -53,6 +53,7 @@ import numpy as np
 from .. import upstream_import
 from streamer import bundle
 
+from .. import io
 from ..io import ply
 from ..outputs import Kind, detect
 
@@ -74,10 +75,58 @@ class VegaExportOptions:
     #: Bake-camera height above the bbox centre, as a fraction of its radius.
     #: Slightly above eye level, so the top of a head is not lit as if from below.
     bake_elevation: float = 0.15
+    #: ``"ply"`` writes 3DGS PLY. ``"splat"`` re-encodes to 32 bytes a
+    #: Gaussian, which for this exporter loses nothing structural: Vega's
+    #: colour is baked to a single band here anyway, so there are no
+    #: spherical-harmonic coefficients above degree 0 to drop. Roughly half the
+    #: bytes a frame, and half of what a client has to move.
+    frame_format: str = "ply"
     #: "cuda", "cpu", or None to take CUDA when it is there.
     device: str | None = None
     fps: int = 30
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+FORMATS = io.GAUSSIAN_FORMATS
+
+
+def _write_frame(path_without_suffix: Path, options: VegaExportOptions, **fields):
+    """One frame, in the format asked for.
+
+    Shared by both export paths so they cannot disagree about it -- the
+    bitstream path and the pre-baked scene path write the same fields and
+    previously each called `ply.write` directly.
+
+    `.splat` goes through the PLY rather than around it. Encoding straight from
+    the arrays would mean a second implementation of the same quantisation, and
+    the round trip is checked: `gs_tools.io.splat` keeps position and scale
+    exactly. The PLY is removed afterwards, since keeping both doubles the
+    export for a file no client asks for.
+    """
+    if options.frame_format not in FORMATS:
+        raise ValueError(
+            f"frame_format {options.frame_format!r} is not one of "
+            + ", ".join(FORMATS)
+        )
+    ply_path = ply.write(path_without_suffix.with_suffix(".ply"), **fields)
+    if options.frame_format != "splat":
+        return ply_path
+    cloud = io.splat.from_ply(ply_path)
+    written = io.splat.write(path_without_suffix.with_suffix(".splat"), cloud)
+    ply_path.unlink()
+    return written
+
+
+def _format_notes(options: VegaExportOptions) -> list[str]:
+    """What the chosen format costs, said in the clip rather than assumed."""
+    if options.frame_format != "splat":
+        return []
+    return [
+        "delivered as .splat (32 bytes a Gaussian) rather than 3DGS PLY: about "
+        "half the bytes a frame, and nothing structural is dropped because this "
+        "export bakes colour to degree 0 anyway — opacity, rotation and colour "
+        "are quantised to 8 bits, position and scale are exact",
+    ]
 
 
 def _torch():
@@ -192,8 +241,8 @@ def _export_bitstream(
             rgb = rgb.clamp(0.0, 1.0)
 
         xyz = gaussians.xyz.detach().cpu().numpy()
-        path = ply.write(
-            frames_at / f"frame_{index:04d}.ply",
+        path = _write_frame(
+            frames_at / f"frame_{index:04d}", options,
             xyz=xyz,
             scale_raw=gaussians.scale_raw.detach().cpu().numpy(),
             rot_raw=gaussians.rot_raw.detach().cpu().numpy(),
@@ -226,6 +275,7 @@ def _export_bitstream(
             f"colour baked at azimuth {options.bake_azimuth_deg:g}° and frozen "
             "(Vega's colour is a view-dependent hash grid; a PLY's f_dc is not)",
             "sh_degree 0: no view-dependent bands",
+            *_format_notes(options),
         ],
         detail={
             "source": str(object_dir),
@@ -265,8 +315,8 @@ def _export_scene(scene_dir: Path, out_dir: Path, options: VegaExportOptions) ->
         index = entry.get("frame_idx", len(frames))
         payload = torch.load(scene_dir / entry["file"], weights_only=False, map_location="cpu")
         xyz = payload["xyz"].float().numpy()
-        path = ply.write(
-            frames_at / f"frame_{index:04d}.ply",
+        path = _write_frame(
+            frames_at / f"frame_{index:04d}", options,
             xyz=xyz,
             scale_raw=payload["scale_raw"].float().numpy(),
             rot_raw=payload["rot_raw"].float().numpy(),
@@ -298,6 +348,7 @@ def _export_scene(scene_dir: Path, out_dir: Path, options: VegaExportOptions) ->
             f"{colour.get('bake_azimuth_deg', '?')}° and frozen",
             f"layout={scene.get('layout')}: "
             + ", ".join(entry["name"] for entry in scene.get("objects", [])),
+            *_format_notes(options),
         ],
         detail={"source": str(scene_dir), "scene_manifest": scene.get("layout")},
     )

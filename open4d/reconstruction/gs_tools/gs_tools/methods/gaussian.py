@@ -36,6 +36,7 @@ from typing import Any
 import numpy as np
 from streamer import bundle
 
+from .. import io
 from ..io import ply, splat
 from ..outputs import Kind, detect, gaussian_frames
 
@@ -62,7 +63,9 @@ class GaussianExportOptions:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-FORMATS = ("ply", "splat")
+#: Re-exported so `--frame-format` can list the choices without importing
+#: `gs_tools.io` directly; defined in one place (see `gs_tools.io`).
+FORMATS = io.GAUSSIAN_FORMATS
 
 
 def _method_name(source: Path, found, options: GaussianExportOptions) -> str:
