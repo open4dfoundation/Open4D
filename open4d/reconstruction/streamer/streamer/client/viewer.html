@@ -1603,15 +1603,26 @@ function scenesInBundle() {
   return seen;
 }
 
+/* Every method for a scene, and whether this mode can show it.
+ *
+ * Listed rather than filtered. Explore is a free camera and a photograph has
+ * no geometry to aim one at, so a captured method genuinely cannot appear
+ * there -- but *hiding* it means someone who opens `basketball` looking for
+ * the photograph finds it simply absent, with nothing saying it exists or how
+ * to reach it. That is a worse failure than a greyed-out row, and it was
+ * reported as the option missing.
+ */
 function methodsFor(scene, mode) {
-  const seen = [];
+  const seen = new Map();
   for (const clip of app.index.clips) {
     if (clip.scene !== scene) continue;
-    // Explore is a free camera, so only a representation with geometry qualifies.
-    if (mode === "explore" && !hasGeometry(clip)) continue;
-    if (!seen.includes(clip.method)) seen.push(clip.method);
+    const usable = mode !== "explore" || hasGeometry(clip);
+    // A method with several clips is usable if any one of them is: Vega has
+    // Gaussians, so it survives Explore even where its image clips do not.
+    if (!seen.has(clip.method) || usable) seen.set(clip.method, usable
+      || (seen.get(clip.method) || false));
   }
-  return seen;
+  return [...seen].map(([method, usable]) => ({ method, usable }));
 }
 
 function rig() { return app.scenes[app.scene] || null; }
@@ -2005,41 +2016,52 @@ function refreshPanel() {
 
 function renderMethodList() {
   methodList.innerHTML = "";
-  const available = methodsFor(app.scene, app.mode);
-  if (!available.length) {
+  const entries = methodsFor(app.scene, app.mode);
+  const usable = entries.filter((entry) => entry.usable).map((e) => e.method);
+  if (!entries.length) {
     const note = document.createElement("p");
     note.className = "sub";
-    note.textContent = app.mode === "explore"
-      ? "No method for this scene ships Gaussians, so there is nothing a free camera can show. Switch to Compare."
-      : "No clips for this scene.";
+    note.textContent = "No clips for this scene.";
     methodList.appendChild(note);
     return;
   }
-  for (const method of available) {
+  for (const { method, usable: playable } of entries) {
     const row = document.createElement("label");
     const box = document.createElement("input");
     box.type = "checkbox";
-    box.checked = app.methods.includes(method);
+    box.checked = playable && app.methods.includes(method);
+    box.disabled = !playable;
     box.addEventListener("change", () => {
-      app.methods = available.filter(
+      app.methods = usable.filter(
         (candidate) => candidate === method ? box.checked : app.methods.includes(candidate));
       rebuildPanes();
       renderMethodList();
     });
     const text = document.createElement("span");
     text.textContent = method;
+    if (!playable) text.style.color = "var(--dim)";
     row.append(box, text);
-    if (app.mode === "compare") {
-      const why = document.createElement("span");
-      why.className = "why";
-      const clip = app.index.clips.find(
+
+    const why = document.createElement("span");
+    why.className = "why";
+    if (!playable) {
+      // The one case: a pixel method under a free camera. Say where it lives
+      // rather than only that it does not live here.
+      why.textContent = "compare only";
+      why.title = "A photograph or a pre-rendered image exists only at the "
+        + "camera it was made at, so a free camera has nothing to aim at it. "
+        + "Switch to Compare.";
+      why.style.color = "#d8a657";
+    } else if (app.mode === "compare") {
+      const here = app.index.clips.find(
         (c) => c.scene === app.scene && c.method === method
                && isPixels(c) && c.camera === app.station);
-      const splat = app.index.clips.find(
+      const geometry = app.index.clips.find(
         (c) => c.scene === app.scene && c.method === method && hasGeometry(c));
-      why.textContent = clip ? "rendered here" : splat ? "renders here" : "not at this camera";
-      row.appendChild(why);
+      why.textContent = here ? "rendered here"
+        : geometry ? "renders here" : "not at this camera";
     }
+    if (why.textContent) row.appendChild(why);
     methodList.appendChild(row);
   }
 }
@@ -2055,7 +2077,10 @@ function selectScene(scene) {
     setMode("compare");
     return;
   }
-  const available = methodsFor(scene, app.mode);
+  // Only the usable ones, and only two: opening a subject should show
+  // something immediately rather than downloading every method at once.
+  const available = methodsFor(scene, app.mode)
+    .filter((entry) => entry.usable).map((entry) => entry.method);
   app.methods = available.slice(0, 2);
   app.station = 0;
   const poses = rig() ? rig().poses.length : 0;
@@ -2483,7 +2508,10 @@ async function main() {
   }
   setMode(wanted.mode === "compare" && anyRig ? "compare" : "explore");
   if (wanted.methods) {
-    const available = methodsFor(app.scene, app.mode);
+    // Only the usable ones: a URL naming a captured method in Explore would
+    // otherwise select something this mode cannot show.
+    const available = methodsFor(app.scene, app.mode)
+      .filter((entry) => entry.usable).map((entry) => entry.method);
     const asked = wanted.methods.split(",").filter((m) => available.includes(m));
     if (asked.length) {
       app.methods = asked;
