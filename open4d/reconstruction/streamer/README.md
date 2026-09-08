@@ -379,6 +379,41 @@ scipy is used for the blur when present, with a numpy fallback — and the test
 that compares the two backends is what caught them disagreeing, since scipy's
 `reflect` repeats the edge sample and numpy's does not.
 
+## A free camera for a method that renders on a GPU
+
+Vega ships explicit geometry, so the browser rasterises whatever viewpoint the
+mouse asks for. ReRF is also free-viewpoint — that is the paper's title, and
+`rerf_render.py --render_360` is the path `rerf_stream.export --orbit` drives —
+but its ray-march runs on CUDA, so the pixels are made offline and the browser
+receives a set of rendered views rather than something it can re-aim.
+
+The viewer treats that as the same gesture rather than a different mode. Drag
+in Explore and a pixel pane snaps to the nearest rendered view:
+
+- `shellOf` decides whether a rig can stand in for an orbit at all. Its
+  stations have to lie at one radius about a common look-at point — otherwise
+  this is an arbitrary cloud of capture positions, and snapping a free camera
+  onto it would move the camera somewhere nobody pointed it. Rigs that fail the
+  test keep the old behaviour: pixels are compare-only.
+- The centre is solved from the poses' own view rays, not taken as the centroid
+  of their positions. For one ring those agree, which is why the centroid was
+  good enough at first; stack rings at different elevations and the centroid
+  sits off the axis and every radius measured from it differs.
+- `nearestStation` compares *directions* from the subject via a dot product,
+  so azimuth and elevation are handled together, the ±180° seam needs no
+  special case, and there is no need to weigh a degree of azimuth against a
+  degree of elevation.
+- Following is debounced by 140 ms. Crossing a station changes which clip the
+  pane plays, so re-resolving per `pointermove` would fetch a container per
+  station — a spin across 216 of them is 330 MB of pictures nobody stopped on.
+  The geometry panes are unaffected: for them the camera is the only input.
+
+The pane label and the notes state the caveats, because a pane that quietly
+shows the nearest view looks like one that followed exactly — and someone
+comparing it against a rasterised pane would read the offset as a
+reconstruction error. On `g_basketball`, 216 stations: ±2.5° azimuth, 3
+elevations (-25°, 0°, 25°).
+
 ## Packing a clip into one file
 
 ```bash
