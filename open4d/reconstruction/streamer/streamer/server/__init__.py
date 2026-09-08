@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import errno
 import http.server
+import gzip
 import json
 import socket
 import socketserver
@@ -51,6 +52,28 @@ PROXY_CHUNK = 8192
 #: Copy size for a range response. Larger than the proxy's: there is no frame
 #: boundary to respect, and a 100 MB clip should not be a million writes.
 RANGE_CHUNK = 1 << 16
+
+#: Media types worth compressing. Deliberately a list of text-ish types rather
+#: than "everything except a few": a frame is already compressed -- JPEG, or a
+#: `.splat`'s quantised bytes -- so gzipping one spends CPU per request to save
+#: almost nothing, and gzipping a 63 MB container would also make a Range
+#: request meaningless, which is what the header prefetch relies on.
+COMPRESSIBLE = frozenset({
+    "application/json",
+    # Both spellings: `CLIENT_TYPES` serves the worker as text/javascript and
+    # `mimetypes` may answer application/javascript for the same suffix, so
+    # listing one silently left the other uncompressed -- which is how the
+    # 22 kB worker script went out whole while the page beside it did not.
+    "application/javascript",
+    "text/javascript",
+    "text/html",
+    "text/css",
+    "text/plain",
+})
+
+#: Below this, the gzip header and the round trip through zlib cost more than
+#: they save.
+COMPRESS_FLOOR = 1 << 10
 
 #: Content types for client-package assets. `.wasm` matters: a browser refuses
 #: to compile a module served as anything else through the streaming API.
@@ -207,9 +230,18 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return self._proxy_live(self.path[len(LIVE_PREFIX):])
         if self.path.startswith(CLIENT_PREFIX):
             return self._send_client_asset(self.path[len(CLIENT_PREFIX):])
-        self._offer_ranges = True
         if self.headers.get("Range"):
+            self._offer_ranges = True
             return self._send_range()
+        compressible = self._compressible_file()
+        if compressible is not None:
+            path, content_type = compressible
+            # Not offering Accept-Ranges here: a range names bytes of the
+            # entity as sent, and the entity as sent is compressed. Offering
+            # ranges over one form and serving another is how a resumed
+            # download quietly reassembles garbage.
+            return self._send_payload(path.read_bytes(), content_type)
+        self._offer_ranges = True
         return super().do_GET()
 
     def do_HEAD(self):  # noqa: N802
@@ -217,6 +249,80 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_viewer(body=False)
         self._offer_ranges = True
         return super().do_HEAD()
+
+    def _compressible_file(self):
+        """The static file this request names, if it is worth compressing.
+
+        Returns ``(path, content_type)`` or None. Read whole into memory by the
+        caller, which is why only the text types qualify: those are manifests
+        and scripts, megabytes at the outside, where a frame container is tens
+        of megabytes and must keep streaming off disk.
+        """
+        if not self._accepts_gzip():
+            return None
+        path = Path(self.translate_path(self.path))
+        if not path.is_file():
+            return None
+        content_type = self.guess_type(str(path))
+        if content_type.split(";", 1)[0].strip() not in COMPRESSIBLE:
+            return None
+        if path.stat().st_size < COMPRESS_FLOOR:
+            return None
+        return path, content_type
+
+    def _accepts_gzip(self) -> bool:
+        """Whether this client said it would take gzip.
+
+        Only ever offered, never assumed: `streamer.transfer` and the tests
+        speak plain HTTP through `urllib`, which does not advertise gzip and
+        would be handed bytes it will not decode.
+        """
+        offered = self.headers.get("Accept-Encoding", "")
+        return any(
+            token.split(";", 1)[0].strip() == "gzip"
+            for token in offered.split(",")
+        )
+
+    def _send_payload(self, payload: bytes, content_type: str, *,
+                      cache: str | None = None, body: bool = True,
+                      status: int = 200):
+        """One response, compressed when that is worth doing.
+
+        The bundle manifest is what motivated this. It names every frame of
+        every clip, and the orbit exports put 216 clips in a scene, so nine
+        subjects come to 6.6 MB -- fetched before the page can draw anything,
+        which on a 20 Mbit/s link is two and a half seconds of blank. It is
+        also enormously repetitive (the same four notes on 216 clips, and
+        frame paths differing by four digits), and that is exactly what gzip
+        eats: measured at 20.3x, so 6.6 MB becomes 0.33 MB.
+
+        Compressing rather than restructuring the manifest is the cheaper
+        answer and the more general one -- it helps the viewer and the worker
+        script too, and it does not change a format the client has to agree
+        about.
+        """
+        base = content_type.split(";", 1)[0].strip()
+        compressed = (
+            base in COMPRESSIBLE
+            and len(payload) >= COMPRESS_FLOOR
+            and self._accepts_gzip()
+        )
+        if compressed:
+            payload = gzip.compress(payload, 6)
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
+        # Named whether or not this response is compressed: a cache holding the
+        # identity form must not serve it to a client that asked for gzip, and
+        # the header is what says the two differ.
+        self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(payload)))
+        if cache:
+            self.send_header("Cache-Control", cache)
+        self.end_headers()
+        if body:
+            self.wfile.write(payload)
 
     def end_headers(self):
         # Advertised here because the base class ends its own headers, leaving
@@ -278,12 +384,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         if self.link is not None:
             snapshot["link"] = self.link.observed()
         payload = json.dumps(snapshot, indent=2).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_payload(payload, "application/json", cache="no-store")
 
     def _send_client_asset(self, relative: str):
         """A file from the client package, e.g. the vendored Draco decoder."""
@@ -295,15 +396,13 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404, f"no client asset {relative!r}")
             return
         payload = target.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", CLIENT_TYPES.get(
-            target.suffix.lower(), "application/octet-stream"))
-        self.send_header("Content-Length", str(len(payload)))
-        # Immutable: these ship with the package, so a version of the page and a
-        # version of its decoder always arrive together.
-        self.send_header("Cache-Control", "public, max-age=86400")
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_payload(
+            payload,
+            CLIENT_TYPES.get(target.suffix.lower(), "application/octet-stream"),
+            # Immutable: these ship with the package, so a version of the page
+            # and a version of its decoder always arrive together.
+            cache="public, max-age=86400",
+        )
 
     def _proxy_live(self, name: str):
         """Relay a live stream from its renderer, so the page has one origin.
@@ -387,13 +486,8 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         except OSError as error:
             self.send_error(500, f"viewer is missing: {error}")
             return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if body:
-            self.wfile.write(payload)
+        self._send_payload(payload, "text/html; charset=utf-8",
+                           cache="no-store", body=body)
 
     def log_message(self, fmt, *args):
         # One line per request would bury the URL the user needs; errors still
