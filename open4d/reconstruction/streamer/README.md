@@ -379,6 +379,40 @@ scipy is used for the blur when present, with a numpy fallback — and the test
 that compares the two backends is what caught them disagreeing, since scipy's
 `reflect` repeats the edge sample and numpy's does not.
 
+## Packing a clip into one file
+
+```bash
+python -m streamer.sequence ~/bundles/basketball        # every packable clip
+python -m streamer.sequence ~/bundles/basketball --clip basketball-vega
+```
+
+A clip's frames are separate files, and fetching them costs a round trip each.
+On loopback that is free — 30 frames in 87 ms — which is why per-frame fetching
+survived so long; over a 20 ms link it is 30 round trips, 600 ms of pure
+latency before anything can play.
+
+`streamer.sequence` packs a clip into one `.seq` container: a header naming the
+frames and their absolute offsets, then their bytes end to end. Deliberately
+not a zip — the frames are already compressed, so an archive's own compression
+would spend CPU to save nothing, and a client would need a decoder for it.
+
+The offsets being absolute is what makes it useful in flight: a client with the
+first few hundred bytes already knows how many frames are coming, and can slice
+any one of them out without walking the ones before it. Measured through
+`streamer.server`, the Vega clip is 62.9 MB behind a 265-byte header, and a
+`Range: bytes=0-511` request is enough to read the whole frame table.
+
+This is the on-demand shape and it suits a free camera exactly. A player
+fetches a few frames ahead and discards them behind the playhead, because it
+only ever draws the frame it is showing. A viewer that can be spun around needs
+the geometry resident to redraw it from a new angle — so the frame has to stay,
+and if it has to stay there was no reason to fetch it late.
+
+Packing removes the frame files it replaced, since a client handed a container
+never asks for the pieces; `--keep-frames` leaves both. Live clips are skipped
+rather than refused — there is no end to pack — and so are clips already packed,
+so the command is safe to re-run.
+
 ## Adopting frames from another interpreter
 
 ```bash
