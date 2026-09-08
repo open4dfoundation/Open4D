@@ -991,3 +991,180 @@ def test_dragging_the_pitch_follows_the_camera_too():
     orbit = body[body.index("} else {"):]
     assert "camera.pitch" in orbit and "followCamera()" in orbit
     assert "followCamera()" not in body[:body.index("} else {")]
+
+
+# ------------------------------------------ what a pane says it is showing ---
+# Reported as "the website still says the rerf is nearest of 216 views, this
+# means it a image, not 3d models". Two faults behind that: the point cloud went
+# in as a separate method, so selecting "rerf" still resolved to a pre-rendered
+# view; and the label named the method without naming what had arrived, so a
+# rasterised point cloud and a pre-rendered image were indistinguishable.
+
+LABEL = ("SHELL_TOLERANCE", "RING_MERGE_DEG", "lookAtCentre", "shellOf",
+         "nearestStation", "exploreStation", "REPRESENTATION_NOUNS",
+         "streamLabel", "describeSource", "clipFor")
+
+KINDS = """
+    const GEOM = {gaussians: true, points: true, mesh: true, pixels: false};
+    globalThis.spec = (c) => c ? {geometry: GEOM[c.representation]} : undefined;
+    globalThis.hasGeometry = (c) => {
+      const s = spec(c); return s !== undefined && s.geometry;
+    };
+    globalThis.isPixels = (c) => {
+      const s = spec(c); return s !== undefined && !s.geometry;
+    };
+    globalThis.isLive = (c) => !!(c && c.stream);
+    globalThis.rig = () => app.scenes[app.scene] || null;
+"""
+
+
+def _label_js(body: str, tmp_path: Path, name: str) -> object:
+    script = tmp_path / name
+    script.write_text(PRELUDE + _extract(*LABEL) + "\n" + textwrap.dedent(body))
+    finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                              timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    return json.loads(finished.stdout)
+
+
+@requires_node
+def test_a_pane_says_which_kind_of_thing_it_holds(tmp_path):
+    result = _label_js(
+        BUILD + KINDS + """
+        const clips = [
+          {scene: "b", method: "rerf", representation: "pixels", camera: 0},
+          {scene: "b", method: "rerf", representation: "points",
+           camera: null, counts: [110813]},
+          {scene: "b", method: "vega", representation: "gaussians",
+           camera: null, counts: [63305]},
+        ];
+        globalThis.app = {scenes: {b: stack}, scene: "b", station: 0,
+                          camera: {yaw: 0, pitch: 0}, index: {clips},
+                          mode: "explore"};
+        const out = {};
+        for (const mode of ["explore", "compare"]) {
+          app.mode = mode;
+          out[mode] = {};
+          for (const method of ["rerf", "vega"]) {
+            const clip = clipFor(method);
+            out[mode][method] = {
+              label: `${method} \\u00b7 ${describeSource(clip)}`,
+              representation: clip.representation,
+            };
+          }
+        }
+        process.stdout.write(JSON.stringify(out));
+    """, tmp_path, "l1.mjs")
+
+    # Explore: the point cloud, because a free camera can rasterise geometry at
+    # any viewpoint. This is the bug -- "rerf" used to resolve to a pixel clip
+    # here and the label read "nearest of 216 views".
+    assert result["explore"]["rerf"] == {
+        "label": "rerf · 110,813 points, free camera",
+        "representation": "points",
+    }
+    assert result["explore"]["vega"] == {
+        "label": "vega · 63,305 gaussians, free camera",
+        "representation": "gaussians",
+    }
+    # Compare: the ray-march at the station, which is 14 dB better than the
+    # point cloud at a fixed pose -- and named so it is distinguishable from
+    # the pane beside it, which is this browser re-rasterising geometry.
+    assert result["compare"]["rerf"] == {
+        "label": "rerf · ray-marched at cam 0",
+        "representation": "pixels",
+    }
+    assert result["compare"]["vega"] == {
+        "label": "vega · 63,305 gaussians, rasterised at cam 0",
+        "representation": "gaussians",
+    }
+
+
+@requires_node
+def test_a_geometry_pane_never_claims_a_free_camera_in_compare(tmp_path):
+    """Compare puts every pane at the rig pose, so there is no free camera.
+
+    Saying "free camera" there describes a camera the mode does not give, which
+    is the same class of error as a pixel pane implying it followed the drag
+    exactly.
+    """
+    result = _label_js(
+        BUILD + KINDS + """
+        const clip = {scene: "b", method: "vega", representation: "gaussians",
+                      camera: null, counts: [63305]};
+        globalThis.app = {scenes: {b: stack}, scene: "b", station: 7,
+                          camera: {yaw: 0, pitch: 0}, index: {clips: [clip]},
+                          mode: "compare"};
+        const compare = describeSource(clip);
+        app.mode = "explore";
+        process.stdout.write(JSON.stringify({compare, explore: describeSource(clip)}));
+    """, tmp_path, "l2.mjs")
+    assert "free camera" not in result["compare"]
+    assert "cam 7" in result["compare"]
+    assert "free camera" in result["explore"]
+
+
+@requires_node
+def test_a_pixel_pane_in_explore_still_says_it_is_the_nearest(tmp_path):
+    """For a method that has only pixels -- captured photographs, say.
+
+    The snapping is not dead just because ReRF now ships geometry: a
+    photograph exists only where the camera was, and a pane showing the nearest
+    one must not imply it followed the drag.
+    """
+    result = _label_js(
+        BUILD + KINDS + """
+        const clip = {scene: "b", method: "captured", representation: "pixels",
+                      camera: 3};
+        globalThis.app = {scenes: {b: stack}, scene: "b", station: 3,
+                          camera: {yaw: 0, pitch: 0}, index: {clips: [clip]},
+                          mode: "explore"};
+        process.stdout.write(JSON.stringify({explore: describeSource(clip)}));
+    """, tmp_path, "l3.mjs")
+    assert result["explore"] == "nearest of 216 rendered views"
+
+
+@requires_node
+def test_a_geometry_clip_without_counts_still_names_itself(tmp_path):
+    """`adopt` used to drop `counts`, and a label reading "rerf · , free
+    camera" would be worse than one that simply omits the number."""
+    result = _label_js(
+        BUILD + KINDS + """
+        const clip = {scene: "b", method: "rerf", representation: "points",
+                      camera: null};
+        globalThis.app = {scenes: {b: stack}, scene: "b", station: 0,
+                          camera: {yaw: 0, pitch: 0}, index: {clips: [clip]},
+                          mode: "explore"};
+        process.stdout.write(JSON.stringify({label: describeSource(clip)}));
+    """, tmp_path, "l4.mjs")
+    assert result["label"] == "points, free camera"
+
+
+def test_one_place_decides_how_a_pane_names_itself():
+    """The live branch used to build its own label, so two call sites had to be
+    kept in step and only one of them learned about representations."""
+    page = viewer_path().read_text()
+    # One definition, and every label a clip gets goes through it. Asserted as
+    # "each assignment calls it" rather than as a count of the string, because
+    # a count also matches the definition and fails on a correct new caller.
+    assert page.count("function describeSource(") == 1
+    # The two that describe a clip. The constructor's bare `= method` and the
+    # reset in `setClip(null)` are deliberately not among them: a pane holding
+    # nothing must not name a clip, which is the bug the reset exists for.
+    assignments = [
+        line for line in page.splitlines()
+        if "this.label.textContent" in line and "${this.method} ·" in line
+    ]
+    assert len(assignments) == 2, assignments
+    for line in assignments:
+        assert "describeSource(" in line, line
+    # A live pane goes through the same labeller too, rather than the live
+    # branch building its own -- which is how it came to be the one call site
+    # that never learned about representations.
+    #
+    # Not asserted as "streamLabel has one caller": the session table also uses
+    # it, to summarise which kinds of stream are on screen, and that is a
+    # different readout rather than a second pane label.
+    start = page.index("function describeSource(")
+    assert "streamLabel(clip)" in page[start:page.index("\n}\n", start)]

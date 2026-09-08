@@ -1690,7 +1690,9 @@ class Pane {
       };
       this.image.src = clip.stream.url;
       this.loaded = 0;
-      this.label.textContent = `${this.method} · ${streamLabel(clip)}`;
+      // Through the same labeller as every other pane, so there is one place
+      // that decides how a pane names what it holds.
+      this.label.textContent = `${this.method} · ${describeSource(clip)}`;
       return;
     }
     const make = kind.renderer;
@@ -1699,15 +1701,7 @@ class Pane {
     this.source = new Scheduler(clip, "./", kind.decode, {
       cacheSize: kind.cacheSize, meter,
     });
-    const shell = app.mode === "explore" && isPixels(clip) ? shellOf(rig()) : null;
-    this.label.textContent = clip.camera === null || clip.camera === undefined
-      ? this.method
-      // In Explore a pixel pane is the *nearest* rendered view, not the camera
-      // asked for. Said in the label because the pane otherwise looks like it
-      // followed exactly, and a viewer comparing it against a rasterised pane
-      // beside it would read the offset as a reconstruction error.
-      : shell ? `${this.method} · nearest of ${shell.dirs.length} views`
-      : `${this.method} · cam ${clip.camera}`;
+    this.label.textContent = `${this.method} · ${describeSource(clip)}`;
   }
 
   /* A canvas dropped from the DOM keeps its WebGL context until the browser
@@ -1999,6 +1993,49 @@ function nearestStation(shell, direction) {
     if (dot > closest) { closest = dot; best = index; }
   }
   return best;
+}
+
+//: What each representation is called in a pane label, in the plural a count
+//: reads naturally with.
+const REPRESENTATION_NOUNS = {
+  gaussians: "gaussians", points: "points", mesh: "triangles", pixels: "pixels",
+};
+
+/* What a pane is actually showing, for its label.
+ *
+ * A method can reach a viewer as more than one thing -- ReRF ships both a
+ * ray-marched image per station and a point cloud read out of its density
+ * field -- and which one a pane holds changes what the picture means. Naming
+ * only the method left a pane labelled "rerf" showing a pre-rendered view with
+ * nothing saying so, and a pane labelled "rerf" showing a live-rasterised
+ * point cloud looking identical. So the label says which.
+ *
+ * Reported as it is, not as it is meant to be: a pixel pane in Explore says it
+ * is the nearest of the rendered views, because a viewer comparing it against
+ * a rasterised pane beside it would otherwise read the offset as a
+ * reconstruction error.
+ */
+function describeSource(clip) {
+  if (isLive(clip)) return streamLabel(clip);
+  const noun = REPRESENTATION_NOUNS[clip.representation] || clip.representation;
+  const count = (clip.counts || [])[0];
+  const sized = count ? `${count.toLocaleString()} ${noun}` : noun;
+  if (hasGeometry(clip)) {
+    // Rasterised here, from geometry, at whatever camera is asked for. In
+    // Explore that camera is free, which is the whole difference from a
+    // pre-rendered pane; in Compare it is the rig pose, and saying "free"
+    // there would describe a camera the mode does not give.
+    return app.mode === "explore" ? `${sized}, free camera`
+                                  : `${sized}, rasterised at cam ${app.station}`;
+  }
+  if (clip.camera === null || clip.camera === undefined) return noun;
+  const shell = app.mode === "explore" ? shellOf(rig()) : null;
+  if (shell) return `nearest of ${shell.dirs.length} rendered views`;
+  // "ray-marched", not "rendered": at a rig station this pane is the method's
+  // own renderer output, where the geometry pane beside it is this browser
+  // re-rasterising a reduction of the same reconstruction. That is the
+  // comparison the mode exists for, so the labels have to distinguish it.
+  return `ray-marched at cam ${clip.camera}`;
 }
 
 /* The station a pixel pane should show in Explore mode: the one nearest where

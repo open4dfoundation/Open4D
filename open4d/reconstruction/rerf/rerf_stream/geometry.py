@@ -227,7 +227,17 @@ def export(player, out_dir, *, name: str, scene: str,
         "bitstream_bytes": player.bitstream_bytes,
         "clips": [{
             "name": clip,
-            "method": "rerf-points",
+            # "rerf", not "rerf-points": this is the same method, read out a
+            # different way. A separate method name put a 3D model in a row
+            # beside the images and left the row called "rerf" resolving to a
+            # pre-rendered view -- so selecting ReRF still got you a picture,
+            # which is exactly what having geometry was supposed to fix.
+            #
+            # `clipFor` then does the right thing per mode with no special
+            # case: Explore takes the geometry, because a free camera can
+            # rasterise it anywhere, and Compare takes the ray-march at the
+            # station, because at a fixed pose the march is 14 dB better.
+            "method": "rerf",
             "camera": None,
             "frames": paths,
             "counts": counts,
