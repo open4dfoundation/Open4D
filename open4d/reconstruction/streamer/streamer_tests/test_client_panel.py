@@ -69,7 +69,7 @@ def _extract(*names: str) -> str:
     page = viewer_path().read_text()
     chunks = []
     for name in names:
-        for prefix in (f"function {name}(", f"const {name} = "):
+        for prefix in (f"function {name}(", f"class {name} ", f"const {name} = "):
             start = page.find(prefix)
             if start >= 0:
                 break
@@ -84,6 +84,21 @@ def _extract(*names: str) -> str:
 PIECES = ("TAG_RULES", "fmt", "rungsOf", "affordable", "bufferedSeconds",
           "isLive", "paneRow", "renderPaneTable", "renderSessionTable",
           "renderTags")
+
+
+def run_scheduler_js(body: str, tmp_path: Path, name: str = "d.mjs") -> object:
+    """Run ``body`` with the shipped Scheduler in scope."""
+    script = tmp_path / name
+    script.write_text(
+        _extract("INDEPENDENT", "dependencyOf", "chain", "Scheduler") + "\n"
+        + textwrap.dedent(body)
+    )
+    finished = subprocess.run(
+        [NODE, str(script)], capture_output=True, text=True, timeout=120
+    )
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    return json.loads(finished.stdout)
 
 
 def run_js(body: str, tmp_path: Path, name: str = "p.mjs") -> object:
@@ -403,3 +418,112 @@ def test_both_empty_reasons_use_one_overlay_builder():
     page = viewer_path().read_text()
     assert page.count("_explain(") == 3          # the definition plus two callers
     assert page.count('className = "missing"') == 1
+
+
+# ------------------------------------------------------- download, then play ---
+
+
+@requires_node
+def test_a_clip_is_downloaded_whole_and_then_held(tmp_path):
+    """The on-demand shape, and the right one for a free camera.
+
+    A streaming player fetches a few frames ahead and discards what is behind
+    the playhead, because it only needs the frame it is showing. A viewer that
+    can be spun around needs the frame's geometry resident to redraw it from a
+    new angle -- so the frame has to stay, and if it has to stay there is no
+    reason to have fetched it late.
+    """
+    body = '''
+        globalThis.performance = { now: () => 0 };
+        let fetched = 0;
+        globalThis.fetch = async (url) => {
+          fetched += 1;
+          return { ok: true, headers: { get: () => "application/octet-stream" },
+                   arrayBuffer: async () => new ArrayBuffer(1000) };
+        };
+        const clip = { name: "c", representation: "gaussians",
+                       frames: Array.from({ length: 12 }, (_, i) => `c/f${i}.bin`) };
+        const s = new Scheduler(clip, "./", async () => ({ count: 1 }),
+                                { cacheSize: 6 });
+        const seen = [];
+        const held = await s.downloadAll((got, of) => seen.push([got, of]));
+        process.stdout.write(JSON.stringify({
+            held, fetched, cached: s.cache.size, resident: s.resident,
+            progress: seen.length, last: seen[seen.length - 1],
+        }));
+    '''
+    result = run_scheduler_js(body, tmp_path)
+    assert result["held"] is True
+    assert result["resident"] is True
+    assert result["fetched"] == 12
+    assert result["cached"] == 12          # the window grew to hold the clip
+    assert result["progress"] == 12
+    assert result["last"] == [12, 12]
+
+
+@requires_node
+def test_a_clip_too_big_to_hold_falls_back_to_a_window(tmp_path):
+    """Rather than exhausting memory and taking the page down. Thirty Gaussian
+    frames decode to about 100 MB, and four panes of that is most of a tab."""
+    body = '''
+        globalThis.performance = { now: () => 0 };
+        globalThis.fetch = async () => ({
+          ok: true, headers: { get: () => "application/octet-stream" },
+          arrayBuffer: async () => new ArrayBuffer(50e6),
+        });
+        const clip = { name: "c", representation: "gaussians",
+                       frames: Array.from({ length: 30 }, (_, i) => `c/f${i}.bin`) };
+        const s = new Scheduler(clip, "./", async () => ({ count: 1 }),
+                                { cacheSize: 6 });
+        const held = await s.downloadAll(() => {});
+        process.stdout.write(JSON.stringify({
+            held, resident: s.resident, cacheSize: s.cacheSize,
+            bytes: s.stats.bytes,
+        }));
+    '''
+    result = run_scheduler_js(body, tmp_path)
+    assert result["held"] is False
+    assert result["resident"] is False
+    assert result["cacheSize"] == 6         # back to streaming
+    assert result["bytes"] > 200e6
+
+
+@requires_node
+def test_abandoning_a_pane_stops_its_download(tmp_path):
+    """A slow clip must not keep fetching into a pane that has moved on."""
+    body = '''
+        globalThis.performance = { now: () => 0 };
+        let fetched = 0;
+        globalThis.fetch = async () => {
+          fetched += 1;
+          return { ok: true, headers: { get: () => "x" },
+                   arrayBuffer: async () => new ArrayBuffer(10) };
+        };
+        const clip = { name: "c", representation: "gaussians",
+                       frames: Array.from({ length: 20 }, (_, i) => `c/f${i}.bin`) };
+        const s = new Scheduler(clip, "./", async () => ({ count: 1 }), {});
+        const run = s.downloadAll(() => { if (fetched === 3) s.release(); });
+        const held = await run;
+        process.stdout.write(JSON.stringify({ held, fetched, abandoned: s.abandoned }));
+    '''
+    result = run_scheduler_js(body, tmp_path)
+    assert result["held"] is False
+    assert result["abandoned"] is True
+    assert result["fetched"] < 20           # stopped early
+
+
+def test_the_download_is_triggered_wherever_the_pane_set_changes():
+    """Two functions rebuild the panes and both end the same way; a download
+    hooked into only one of them leaves half the paths silently streaming."""
+    page = viewer_path().read_text()
+    assert page.count("downloadSelection();") == 2
+
+
+def test_a_stale_download_cannot_finish_into_a_new_selection():
+    """A 63 MB clip takes a while; if the user switches subject meanwhile, the
+    old download must not report progress for panes that no longer exist."""
+    page = viewer_path().read_text()
+    start = page.index("async function downloadSelection(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "++app.downloadToken" in body
+    assert body.count("token !== app.downloadToken") >= 2

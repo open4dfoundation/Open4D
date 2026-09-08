@@ -1117,6 +1117,12 @@ class Scheduler {
     this.pending = new Map();        // index -> in-flight promise
     this.decoded = null;             // where a stateful decoder currently sits
     this.rung = null;                // chosen rendition, or null for the default
+    this.resident = false;           // whole clip downloaded and held?
+    this.abandoned = false;          // pane moved on; stop fetching
+    //: Bytes this pane may hold. A Gaussian frame decodes to roughly 50 bytes
+    //: a Gaussian, so 200 MB is about sixty frames of this content -- enough
+    //: for a short clip, and short of what would take the tab down.
+    this.byteBudget = 200e6;
     this.stats = { decodes: 0, bytes: 0, hits: 0, misses: 0, replays: 0,
                    // Milliseconds, exponentially smoothed, and kept apart:
                    // fetch and decode fail for different reasons and have
@@ -1180,6 +1186,8 @@ class Scheduler {
    * goes away: the scheduler is replaced, and whatever it still held would
    * otherwise never be reclaimed. */
   release() {
+    this.abandoned = true;
+    this.resident = false;
     for (const value of this.cache.values()) Scheduler.release(value);
     this.cache.clear();
     this.pending.clear();
@@ -1236,6 +1244,48 @@ class Scheduler {
       if (this.dependency.mode !== "independent") this.decoded = step;
     }
     return last;
+  }
+
+  /* Fetch the whole clip, reporting progress, and keep it.
+   *
+   * This is the on-demand shape, and it is the right one for a free camera.
+   * A streaming player fetches a few frames ahead and throws them away behind
+   * the playhead, because it only ever needs the frame it is showing. A viewer
+   * that can be spun around needs the frame's *geometry* resident to redraw it
+   * from a new angle -- so the frame has to stay, and if it has to stay there
+   * is no reason to have fetched it late.
+   *
+   * So: download, then play from memory. Playback after the first pass is
+   * exact -- no fetch in the loop, no stall, and the camera is free the whole
+   * time. What was a bandwidth problem becomes a wait at the start, which is a
+   * thing a person understands and a progress bar can show.
+   *
+   * Bounded by bytes, not frames. Thirty Gaussian frames decode to about
+   * 100 MB and four panes of that is most of a tab's budget, so a clip too big
+   * to hold falls back to the sliding window it had before rather than
+   * exhausting memory and taking the page down with it.
+   */
+  async downloadAll(onProgress) {
+    const total = this.length;
+    if (!total) return true;
+    const budget = this.byteBudget;
+    let bytes = 0;
+    this.cacheSize = Math.max(this.cacheSize, total);
+    for (let index = 0; index < total; index++) {
+      if (this.abandoned) return false;
+      await this._decodeOne(index);
+      bytes = this.stats.bytes;
+      if (bytes > budget) {
+        // Too big to hold. Shrink back to a window and let playback stream it.
+        this.cacheSize = 6;
+        this.resident = false;
+        if (onProgress) onProgress(index + 1, total, bytes, false);
+        return false;
+      }
+      if (onProgress) onProgress(index + 1, total, bytes, true);
+    }
+    this.resident = true;
+    return true;
   }
 
   /* Look ahead along the direction playback actually moves. Only the frames a
@@ -1511,6 +1561,11 @@ const app = {
   // ladder -- and where there is one, the default should be the behaviour the
   // ladder was built for.
   adapt: true, decision: null,
+  // On demand: the client takes a copy of prepared content and plays it from
+  // memory. `downloadToken` invalidates a download in flight when the
+  // selection changes, so a slow clip cannot finish into a pane that has since
+  // moved on.
+  download: null, downloadToken: 0,
   // Seconds of decoded playback to aim to keep ahead. Small, because a pane
   // caches a handful of frames rather than seconds of them: the cache is the
   // buffer, and a Gaussian frame is megabytes.
@@ -1624,6 +1679,11 @@ function updateClips() {
   refreshPanel();
   writeHash();
   showFrame(app.frame);
+  // Take a copy of whatever is now selected. Both places the pane set can
+  // change end here, and both need it. Deliberately not awaited: the page stays
+  // interactive while it arrives, and each frame becomes playable as it lands
+  // rather than after all of them.
+  downloadSelection();
 }
 
 function rebuildPanes() {
@@ -1659,6 +1719,11 @@ function rebuildPanes() {
   refreshPanel();
   writeHash();
   showFrame(app.frame);
+  // Take a copy of whatever is now selected. Both places the pane set can
+  // change end here, and both need it. Deliberately not awaited: the page stays
+  // interactive while it arrives, and each frame becomes playable as it lands
+  // rather than after all of them.
+  downloadSelection();
 }
 
 /* ------------------------------------------------------------ the readouts ---
@@ -1795,6 +1860,16 @@ function renderSessionTable() {
       : `${fmt(achieved)} / ${app.fps} target`],
   ];
   if (app.late) rows.push(["late advances", String(app.late)]);
+  if (app.download) {
+    const got = app.download;
+    rows.push(["downloaded", got.complete
+      ? `${got.done} / ${got.frames} frames`
+      : `${got.done} / ${got.frames} (pane ${got.pane} of ${got.panes})`]);
+    rows.push(["held", `${(paneBytes() / 1e6).toFixed(0)} MB`]);
+    rows.push(["playing", got.complete
+      ? (got.resident ? "from memory" : "streamed, too big to hold")
+      : "downloading"]);
+  }
 
   const laddered = app.panes.filter(
     (pane) => pane.source && rungsOf(pane.clip, app.fps).length > 1);
@@ -2108,6 +2183,57 @@ function tick(now) {
  * regardless of what the link can sustain, and letting the link decide would
  * silently make the comparison about bandwidth instead.
  */
+/* Download every selected clip, then start playing.
+ *
+ * On demand rather than live: the server holds prepared content and the client
+ * takes a copy. Until it is here, say so with a number -- a page that sits
+ * blank while 63 MB arrives is indistinguishable from a page that is broken,
+ * and that was the single most confusing thing about this viewer.
+ *
+ * Panes are downloaded in order rather than in parallel. One connection
+ * saturates the link either way, and doing them in turn means the first pane
+ * is playable while the rest arrive, instead of four half-finished ones.
+ */
+async function downloadSelection() {
+  const panes = app.panes.filter((pane) => pane.source && !isLive(pane.clip));
+  if (!panes.length) { app.download = null; return; }
+
+  const token = ++app.downloadToken;
+  const totals = panes.map((pane) => pane.source.length);
+  const frames = totals.reduce((a, b) => a + b, 0);
+  app.download = { done: 0, frames, bytes: 0, pane: 0, panes: panes.length,
+                   complete: false, resident: true };
+  let done = 0;
+
+  for (let index = 0; index < panes.length; index++) {
+    const pane = panes[index];
+    if (token !== app.downloadToken) return;      // selection changed under us
+    app.download.pane = index + 1;
+    const held = await pane.source.downloadAll((got, of, bytes) => {
+      if (token !== app.downloadToken) return;
+      app.download.done = done + got;
+      app.download.bytes += 0;                    // bytes come from the totals below
+      setStatus(`downloading ${app.download.done} / ${frames} frames`
+        + ` · ${(paneBytes() / 1e6).toFixed(0)} MB`);
+    });
+    if (!held) app.download.resident = false;
+    done += totals[index];
+    app.download.done = done;
+  }
+  if (token !== app.downloadToken) return;
+  app.download.complete = true;
+  app.download.bytes = paneBytes();
+  statusEl.hidden = true;
+  refreshPanel();
+}
+
+/* Bytes fetched across every pane, from the schedulers themselves rather than
+ * counted again here: one counter is one thing to get wrong. */
+function paneBytes() {
+  return app.panes.reduce(
+    (sum, pane) => sum + (pane.source ? pane.source.stats.bytes : 0), 0);
+}
+
 function chooseRungs() {
   const panes = app.panes.filter((pane) => pane.source && !isLive(pane.clip));
   if (!panes.length) return;
