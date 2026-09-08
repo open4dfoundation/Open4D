@@ -1168,3 +1168,43 @@ def test_one_place_decides_how_a_pane_names_itself():
     # different readout rather than a second pane label.
     start = page.index("function describeSource(")
     assert "streamLabel(clip)" in page[start:page.index("\n}\n", start)]
+
+
+@requires_node
+def test_methods_come_back_in_a_stable_order(tmp_path):
+    """Not manifest order, which is import history.
+
+    basketball had its Vega clip adopted before its ReRF ones and every later
+    subject the other way round, so the two panes came up swapped depending on
+    which subject you opened. `selectScene` also takes the first two, so with
+    more than two methods the *choice* of panes would depend on import order
+    as well.
+    """
+    body = BUILD + KINDS + '''
+        const clips = [
+          {scene: "b", method: "vega", representation: "gaussians", camera: null},
+          {scene: "b", method: "rerf", representation: "points", camera: null},
+          {scene: "b", method: "queen", representation: "gaussians", camera: null},
+        ];
+        globalThis.app = {scenes: {b: stack}, scene: "b", station: 0,
+                          camera: {yaw: 0, pitch: 0}, index: {clips},
+                          mode: "explore"};
+        const forwards = methodsFor("b", "explore").map((m) => m.method);
+        // The same clips, imported the other way round.
+        app.index.clips = [...clips].reverse();
+        const backwards = methodsFor("b", "explore").map((m) => m.method);
+        process.stdout.write(JSON.stringify({forwards, backwards}));
+    '''
+    script = tmp_path / "o1.mjs"
+    script.write_text(
+        PRELUDE
+        + _extract("SHELL_TOLERANCE", "RING_MERGE_DEG", "lookAtCentre",
+                   "shellOf", "methodsFor")
+        + "\n" + textwrap.dedent(body)
+    )
+    finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                              timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    result = json.loads(finished.stdout)
+    assert result["forwards"] == result["backwards"] == ["queen", "rerf", "vega"]

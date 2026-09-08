@@ -1857,7 +1857,15 @@ function methodsFor(scene, mode) {
     if (!seen.has(clip.method) || usable) seen.set(clip.method, usable
       || (seen.get(clip.method) || false));
   }
-  return [...seen].map(([method, usable]) => ({ method, usable }));
+  // Sorted, because the order this arrives in is manifest order, which is the
+  // order clips happened to be imported in. basketball had its Vega clip added
+  // before its ReRF ones and every later subject the other way round, so the
+  // two panes came up swapped depending on the subject -- and `selectScene`
+  // takes the first two, so with more than two methods the *choice* would
+  // depend on import history too.
+  return [...seen]
+    .map(([method, usable]) => ({ method, usable }))
+    .sort((a, b) => a.method.localeCompare(b.method));
 }
 
 function rig() { return app.scenes[app.scene] || null; }
