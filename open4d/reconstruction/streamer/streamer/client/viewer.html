@@ -55,7 +55,9 @@
                  letter-spacing: .06em; text-transform: uppercase; color: var(--text);
                  background: #0b0c0fbb; padding: 2px 7px; border-radius: 4px; }
   .pane .missing { position: absolute; inset: 0; display: grid; place-content: center;
-                   text-align: center; padding: 24px; color: var(--dim); font-size: 12px; }
+                   text-align: center; padding: 24px; color: var(--dim); font-size: 12px;
+                   gap: 6px; }
+  .pane .missing .why { color: #d8a657; font-weight: 600; }
   #wipeHandle { position: absolute; top: 0; bottom: 0; left: var(--wipe); width: 2px;
                 background: var(--accent); cursor: ew-resize; z-index: 3; }
   #wipeHandle::after { content: ""; position: absolute; top: 50%; left: -9px; width: 20px;
@@ -1327,6 +1329,26 @@ class Pane {
     this.sortKey = "";
   }
 
+  /* Why this pane is empty, on the pane itself.
+   *
+   * On the pane and not in the sidebar: a reader looking at four panes and one
+   * blank needs the reason where the blank is. `headline` is the fact,
+   * `remedy` is what to do -- separated because for a live stream the remedy
+   * is on another machine, and a reader who cannot act on it should at least
+   * not think the page is broken. */
+  _explain(headline, remedy) {
+    if (this.missing) this.missing.remove();
+    this.missing = document.createElement("div");
+    this.missing.className = "missing";
+    const strong = document.createElement("div");
+    strong.className = "why";
+    strong.textContent = headline;
+    const rest = document.createElement("div");
+    rest.textContent = remedy;
+    this.missing.append(strong, rest);
+    this.host.appendChild(this.missing);
+  }
+
   _surface(which, makeRenderer) {
     if (which === "canvas" && !this.canvas) {
       this.canvas = document.createElement("canvas");
@@ -1364,12 +1386,10 @@ class Pane {
       // Otherwise the label keeps naming the camera of the clip that was here
       // before, which is the one thing a pane saying "nothing here" must not do.
       this.label.textContent = this.method;
-      this.missing = document.createElement("div");
-      this.missing.className = "missing";
-      this.missing.textContent =
-        `${this.method} has nothing at this camera.\nOnly a representation with geometry `
-        + `can be rendered anywhere; pre-rendered pixels exist only where they were made.`;
-      this.host.appendChild(this.missing);
+      this._explain(
+        `${this.method} has nothing at this camera.`,
+        "Only a representation with geometry can be rendered anywhere; "
+        + "pre-rendered pixels exist only where they were made.");
       return;
     }
     const kind = spec(clip);
@@ -1378,6 +1398,25 @@ class Pane {
       // is a browser feature. Set once -- reassigning src restarts the stream.
       this._surface("image", null);
       this.source = null;
+      /* A live pane depends on a renderer this page does not control, and those
+       * die: the box reboots, the process is killed, the GPU is wanted for
+       * something else. When that happens the proxy answers 502 and an <img>
+       * shows nothing at all -- so the subject looked simply absent, with the
+       * page insisting everything was fine. Say what is wrong and what would
+       * fix it, because the fix is on another machine. */
+      this.image.onerror = () => {
+        if (this.clip !== clip) return;        // a later clip owns this pane now
+        this._explain(
+          `${this.method} is a live stream and its renderer is not answering.`,
+          `The bundle proxies ${(clip.detail && clip.detail.upstream)
+            || clip.stream.url} — start that renderer and reload.`);
+      };
+      this.image.onload = () => {
+        if (this.clip === clip && this.missing) {
+          this.missing.remove();
+          this.missing = null;
+        }
+      };
       this.image.src = clip.stream.url;
       this.loaded = 0;
       this.label.textContent = `${this.method} · ${streamLabel(clip)}`;
