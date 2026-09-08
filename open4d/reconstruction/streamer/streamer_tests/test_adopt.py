@@ -9,6 +9,7 @@ then 404s.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -205,3 +206,134 @@ def test_installing_the_rig_keeps_the_clips_that_were_there(tmp_path):
     names = [c["name"] for c in bundle.read(root)["clips"]]
     assert "already" in names
     assert len(names) == 3
+
+
+# ------------------------------------------------ adopting a whole bundle ---
+# `gs-tools export` writes a bundle, not a `clips.json` sidecar, so building one
+# bundle from several exporters used to need a hand-rolled merge. A bundle is a
+# superset of the sidecar, so it is read here instead.
+
+
+def _bundle_at(directory: Path, clips, scenes=None) -> Path:
+    for clip in clips:
+        for relative in clip.frames:
+            target = directory / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"x" * 16)
+    return bundle.write(directory, title="staged", source="somewhere",
+                   clips=list(clips), scenes=scenes or {})
+
+
+def test_a_staged_bundle_can_be_adopted(tmp_path):
+    target = tmp_path / "target"
+    _bundle_at(target, [bundle.Clip(name="a", representation="pixels", scene="s",
+                               method="rerf", camera=0,
+                               frames=["a/frame_0000.jpg"])])
+    staged = tmp_path / "staged"
+    _bundle_at(staged, [bundle.Clip(name="v", representation="gaussians", scene="s",
+                               method="vega", counts=[57907],
+                               frames=["v/frame_0000.splat"])])
+
+    adopt.adopt(staged, target)
+    index = bundle.read(target)
+    names = {clip["name"]: clip for clip in index["clips"]}
+    assert set(names) == {"a", "v"}
+    # Copied, not referenced: a bundle has to be servable and movable whole.
+    assert (target / "v/frame_0000.splat").is_file()
+    # And the fields a sidecar does not have survive.
+    assert names["v"]["counts"] == [57907]
+    assert names["v"]["representation"] == "gaussians"
+
+
+def test_a_bundle_s_clips_keep_their_own_representation(tmp_path):
+    """A sidecar states one representation for the whole export; a bundle
+    carries a mix, and taking the top-level value would relabel a point cloud
+    as pixels -- which sends it to the image decoder and blanks the pane."""
+    target = tmp_path / "target"
+    _bundle_at(target, [bundle.Clip(name="keep", representation="pixels", scene="s",
+                               frames=["keep/frame_0000.jpg"])])
+    staged = tmp_path / "staged"
+    _bundle_at(staged, [
+        bundle.Clip(name="px", representation="pixels", scene="s", method="rerf",
+               camera=0, frames=["px/frame_0000.jpg"]),
+        bundle.Clip(name="pts", representation="points", scene="s", method="rerf",
+               frames=["pts/frame_0000.ply"]),
+    ])
+
+    adopt.adopt(staged, target)
+    got = {clip["name"]: clip["representation"] for clip in bundle.read(target)["clips"]}
+    assert got["px"] == "pixels"
+    assert got["pts"] == "points"
+
+
+def test_a_directory_with_neither_names_both(tmp_path):
+    with pytest.raises(FileNotFoundError, match="neither clips.json nor a bundle"):
+        adopt.read_export(tmp_path)
+
+
+def test_a_bundle_brings_a_rig_for_each_of_its_scenes(tmp_path):
+    """A sidecar names one rig for one scene; a bundle carries several."""
+    target = tmp_path / "target"
+    _bundle_at(target, [bundle.Clip(name="keep", representation="pixels", scene="a",
+                               frames=["keep/frame_0000.jpg"])])
+    staged = tmp_path / "staged"
+    rig = {"width": 8, "height": 8, "fov_y": 1.0,
+           "poses": [{"position": [0, 0, 1], "right": [1, 0, 0],
+                      "down": [0, 1, 0], "forward": [0, 0, -1]}]}
+    _bundle_at(
+        staged,
+        [bundle.Clip(name="a1", representation="gaussians", scene="a",
+                frames=["a1/frame_0000.splat"]),
+         bundle.Clip(name="b1", representation="gaussians", scene="b",
+                frames=["b1/frame_0000.splat"])],
+        scenes={"a": dict(rig), "b": dict(rig)},
+    )
+
+    adopt.adopt(staged, target)
+    scenes = bundle.read(target)["scenes"]
+    assert set(scenes) == {"a", "b"}
+    assert all(len(scene["poses"]) == 1 for scene in scenes.values())
+
+
+# ------------------------------------- a camera has to index a real rig ---
+
+
+def test_a_clip_numbered_past_its_rig_is_refused(tmp_path):
+    """Reachable by import order alone.
+
+    An export installs a rig only into a scene that has none, so whichever
+    lands first wins. A Vega export brings the corpus's 8-camera capture rig; a
+    ReRF orbit export brings 216 stations. Import them the other way round and
+    the orbit clips are numbered against a rig that stops at 7 -- and most
+    Compare stations show nothing, silently, because an empty pane is a
+    legitimate state.
+    """
+    target = tmp_path / "target"
+    small = {"width": 8, "height": 8, "fov_y": 1.0,
+             "poses": [{"position": [0, 0, 1], "right": [1, 0, 0],
+                        "down": [0, 1, 0], "forward": [0, 0, -1]}]}
+    _bundle_at(target, [bundle.Clip(name="keep", representation="gaussians",
+                               scene="s", frames=["keep/frame_0000.splat"])],
+               scenes={"s": small})
+    staged = tmp_path / "staged"
+    _bundle_at(staged, [bundle.Clip(name="cam05", representation="pixels", scene="s",
+                               method="rerf", camera=5,
+                               frames=["cam05/frame_0000.jpg"])])
+
+    with pytest.raises(ValueError, match="camera 5, but scene 's' has 1 rig pose"):
+        adopt.adopt(staged, target)
+
+
+def test_a_scene_with_no_rig_is_explore_only_not_an_error(tmp_path):
+    """No rig means no station selection, which the viewer reports. Only a rig
+    that exists and is too short is a mismatch."""
+    target = tmp_path / "target"
+    _bundle_at(target, [bundle.Clip(name="keep", representation="gaussians",
+                               scene="s", frames=["keep/frame_0000.splat"])])
+    staged = tmp_path / "staged"
+    _bundle_at(staged, [bundle.Clip(name="cam09", representation="pixels", scene="s",
+                               method="rerf", camera=9,
+                               frames=["cam09/frame_0000.jpg"])])
+
+    adopt.adopt(staged, target)          # no raise
+    assert len(bundle.read(target)["clips"]) == 2
