@@ -469,6 +469,58 @@ in and adds the clips. Every frame the sidecar names is checked to exist first,
 because a clip whose frames are half there plays for two seconds and then 404s
 while the manifest insists nothing is wrong.
 
+`adopt` also reads a *bundle* rather than a sidecar, because a bundle is a
+superset of one: `gs-tools export` writes whole bundles, and merging two of them
+used to need a hand-rolled copy-and-merge. Clips keep their own
+`representation` when read this way — a sidecar states one for the whole
+export, and taking that for a bundle would relabel a point cloud as pixels and
+send it to the image decoder.
+
+One ordering hazard is worth knowing about, and is now refused rather than
+survived. An export installs a rig only into a scene that has none, so
+whichever lands first wins — and a Vega export brings the ORBIT corpus's
+8-camera capture rig while a ReRF orbit export brings its own 216 stations.
+Adopt them the wrong way round and the orbit clips are numbered against a rig
+that stops at 7, so most Compare stations show nothing at all, silently,
+because a pane with no clip is a legitimate state. `adopt.check_cameras` now
+rejects that before writing anything.
+
+## Building one subject end to end
+
+Every subject in the demo bundle is built the same way, and the order is the
+point:
+
+```bash
+SUBJECT=dancer
+RUN=/media/frozzzen/LocalDisk/nevo_runs/g_$SUBJECT
+
+# 1. ReRF orbit rings — 216 pre-rendered stations, and the rig they are
+#    numbered against. Adopted first, so that rig is the one installed.
+python -m rerf_stream.export --config $RUN/config.py \
+    --compression-path $RUN/rerf --out /tmp/rings \
+    --name g_$SUBJECT --scene $SUBJECT --orbit 72 --elevations 0,25,-25
+
+# 2. ReRF point cloud — geometry, so Explore gets a real free camera
+python -m rerf_stream.geometry --config $RUN/config.py \
+    --compression-path $RUN/rerf --out /tmp/points \
+    --name g_$SUBJECT --scene $SUBJECT
+
+# 3. Vega Gaussians, as .splat
+gs-tools export --method vega --frame-format splat \
+    -i ~/4DVideoStreaming/results/vega-gaussian/prepared-final \
+    --objects $SUBJECT -o /tmp/vega
+
+# 4. into the bundle, rings first, then pack each clip into one file
+for part in rings points vega; do
+    python -m streamer.adopt /tmp/$part --bundle ~/open4d-view --replace
+done
+python -m streamer.sequence ~/open4d-view
+```
+
+Costs per subject, measured: the rings are ~7 minutes of GPU and 334 MB, the
+point cloud is ~1 second and 50 MB, and Vega is ~1 minute and 55 MB. The rings
+dominate both, and they are what Compare uses; Explore never touches them.
+
 ## Planning a seek
 
 A clip declares how its frames depend on one another, in
