@@ -390,9 +390,10 @@ receives a set of rendered views rather than something it can re-aim.
 There is also a third option, which is the best of them where it applies:
 `rerf_stream.geometry` reads the density field out as a coloured point cloud,
 and a `points` clip gets the same genuinely free camera Vega does — the browser
-rasterises it, nothing is pre-rendered, nothing snaps. It costs about 14 dB
-against the ray-march of the same frame, so the bundle carries both and the
-comparison is the point.
+rasterises it, nothing is pre-rendered, nothing snaps. It costs about 20 dB
+against the ray-march of the same frame -- roughly 14 from thresholding the
+density field and 6 from freezing one colour per point -- so the bundle carries
+both and the comparison is the point.
 
 For the pixel clips that remain, the viewer treats a drag as the same gesture
 rather than a different mode, and snaps to the nearest rendered view:

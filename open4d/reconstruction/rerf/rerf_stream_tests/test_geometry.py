@@ -286,14 +286,48 @@ def test_an_empty_frame_is_black_not_an_error():
 
 @requires_bitstream
 def test_the_measured_fidelity_is_recorded_per_subject(first_frame):
-    """And the ray-march scores far better, which is the point of recording it.
+    """Three numbers, ordered, because they separate two different losses.
 
-    If these came out close, thresholding the field would be free and the
-    pre-rendered pixel clips would have no reason to exist.
+    The clip's own score is below the view-matched ceiling by whatever freezing
+    one colour per point costs, and the ceiling is below the ray-march by
+    whatever thresholding the density field costs. Conflating the two is how an
+    early measurement of the ceiling got quoted as the clip's own score,
+    overstating it by 7 dB.
     """
     player, frame = first_frame
     cloud = point_cloud(frame.model, player.corpus_dir)
     scored = geometry.fidelity(player, cloud)
-    assert 20.0 < scored["points_psnr"] < 40.0
-    assert scored["march_psnr"] > scored["points_psnr"] + 5.0
+    assert 15.0 < scored["points_psnr"] < 40.0
+    # Strictly ordered. Equality would mean the view direction is being ignored
+    # somewhere, which is exactly the bug that made an earlier comparison of
+    # bake azimuths come out identical.
+    assert scored["points_psnr"] < scored["view_matched_psnr"]
+    assert scored["view_matched_psnr"] < scored["march_psnr"]
     assert "training camera 0" in scored["against"]
+
+
+@requires_bitstream
+def test_the_cloud_is_scored_in_the_frame_the_camera_lives_in(first_frame):
+    """`point_cloud` returns world coordinates and `training_cameras` returns
+    normalised ones, and mixing them scores 18 dB where the truth is 24.
+
+    It does not fail, which is why this test exists: the subject covers a small
+    part of a frame composited on black, so a cloud landing in the wrong place
+    still agrees with the photograph about most of the pixels and comes back
+    with a plausible number.
+    """
+    from rerf_stream.cameras import captured_image, psnr, training_cameras
+
+    player, frame = first_frame
+    cloud = point_cloud(frame.model, player.corpus_dir)
+    scored = geometry.fidelity(player, cloud)
+
+    camera = training_cameras(player.corpus_dir)[0]
+    photograph = captured_image(player.corpus_dir, 0, 0,
+                                background=player.background)
+    # World points against a normalised camera: what the bug did.
+    wrong = psnr(geometry.rasterise(cloud, camera), photograph)
+    assert scored["points_psnr"] > wrong + 3.0, (
+        f"scoring in the right frame gave {scored['points_psnr']} and the "
+        f"wrong one {wrong:.2f}; they should not be close"
+    )
