@@ -149,6 +149,16 @@ class Clip:
     #: they write. A producer that serves a bitstream *as* the frames, rather
     #: than decoding it first, is what this field exists for.
     dependency: dict[str, Any] | None = None
+    #: The whole clip as one file, when it has been packed: ``{"url": ...,
+    #: "frames": n, "bytes": n, "suffix": "splat"}``. See `streamer.sequence`.
+    #:
+    #: ``frames`` above stays the logical frame list even when this is set --
+    #: it is what gives a frame its index and the clip its length, and a reader
+    #: that wants one frame by number needs it either way. What changes is
+    #: where the bytes come from: one request for the sequence instead of one
+    #: per frame, which for on-demand playback is the only sensible unit since
+    #: a free camera has to hold the whole thing anyway.
+    sequence: dict[str, Any] | None = None
     #: Quality levels this clip is also available at, as `Variant` mappings.
     #: Empty for a clip with one rendition, which is every clip written before
     #: this field existed.
@@ -198,6 +208,23 @@ def validate(clip: Clip) -> Clip:
             )
     elif not clip.frames:
         raise ValueError(f"{clip.name}: needs either frames or a stream")
+
+    if clip.sequence is not None:
+        if clip.stream is not None:
+            raise ValueError(
+                f"{clip.name}: a live clip cannot be packed as a sequence -- "
+                "there is no end to pack"
+            )
+        if not clip.sequence.get("url"):
+            raise ValueError(f"{clip.name}: a sequence needs a url")
+        packed = clip.sequence.get("frames")
+        if packed != len(clip.frames):
+            raise ValueError(
+                f"{clip.name}: the sequence holds {packed} frames against the "
+                f"clip's {len(clip.frames)}. The frame list is what gives a "
+                "frame its index, so the two have to agree or a seek lands "
+                "somewhere else."
+            )
 
     if clip.variants:
         if clip.stream is not None:
