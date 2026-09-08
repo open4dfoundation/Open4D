@@ -919,6 +919,61 @@ function decodeFrame(representation) {
   return (buffer, url) => decoder.decode(representation, buffer, url);
 }
 
+/* ---------------------------------------------------------- one file a clip ---
+ * A clip packed as a single container: a header naming the frames, then their
+ * bytes end to end. See streamer/sequence.py for the layout.
+ *
+ * One request instead of thirty. On loopback that changes nothing, which is
+ * why per-frame fetching survived so long; over a 20 ms link thirty frames is
+ * thirty round trips, 600 ms of latency before anything plays. And for a free
+ * camera the sequence is the only sensible unit anyway -- a frame that has
+ * been thrown away cannot be redrawn from a new angle, so the whole thing has
+ * to be held regardless of how it was asked for.
+ */
+const SEQ_MAGIC = "O4DSEQ\0\0";
+//: magic(8) + version(4) + count(4) + suffix length(4)
+const SEQ_PREAMBLE = 20;
+
+/* The header of a container, from its first bytes. Parsed separately from the
+ * body so a download that has only started can already say how many frames are
+ * coming, which is what a progress count needs. */
+function readSequenceHeader(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < SEQ_PREAMBLE) throw new Error("sequence header truncated");
+  let magic = "";
+  for (let i = 0; i < 8; i++) magic += String.fromCharCode(bytes[i]);
+  if (magic !== SEQ_MAGIC) throw new Error("not a sequence container");
+  const view = new DataView(buffer);
+  const version = view.getUint32(8, true);
+  if (version !== 1) throw new Error(`sequence version ${version} is not 1`);
+  const count = view.getUint32(12, true);
+  const suffixLength = view.getUint32(16, true);
+  let suffix = "";
+  for (let i = 0; i < suffixLength; i++) {
+    suffix += String.fromCharCode(bytes[SEQ_PREAMBLE + i]);
+  }
+  const table = SEQ_PREAMBLE + suffixLength;
+  if (bytes.length < table + 8 * count) throw new Error("sequence table truncated");
+  const entries = [];
+  for (let i = 0; i < count; i++) {
+    entries.push({
+      offset: view.getUint32(table + 8 * i, true),
+      length: view.getUint32(table + 8 * i + 4, true),
+    });
+  }
+  return { suffix, entries };
+}
+
+/* One frame's bytes, as its own ArrayBuffer.
+ *
+ * Sliced rather than viewed: the decode worker takes ownership of what it is
+ * given, and handing it a view into the container would transfer the whole
+ * container on the first frame and leave the rest unreachable. */
+function sequenceFrame(buffer, header, index) {
+  const entry = header.entries[index];
+  return buffer.slice(entry.offset, entry.offset + entry.length);
+}
+
 /* ------------------------------------------------------------- adaptation ---
  * Three pieces: measure what the link delivers, read the ladder a clip
  * carries, and pick a rung per pane.
@@ -1119,6 +1174,7 @@ class Scheduler {
     this.rung = null;                // chosen rendition, or null for the default
     this.resident = false;           // whole clip downloaded and held?
     this.abandoned = false;          // pane moved on; stop fetching
+    this._packing = null;            // in-flight container download, if any
     //: Bytes this pane may hold. A Gaussian frame decodes to roughly 50 bytes
     //: a Gaussian, so 200 MB is about sixty frames of this content -- enough
     //: for a short clip, and short of what would take the tab down.
@@ -1149,6 +1205,17 @@ class Scheduler {
    * playback at exactly the moment the link is under pressure. The new rung
    * applies to frames not yet fetched, which is where it can still help.
    */
+  /* The container this clip is packed into, or null if its frames are
+   * separate files. Mirrors `frames`: a rung that ships its own container uses
+   * that one, and a rung with its own frame list but no container falls back to
+   * fetching them singly rather than reading the *base* clip's container --
+   * which holds the right frames at the wrong quality. */
+  get sequence() {
+    if (this.rung && this.rung.sequence) return this.rung.sequence;
+    if (this.rung && this.rung.frames) return null;
+    return this.clip.sequence || null;
+  }
+
   useRung(rung) {
     const before = this.rung ? this.rung.name : null;
     const after = rung ? rung.name : null;
@@ -1236,6 +1303,25 @@ class Scheduler {
       return value;
     }
     this.stats.misses += 1;
+    // A packed clip has no per-frame files to fetch: packing deletes them, so
+    // the container is the only place the frame exists. Held as one promise so
+    // a pane that starts playing before the download was asked for joins the
+    // one in flight rather than starting a second copy of a 63 MB transfer.
+    if (this.sequence) {
+      if (!this._packing) {
+        this._packing = this.downloadAll(null)
+          .finally(() => { this._packing = null; });
+      }
+      await this._packing;
+      if (this.cache.has(index)) {
+        const value = this.cache.get(index);
+        this._touch(index, value);
+        return value;
+      }
+      // Only reachable when the container was refused as too big to hold. The
+      // frame files may still be there -- packing can keep them -- so fall
+      // through and ask for one, which either works or 404s honestly.
+    }
     const plan = chain(this.dependency, index, this.decoded);
     if (plan.length > 1) this.stats.replays += 1;
     let last = this.cache.get(index);
@@ -1268,6 +1354,8 @@ class Scheduler {
   async downloadAll(onProgress) {
     const total = this.length;
     if (!total) return true;
+    const packed = this.sequence;
+    if (packed) return this._downloadPacked(packed, onProgress);
     const budget = this.byteBudget;
     let bytes = 0;
     this.cacheSize = Math.max(this.cacheSize, total);
@@ -1286,6 +1374,109 @@ class Scheduler {
     }
     this.resident = true;
     return true;
+  }
+
+  /* Fetch a clip packed as one file, then decode it out of memory.
+   *
+   * The same outcome as the loop above and a different transfer: one request
+   * rather than one per frame. Over a link that is the whole difference --
+   * thirty frames is thirty round trips, and a 20 ms connection spends 600 ms
+   * of pure latency before the first pixel. On loopback it changes nothing,
+   * which is exactly why the per-frame path looked fine for so long.
+   *
+   * Progress is reported in two phases: estimated from bytes while the
+   * container arrives, then exactly per frame as it is decoded. A reader sees
+   * one number that climbs and cannot tell where the phases meet, which is
+   * what they want; a bar pinned at zero through a 63 MB transfer is not.
+   */
+  async _downloadPacked(packed, onProgress) {
+    const total = this.length;
+    const url = this.root + packed.url;
+    const expected = packed.bytes || 0;
+    if (expected > this.byteBudget) {
+      // Refused from the manifest, before a byte is fetched. The per-frame
+      // path can only notice once it is already over budget, having paid for
+      // the frames that took it there.
+      this.cacheSize = 6;
+      this.resident = false;
+      if (onProgress) onProgress(0, total, 0, false);
+      return false;
+    }
+    // Raised to fit before anything is decoded. A clip held under a smaller
+    // cache evicts the frames it just decoded, and the next seek has nowhere to
+    // go but back to the container -- so a "resident" clip would re-download
+    // itself once per frame, which is how this was found.
+    this.cacheSize = Math.max(this.cacheSize, total);
+    const began = performance.now();
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    const buffer = await this._readPacked(response, expected, total, onProgress);
+    if (!buffer) return false;                  // pane moved on mid-transfer
+    // One rate sample for the whole container, which beats any the per-frame
+    // path took: a transfer this long has left slow start behind, so it
+    // measures the link rather than the ramp onto it.
+    if (this.meter) {
+      this.meter.record(buffer.byteLength, (performance.now() - began) / 1000);
+    }
+    const fetched = performance.now();
+    this.stats.bytes += buffer.byteLength;
+    const header = readSequenceHeader(buffer);
+    if (header.entries.length !== total) {
+      throw new Error(`${url}: holds ${header.entries.length} frames,`
+        + ` clip lists ${total}`);
+    }
+    // From the manifest, not a response header: the container is served as
+    // octet-stream because the frames inside it are what have a type.
+    const mediaType = packed.media_type || null;
+    for (let index = 0; index < total; index++) {
+      if (this.abandoned) return false;
+      const frame = sequenceFrame(buffer, header, index);
+      this._touch(index, await this.decode(frame, url, mediaType));
+      this.stats.decodes += 1;
+      if (onProgress) onProgress(index + 1, total, this.stats.bytes, true);
+    }
+    this.stats.fetchMs = fetched - began;
+    this.stats.decodeMs = (performance.now() - fetched) / total;
+    this.resident = true;
+    return true;
+  }
+
+  /* The container's bytes, reporting progress as they arrive.
+   *
+   * Read through the body stream rather than `arrayBuffer()` so there is
+   * something to report at all: `arrayBuffer()` resolves once, at the end, and
+   * a single-request download would otherwise show no progress whatsoever --
+   * strictly worse to watch than the thirty requests it replaces. Falls back to
+   * `arrayBuffer()` where there is no stream to read, which is what the test
+   * doubles give it.
+   */
+  async _readPacked(response, expected, total, onProgress) {
+    if (!response.body || !response.body.getReader) {
+      return response.arrayBuffer();
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (this.abandoned) { reader.cancel().catch(() => {}); return null; }
+      chunks.push(value);
+      got += value.byteLength;
+      if (onProgress && expected) {
+        // Bytes shown as frames, because frames are the unit the caller counts
+        // and the two phases have to share one scale to make a bar that only
+        // ever goes forward. Never the last frame: that one is claimed by the
+        // decode loop, so a download at 100% cannot look finished while the
+        // frames it holds are still being parsed.
+        const reached = Math.min(total - 1, Math.floor((got / expected) * total));
+        onProgress(reached, total, got, true);
+      }
+    }
+    const buffer = new Uint8Array(got);
+    let at = 0;
+    for (const chunk of chunks) { buffer.set(chunk, at); at += chunk.byteLength; }
+    return buffer.buffer;
   }
 
   /* Look ahead along the direction playback actually moves. Only the frames a
