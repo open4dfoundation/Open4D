@@ -527,3 +527,101 @@ def test_a_stale_download_cannot_finish_into_a_new_selection():
     body = page[start:page.index("\n}\n", start)]
     assert "++app.downloadToken" in body
     assert body.count("token !== app.downloadToken") >= 2
+
+
+# ------------------------------------------------- methods that cannot show ---
+
+
+@requires_node
+def test_a_pixel_method_is_listed_in_explore_not_hidden(tmp_path):
+    """Reported as "on basketball, there is no captured option".
+
+    Explore is a free camera and a photograph has no geometry to aim one at, so
+    a captured method genuinely cannot appear there. But hiding it means
+    someone opening the subject to see the photograph finds it simply absent,
+    with nothing saying it exists or how to reach it -- a worse failure than a
+    greyed-out row.
+    """
+    body = '''
+        globalThis.REPRESENTATIONS = {
+          gaussians: { geometry: true }, pixels: { geometry: false },
+        };
+        globalThis.spec = (clip) => clip && REPRESENTATIONS[clip.representation];
+        globalThis.hasGeometry = (clip) => {
+          const s = spec(clip); return s !== undefined && s.geometry;
+        };
+        const app = { index: { clips: [
+          { scene: "b", method: "vega", representation: "gaussians" },
+          { scene: "b", method: "captured", representation: "pixels", camera: 0 },
+          { scene: "b", method: "rerf", representation: "pixels", camera: 0 },
+        ] } };
+        globalThis.app = app;
+        process.stdout.write(JSON.stringify({
+          explore: methodsFor("b", "explore"),
+          compare: methodsFor("b", "compare"),
+        }));
+    '''
+    script = tmp_path / "m.mjs"
+    script.write_text(_extract("methodsFor") + "\n" + textwrap.dedent(body))
+    finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                              timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    result = json.loads(finished.stdout)
+
+    explore = {entry["method"]: entry["usable"] for entry in result["explore"]}
+    # Every method is listed in both modes.
+    assert set(explore) == {"vega", "captured", "rerf"}
+    # But only the one with geometry can actually be shown under a free camera.
+    assert explore == {"vega": True, "captured": False, "rerf": False}
+    compare = {entry["method"]: entry["usable"] for entry in result["compare"]}
+    assert all(compare.values())
+
+
+@requires_node
+def test_a_method_with_both_kinds_survives_explore(tmp_path):
+    """Vega ships Gaussians and images; a method is usable if any one of its
+    clips is, or the geometry would be masked by the images beside it."""
+    body = '''
+        globalThis.REPRESENTATIONS = {
+          gaussians: { geometry: true }, pixels: { geometry: false },
+        };
+        globalThis.spec = (clip) => clip && REPRESENTATIONS[clip.representation];
+        globalThis.hasGeometry = (clip) => {
+          const s = spec(clip); return s !== undefined && s.geometry;
+        };
+        globalThis.app = { index: { clips: [
+          { scene: "b", method: "vega", representation: "pixels", camera: 0 },
+          { scene: "b", method: "vega", representation: "gaussians" },
+        ] } };
+        process.stdout.write(JSON.stringify(methodsFor("b", "explore")));
+    '''
+    script = tmp_path / "m2.mjs"
+    script.write_text(_extract("methodsFor") + "\n" + textwrap.dedent(body))
+    finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                              timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    assert json.loads(finished.stdout) == [{"method": "vega", "usable": True}]
+
+
+def test_an_unusable_method_says_where_it_lives():
+    """Not only that it cannot be shown here."""
+    page = viewer_path().read_text()
+    start = page.index("function renderMethodList(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "compare only" in body
+    assert "box.disabled = !playable" in body
+
+
+def test_every_caller_of_methodsFor_filters_to_usable():
+    """It returns entries now, not names. A caller that treats them as names
+    would select a method this mode cannot show -- or worse, compare a string
+    against an object and silently select nothing."""
+    page = viewer_path().read_text()
+    calls = page.count("methodsFor(")
+    assert calls == 4                       # the definition plus three callers
+    for marker in ("const entries = methodsFor(app.scene, app.mode);",
+                   "methodsFor(scene, app.mode)\n    .filter((entry) => entry.usable)",
+                   "methodsFor(app.scene, app.mode)\n      .filter((entry) => entry.usable)"):
+        assert marker in page, marker
