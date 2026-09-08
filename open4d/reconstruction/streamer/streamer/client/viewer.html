@@ -930,6 +930,15 @@ function decodeFrame(representation) {
  * been thrown away cannot be redrawn from a new angle, so the whole thing has
  * to be held regardless of how it was asked for.
  */
+/* A frame's suffix, by the same rule `worker.js` uses to choose its codec.
+ * Transcribed rather than shared because the worker is a separate script, and
+ * held to the original by `streamer_tests/test_client_parsers.py`. */
+function suffixOf(url) {
+  const path = String(url).split("?", 1)[0];
+  const dot = path.lastIndexOf(".");
+  return dot < 0 ? "" : path.slice(dot).toLowerCase();
+}
+
 const SEQ_MAGIC = "O4DSEQ\0\0";
 //: magic(8) + version(4) + count(4) + suffix length(4)
 const SEQ_PREAMBLE = 20;
@@ -1433,13 +1442,26 @@ class Scheduler {
       throw new Error(`${url}: holds ${header.entries.length} frames,`
         + ` clip lists ${total}`);
     }
+    // The frame list survives packing, and this is one reason it has to: a
+    // frame is decoded by the codec its *own* name selects. Handing the
+    // container's name to the decode instead is a `.seq` suffix in a table of
+    // `.ply` and `.splat`, which is how every Gaussian pane went blank -- and
+    // silently, because pixels are decoded from the media type on the main
+    // thread and were unaffected, so it looked like one method being broken
+    // rather than one code path.
+    const names = this.frames;
+    if (suffixOf(names[0]) !== `.${header.suffix}`) {
+      throw new Error(`${url}: holds .${header.suffix} frames, clip lists`
+        + ` ${suffixOf(names[0])} -- one of them would be decoded wrongly`);
+    }
     // From the manifest, not a response header: the container is served as
     // octet-stream because the frames inside it are what have a type.
     const mediaType = packed.media_type || null;
     for (let index = 0; index < total; index++) {
       if (this.abandoned) return false;
       const frame = sequenceFrame(buffer, header, index);
-      this._touch(index, await this.decode(frame, url, mediaType));
+      this._touch(index, await this.decode(frame, this.root + names[index],
+                                           mediaType));
       this.stats.decodes += 1;
       if (onProgress) onProgress(index + 1, total, this.stats.bytes, true);
     }
@@ -2677,13 +2699,33 @@ async function downloadSelection() {
     const pane = panes[index];
     if (token !== app.downloadToken) return;      // selection changed under us
     app.download.pane = index + 1;
-    const held = await pane.source.downloadAll((got, of, bytes) => {
+    let held = false;
+    try {
+      held = await pane.source.downloadAll((got, of, bytes) => {
+        if (token !== app.downloadToken) return;
+        app.download.done = done + got;
+        app.download.bytes += 0;                  // bytes come from the totals below
+        setStatus(`downloading ${app.download.done} / ${frames} frames`
+          + ` · ${(paneBytes() / 1e6).toFixed(0)} MB`);
+      });
+    } catch (error) {
+      /* Said in the pane, and the other panes carry on.
+       *
+       * This used to propagate out of `downloadSelection` as an unhandled
+       * rejection: the pane stayed blank, nothing was logged where anyone
+       * would look, and the page went on insisting it was fine. That is how a
+       * decoder error reads as "this method is broken" -- which is what
+       * happened when every Gaussian frame was handed the container's `.seq`
+       * name instead of its own. A pane that cannot show its content has to
+       * say why. */
       if (token !== app.downloadToken) return;
-      app.download.done = done + got;
-      app.download.bytes += 0;                    // bytes come from the totals below
-      setStatus(`downloading ${app.download.done} / ${frames} frames`
-        + ` · ${(paneBytes() / 1e6).toFixed(0)} MB`);
-    });
+      pane._explain(`${pane.method} could not be decoded.`,
+                    String(error && error.message || error));
+      app.download.resident = false;
+      done += totals[index];
+      app.download.done = done;
+      continue;
+    }
     if (!held) app.download.resident = false;
     done += totals[index];
     app.download.done = done;
