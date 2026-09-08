@@ -237,10 +237,18 @@ def run(args) -> int:
 
     camera = cameras[views[0]]
     shared_notes = [
-        (f"ReRF volume render at {args.orbit} viewpoints evenly around the "
-         "capture ring — a prepared orbit, not a free camera: a neural field "
-         "has no geometry to send, so looking around means stepping between "
-         "views that were rendered in advance"
+        # ReRF *is* free-viewpoint -- upstream's `rerf_render.py --render_360`
+        # walks a ring, and this is that same capability driven from here. What
+        # it needs is a CUDA GPU to ray-march the field, so on-demand delivery
+        # means rendering the ring in advance and letting the viewer pick the
+        # nearest one. Worth stating precisely: an earlier version of this note
+        # said ReRF had no free camera, which is wrong about the method and only
+        # true of a browser.
+        (f"free-viewpoint ReRF, ray-marched at {args.orbit} viewpoints evenly "
+         f"around the capture ring (upstream's --render_360 path) — rendered "
+         f"ahead of time because the march needs a CUDA GPU, so a viewer picks "
+         f"the nearest of the {args.orbit}: azimuth quantised to "
+         f"{360 / args.orbit:.0f}°, elevation fixed"
          if args.orbit else
          "ReRF volume render at the scene's own capture camera — the same pose "
          "the photograph and every other method use here"),
