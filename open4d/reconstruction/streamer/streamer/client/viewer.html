@@ -1354,6 +1354,14 @@ class Scheduler {
   async downloadAll(onProgress) {
     const total = this.length;
     if (!total) return true;
+    // Already held. Worth checking since this is called again whenever the pane
+    // set changes -- and re-entering it would re-fetch a 63 MB container that
+    // is sitting in memory, which is what following the camera onto a ring
+    // station started doing.
+    if (this.resident) {
+      if (onProgress) onProgress(total, total, this.stats.bytes, true);
+      return true;
+    }
     const packed = this.sequence;
     if (packed) return this._downloadPacked(packed, onProgress);
     const budget = this.byteBudget;
@@ -1669,8 +1677,16 @@ class Pane {
     this.source = new Scheduler(clip, "./", kind.decode, {
       cacheSize: kind.cacheSize, meter,
     });
+    const ring = app.mode === "explore" && isPixels(clip) ? ringOf(rig()) : null;
     this.label.textContent = clip.camera === null || clip.camera === undefined
-      ? this.method : `${this.method} · cam ${clip.camera}`;
+      ? this.method
+      // In Explore a pixel pane is the *nearest* rendered view, not the camera
+      // asked for. Said in the label because the pane otherwise looks like it
+      // followed exactly, and a viewer comparing it against a rasterised pane
+      // beside it would read the offset as a reconstruction error.
+      : ring ? `${this.method} · nearest of ${ring.yaws.length} views (±${
+          ringError(ring).toFixed(0)}°)`
+      : `${this.method} · cam ${clip.camera}`;
   }
 
   /* A canvas dropped from the DOM keeps its WebGL context until the browser
@@ -1805,9 +1821,15 @@ function scenesInBundle() {
  */
 function methodsFor(scene, mode) {
   const seen = new Map();
+  const ring = ringOf(app.scenes[scene]);
   for (const clip of app.index.clips) {
     if (clip.scene !== scene) continue;
-    const usable = mode !== "explore" || hasGeometry(clip);
+    // Pixels are usable in Explore when the scene's rig is a ring: the drag
+    // then picks the nearest rendered view instead of being refused. Without a
+    // ring there is nothing to snap onto and they stay compare-only.
+    const usable = mode !== "explore" || hasGeometry(clip)
+      || (isPixels(clip) && !!ring && clip.camera !== null
+          && clip.camera !== undefined);
     // A method with several clips is usable if any one of them is: Vega has
     // Gaussians, so it survives Explore even where its image clips do not.
     if (!seen.has(clip.method) || usable) seen.set(clip.method, usable
@@ -1818,9 +1840,96 @@ function methodsFor(scene, mode) {
 
 function rig() { return app.scenes[app.scene] || null; }
 
+/* ------------------------------------------------ a free camera for pixels ---
+ * A pre-rendered method is not stuck at one viewpoint, and saying so was an
+ * error on my part: ReRF renders free viewpoint -- `rerf_render.py
+ * --render_360` walks a ring around the subject, and that is the code path that
+ * produced the orbit clips in this bundle. What it needs is a CUDA GPU, so the
+ * rendering happens here, offline, rather than in a browser.
+ *
+ * Which leaves a real difference in *where* pixels are made, and no reason for
+ * it to be a difference in what the camera does. Vega ships geometry, so a drag
+ * rasterises a new view. ReRF ships a ring of rendered views, so a drag picks
+ * the nearest one. Same gesture, and the honest caveats are that the azimuth is
+ * quantised to the ring's spacing and the elevation is whatever it was rendered
+ * at -- both of which the pane label states rather than hides.
+ */
+
+//: Tolerance for calling a rig a ring, as a fraction of its radius. Poses are
+//: written from a float32 render pipeline, so exact equality is not available;
+//: 2% is far tighter than the arc between neighbouring stations.
+const RING_TOLERANCE = 0.02;
+
+/* The ring a rig describes, or null if it does not describe one.
+ *
+ * Checked rather than assumed: a rig read from a capture corpus is wherever the
+ * cameras physically were, and snapping a free camera onto an arbitrary cloud
+ * of viewpoints would move it somewhere the user did not ask for. Only a rig
+ * whose stations sit at one radius and one height about a common centre gets to
+ * stand in for an orbit.
+ */
+function ringOf(scene) {
+  if (!scene || !scene.poses || scene.poses.length < 4) return null;
+  if (scene._ring !== undefined) return scene._ring;
+  const poses = scene.poses;
+  const centre = [0, 1, 2].map((axis) =>
+    poses.reduce((sum, pose) => sum + pose.position[axis], 0) / poses.length);
+  const radii = poses.map((pose) => Math.hypot(
+    pose.position[0] - centre[0], pose.position[2] - centre[2]));
+  const radius = radii.reduce((a, b) => a + b, 0) / radii.length;
+  const heights = poses.map((pose) => pose.position[1]);
+  const spread = Math.max(...heights) - Math.min(...heights);
+  const round = radii.every((r) => Math.abs(r - radius) <= RING_TOLERANCE * radius);
+  const level = spread <= RING_TOLERANCE * radius;
+  scene._ring = (round && level && radius > 0) ? {
+    centre, radius,
+    // Same convention as OrbitCamera.frame: +x is sin(yaw), +z is cos(yaw), so
+    // a yaw computed here is directly comparable to the camera's own.
+    yaws: poses.map((pose) => Math.atan2(
+      pose.position[0] - centre[0], pose.position[2] - centre[2])),
+  } : null;
+  return scene._ring;
+}
+
+/* The station whose yaw is closest to `yaw`, comparing the short way round.
+ * Naive subtraction puts 179 degrees and -179 degrees two turns apart and would
+ * snap across the whole ring at the seam. */
+function nearestStation(ring, yaw) {
+  let best = 0, closest = Infinity;
+  for (let index = 0; index < ring.yaws.length; index++) {
+    let delta = Math.abs(((ring.yaws[index] - yaw + Math.PI * 3) % (Math.PI * 2))
+      - Math.PI);
+    if (delta < closest) { closest = delta; best = index; }
+  }
+  return best;
+}
+
+/* The station a pixel pane should show in Explore mode: the one nearest where
+ * the free camera is pointing. Null when the scene's rig is not a ring, in
+ * which case pixels stay out of Explore as they were. */
+function exploreStation() {
+  const ring = ringOf(rig());
+  if (!ring) return null;
+  return nearestStation(ring, app.camera.yaw);
+}
+
+//: Half the arc between neighbouring stations -- the worst the snap can be off
+//: by, which is what the pane label quotes.
+function ringError(ring) {
+  return 180 / ring.yaws.length;
+}
+
 function clipFor(method) {
   const all = app.index.clips.filter((c) => c.scene === app.scene && c.method === method);
-  if (app.mode === "explore") return all.find(hasGeometry) || null;
+  if (app.mode === "explore") {
+    // Geometry first: it can be rasterised at the exact camera, where a ring
+    // station is only the nearest one rendered.
+    const station = exploreStation();
+    return all.find(hasGeometry)
+        || (station === null ? null
+            : all.find((c) => isPixels(c) && c.camera === station))
+        || null;
+  }
   // Compare: an image only exists at the station it was made at; Gaussians can
   // be rendered at any of them, so they are the fallback rather than the first
   // choice -- a real render beats a re-render of the same thing.
@@ -1886,6 +1995,48 @@ function updateClips() {
   // interactive while it arrives, and each frame becomes playable as it lands
   // rather than after all of them.
   downloadSelection();
+}
+
+/* Move the pixel panes onto the ring station the camera now points at.
+ *
+ * Deliberately *not* per pointermove. Crossing a station changes which clip a
+ * pixel pane plays, so re-resolving mid-drag would start a download per station
+ * -- one spin across 36 of them is 50 MB of requests for pictures nobody
+ * stopped to look at. The geometry panes redraw every frame regardless, because
+ * for them the camera is the only input; the rendered panes catch up when the
+ * hand stops, which is when their picture is being read.
+ */
+//: How long the camera has to hold still before a pixel pane follows it, in
+//: milliseconds. Short enough not to feel like lag, long enough that a spin
+//: costs one fetch rather than one per station crossed.
+const FOLLOW_SETTLE_MS = 140;
+let followTimer = null;
+
+function followCamera() {
+  if (app.mode !== "explore" || exploreStation() === null) return;
+  if (followTimer) clearTimeout(followTimer);
+  followTimer = setTimeout(() => {
+    followTimer = null;
+    if (app.mode !== "explore") return;
+    let moved = false;
+    for (const pane of app.panes) {
+      const wanted = clipFor(pane.method);
+      if (wanted === pane.clip) continue;
+      try {
+        pane.setClip(wanted);
+      } catch (error) {
+        return fail(`Could not start a renderer for ${pane.method}:`
+          + ` ${error.message || error}`);
+      }
+      moved = true;
+    }
+    if (!moved) return;
+    refreshPanel();
+    showFrame(app.frame);
+    // Panes already resident return from this immediately, so following the
+    // camera costs the one station that changed.
+    downloadSelection();
+  }, FOLLOW_SETTLE_MS);
 }
 
 function rebuildPanes() {
@@ -2164,6 +2315,15 @@ function renderNotes() {
   const lines = [];
   if (app.mode === "explore") {
     lines.push("free camera shared across every pane: differences are the reconstructions, not the viewpoint");
+    const snapped = app.panes.filter((pane) => pane.clip && isPixels(pane.clip));
+    const ring = ringOf(rig());
+    if (snapped.length && ring) {
+      lines.push(`${snapped.map((pane) => pane.method).join(", ")}: rendered`
+        + ` offline on a GPU, so the drag picks the nearest of ${ring.yaws.length}`
+        + ` views rather than rasterising a new one — azimuth quantised to`
+        + ` ${(2 * ringError(ring)).toFixed(0)}°, elevation fixed at the one`
+        + ` they were rendered at`);
+    }
   } else if (rig()) {
     const pose = rig().poses[app.station];
     lines.push(`rig camera ${app.station}${pose && pose.view_id !== null && pose.view_id !== undefined ? ` (captured view ${pose.view_id})` : " (interpolated)"}: every pane at this pose`);
@@ -2587,6 +2747,7 @@ function bindControls() {
       camera.yaw -= dx * 0.005;
       const limit = 85 * Math.PI / 180;
       camera.pitch = Math.max(-limit, Math.min(limit, camera.pitch + dy * 0.005));
+      followCamera();
     }
   });
   panesEl.addEventListener("pointerup", (event) => {
@@ -2619,7 +2780,10 @@ function bindControls() {
     if (event.key === " ") { event.preventDefault(); togglePlay(); }
     else if (event.key === "ArrowRight") showFrame(app.frame + 1);
     else if (event.key === "ArrowLeft") showFrame(app.frame - 1);
-    else if (event.key === "r" && app.mode === "explore") app.camera.goHome();
+    else if (event.key === "r" && app.mode === "explore") {
+      app.camera.goHome();
+      followCamera();               // home is a viewpoint too
+    }
     else if (event.key === ".") setStation(app.station + 1);
     else if (event.key === ",") setStation(app.station - 1);
   });
