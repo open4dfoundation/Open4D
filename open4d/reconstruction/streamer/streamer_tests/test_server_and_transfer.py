@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import gzip
 import json
 import time
 import urllib.request
@@ -62,6 +64,21 @@ def served(tmp_path):
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         yield root, base, server
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@contextlib.contextmanager
+def serving(root):
+    """A server on ``root``, for a test that builds its own bundle.
+
+    The `served` fixture makes its own two-clip bundle; these need a big
+    repetitive one, so they bring the directory and borrow the lifecycle.
+    """
+    server = serve(root, port=0, block=False)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
     finally:
         server.shutdown()
         server.server_close()
@@ -558,3 +575,145 @@ def test_a_keep_alive_batch_is_not_slower_than_closing(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ------------------------------------------------------------- compression ---
+# The manifest names every frame of every clip, and an orbit export puts 216
+# clips in a scene, so nine subjects come to 6.6 MB -- fetched before the page
+# can draw anything. It is also hugely repetitive (the same notes on 216 clips,
+# frame paths differing by four digits), which is what gzip eats: measured at
+# 20.3x on the real bundle.
+
+
+def _repetitive_bundle(tmp_path):
+    """A bundle whose manifest is big and repetitive, like a real one."""
+    note = (
+        "free-viewpoint ReRF, ray-marched at 72 viewpoints around the capture "
+        "ring on 3 rings, rendered ahead of time because the march needs a GPU"
+    )
+    clips = []
+    for view in range(40):
+        name = f"g-rerf-cam{view:03d}"
+        frames = []
+        for index in range(30):
+            relative = f"{name}/frame_{index:04d}.jpg"
+            target = tmp_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"\xff\xd8" + bytes(64))
+            frames.append(relative)
+        clips.append(bundle.Clip(
+            name=name, representation="pixels", scene="s", method="rerf",
+            camera=view, frames=frames, notes=[note, note],
+        ))
+    bundle.write(tmp_path, title="t", source="s", clips=clips)
+    return tmp_path
+
+
+def test_the_manifest_is_compressed_when_the_client_offers_it(tmp_path):
+    root = _repetitive_bundle(tmp_path)
+    with serving(root) as base:
+        request = urllib.request.Request(
+            f"{base}/view.json", headers={"Accept-Encoding": "gzip"})
+        with urllib.request.urlopen(request) as response:
+            wire = response.read()
+            headers = dict(response.headers)
+
+    assert headers.get("Content-Encoding") == "gzip"
+    # Named whether or not this response is compressed: a cache holding the
+    # identity form must not hand it to a client that asked for gzip.
+    assert headers.get("Vary") == "Accept-Encoding"
+    assert int(headers["Content-Length"]) == len(wire)
+    identity = gzip.decompress(wire)
+    assert len(identity) > 4 * len(wire), "repetitive JSON should compress hard"
+    assert len(json.loads(identity)["clips"]) == 40
+
+
+def test_a_client_that_does_not_offer_gzip_gets_the_plain_bytes(tmp_path):
+    """`streamer.transfer` and urllib speak plain HTTP and would be handed
+    bytes they will not decode."""
+    root = _repetitive_bundle(tmp_path)
+    with serving(root) as base:
+        with urllib.request.urlopen(f"{base}/view.json") as response:
+            body = response.read()
+            headers = dict(response.headers)
+    assert "Content-Encoding" not in headers
+    assert json.loads(body)["title"] == "t"
+
+
+def test_a_frame_container_is_never_compressed(tmp_path):
+    """It is already compressed, so gzipping one spends CPU per request to save
+    nothing -- and a compressed entity makes a Range request name bytes of
+    something the client did not ask for, which is what the header prefetch
+    relies on."""
+    root = _repetitive_bundle(tmp_path)
+    (root / "clip.seq").write_bytes(b"O4DSEQ\x00\x00" + bytes(4096))
+    with serving(root) as base:
+        request = urllib.request.Request(
+            f"{base}/clip.seq", headers={"Accept-Encoding": "gzip"})
+        with urllib.request.urlopen(request) as response:
+            body = response.read()
+            headers = dict(response.headers)
+    assert "Content-Encoding" not in headers
+    assert len(body) == 8 + 4096
+    # Still resumable, which is the point of not compressing it.
+    assert headers.get("Accept-Ranges") == "bytes"
+
+
+def test_a_range_request_is_never_compressed(tmp_path):
+    """A range names bytes of the entity as sent. Offering ranges over one form
+    and serving another is how a resumed download reassembles garbage."""
+    root = _repetitive_bundle(tmp_path)
+    with serving(root) as base:
+        request = urllib.request.Request(
+            f"{base}/view.json",
+            headers={"Accept-Encoding": "gzip", "Range": "bytes=0-31"})
+        with urllib.request.urlopen(request) as response:
+            status = response.status
+            body = response.read()
+            headers = dict(response.headers)
+    assert status == 206
+    assert "Content-Encoding" not in headers
+    assert len(body) == 32
+    # And the bytes are the identity form, so a caller can trust the offset.
+    assert body.startswith(b'{\n  "version"')
+
+
+def test_a_gzipped_response_does_not_advertise_byte_ranges(tmp_path):
+    root = _repetitive_bundle(tmp_path)
+    with serving(root) as base:
+        request = urllib.request.Request(
+            f"{base}/view.json", headers={"Accept-Encoding": "gzip"})
+        with urllib.request.urlopen(request) as response:
+            headers = dict(response.headers)
+    assert headers.get("Content-Encoding") == "gzip"
+    assert "Accept-Ranges" not in headers
+
+
+def test_a_small_file_is_left_alone(tmp_path):
+    """The gzip header and the trip through zlib cost more than they save."""
+    root = tmp_path
+    bundle.write(root, title="t", source="s", clips=[bundle.Clip(
+        name="c", representation="pixels", scene="s", frames=["c/f.jpg"])])
+    (root / "c").mkdir(exist_ok=True)
+    (root / "c/f.jpg").write_bytes(b"\xff\xd8")
+    (root / "tiny.json").write_bytes(b'{"a":1}')
+    with serving(root) as base:
+        request = urllib.request.Request(
+            f"{base}/tiny.json", headers={"Accept-Encoding": "gzip"})
+        with urllib.request.urlopen(request) as response:
+            headers = dict(response.headers)
+    assert "Content-Encoding" not in headers
+
+
+def test_the_page_and_its_worker_are_both_compressed(tmp_path):
+    """Two spellings of the JavaScript media type exist, and listing one left
+    the worker going out whole while the page beside it was compressed."""
+    root = _repetitive_bundle(tmp_path)
+    with serving(root) as base:
+        got = {}
+        for path in ("/", "/client/worker.js"):
+            request = urllib.request.Request(
+                f"{base}{path}", headers={"Accept-Encoding": "gzip"})
+            with urllib.request.urlopen(request) as response:
+                got[path] = dict(response.headers).get("Content-Encoding")
+    assert got == {"/": "gzip", "/client/worker.js": "gzip"}
