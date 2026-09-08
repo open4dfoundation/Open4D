@@ -512,11 +512,20 @@ def test_abandoning_a_pane_stops_its_download(tmp_path):
     assert result["fetched"] < 20           # stopped early
 
 
-def test_the_download_is_triggered_wherever_the_pane_set_changes():
-    """Two functions rebuild the panes and both end the same way; a download
-    hooked into only one of them leaves half the paths silently streaming."""
+@pytest.mark.parametrize(
+    "function", ["updateClips", "rebuildPanes", "followCamera"]
+)
+def test_every_path_that_changes_the_pane_set_downloads(function):
+    """Three functions change which clips the panes hold, and a download hooked
+    into only some of them leaves the rest silently streaming frame by frame.
+
+    Named rather than counted: an occurrence count passes for the wrong two of
+    three, and fails for a fourth that is correctly wired.
+    """
     page = viewer_path().read_text()
-    assert page.count("downloadSelection();") == 2
+    start = page.index(f"function {function}(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "downloadSelection()" in body, f"{function} does not download"
 
 
 def test_a_stale_download_cannot_finish_into_a_new_selection():
@@ -550,7 +559,10 @@ def test_a_pixel_method_is_listed_in_explore_not_hidden(tmp_path):
         globalThis.hasGeometry = (clip) => {
           const s = spec(clip); return s !== undefined && s.geometry;
         };
-        const app = { index: { clips: [
+        globalThis.isPixels = (clip) => {
+          const s = spec(clip); return s !== undefined && !s.geometry;
+        };
+        const app = { scenes: {}, index: { clips: [
           { scene: "b", method: "vega", representation: "gaussians" },
           { scene: "b", method: "captured", representation: "pixels", camera: 0 },
           { scene: "b", method: "rerf", representation: "pixels", camera: 0 },
@@ -562,7 +574,7 @@ def test_a_pixel_method_is_listed_in_explore_not_hidden(tmp_path):
         }));
     '''
     script = tmp_path / "m.mjs"
-    script.write_text(_extract("methodsFor") + "\n" + textwrap.dedent(body))
+    script.write_text(_extract("RING_TOLERANCE", "ringOf", "methodsFor") + "\n" + textwrap.dedent(body))
     finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                               timeout=60)
     if finished.returncode:
@@ -590,14 +602,17 @@ def test_a_method_with_both_kinds_survives_explore(tmp_path):
         globalThis.hasGeometry = (clip) => {
           const s = spec(clip); return s !== undefined && s.geometry;
         };
-        globalThis.app = { index: { clips: [
+        globalThis.isPixels = (clip) => {
+          const s = spec(clip); return s !== undefined && !s.geometry;
+        };
+        globalThis.app = { scenes: {}, index: { clips: [
           { scene: "b", method: "vega", representation: "pixels", camera: 0 },
           { scene: "b", method: "vega", representation: "gaussians" },
         ] } };
         process.stdout.write(JSON.stringify(methodsFor("b", "explore")));
     '''
     script = tmp_path / "m2.mjs"
-    script.write_text(_extract("methodsFor") + "\n" + textwrap.dedent(body))
+    script.write_text(_extract("RING_TOLERANCE", "ringOf", "methodsFor") + "\n" + textwrap.dedent(body))
     finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                               timeout=60)
     if finished.returncode:
@@ -625,3 +640,193 @@ def test_every_caller_of_methodsFor_filters_to_usable():
                    "methodsFor(scene, app.mode)\n    .filter((entry) => entry.usable)",
                    "methodsFor(app.scene, app.mode)\n      .filter((entry) => entry.usable)"):
         assert marker in page, marker
+
+
+# --------------------------------------------- a free camera onto a ring ---
+# ReRF renders free viewpoint -- `rerf_render.py --render_360` is the path that
+# produced this bundle's orbit clips -- but it needs a CUDA GPU, so the pixels
+# are made offline and a drag picks the nearest rendered view rather than
+# rasterising a new one. These hold the "nearest" to being actually nearest,
+# and hold the guard that stops an arbitrary rig being treated as an orbit.
+
+RING = ("RING_TOLERANCE", "ringOf", "nearestStation", "exploreStation",
+        "ringError")
+
+
+def _ring_js(body: str, tmp_path: Path, name: str) -> object:
+    script = tmp_path / name
+    script.write_text(_extract(*RING) + "\n" + textwrap.dedent(body))
+    finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                              timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    return json.loads(finished.stdout)
+
+
+# The shape of the bundle's own rig: 36 stations, 10 degrees apart, one radius
+# and one height about a common centre.
+ORBIT = """
+    const poses = [];
+    for (let i = 0; i < 36; i++) {
+      const yaw = Math.PI / 2 - i * Math.PI / 18;
+      poses.push({position: [3 + 3.176 * Math.sin(yaw), 0.937,
+                             15 + 3.176 * Math.cos(yaw)]});
+    }
+    const orbit = {poses};
+"""
+
+
+@requires_node
+def test_a_ring_rig_is_recognised_with_its_spacing(tmp_path):
+    result = _ring_js(
+        ORBIT + """
+        const ring = ringOf(orbit);
+        process.stdout.write(JSON.stringify({
+          found: ring !== null,
+          centre: ring.centre.map((v) => Math.round(v * 1000) / 1000),
+          radius: Math.round(ring.radius * 1000) / 1000,
+          stations: ring.yaws.length,
+          worstError: ringError(ring),
+        }));
+    """, tmp_path, "r1.mjs")
+    assert result["found"] is True
+    assert result["centre"] == [3.0, 0.937, 15.0]
+    assert result["radius"] == 3.176
+    assert result["stations"] == 36
+    # Half the arc between neighbours: the most the snap can be off by, which is
+    # the number the pane label quotes.
+    assert result["worstError"] == 5.0
+
+
+@requires_node
+def test_a_rig_that_is_not_a_ring_is_refused(tmp_path):
+    result = _ring_js("""
+        const cloud = {poses: [
+          {position: [0, 0, 3]}, {position: [3, 0, 0]},
+          {position: [0, 0, -3]}, {position: [8, 2, 0]},
+        ]};
+        const domed = {poses: [
+          {position: [0, 0, 3]}, {position: [3, 0, 0]},
+          {position: [0, 0, -3]}, {position: [0, 3, 0.01]},
+        ]};
+        process.stdout.write(JSON.stringify({
+          cloud: ringOf(cloud), domed: ringOf(domed),
+          tiny: ringOf({poses: [{position: [0, 0, 1]}]}), none: ringOf(null),
+        }));
+    """, tmp_path, "r2.mjs")
+    # Snapping a free camera onto an arbitrary cloud of capture positions would
+    # move it somewhere the user never pointed it. One radius, one height, or
+    # no snapping.
+    assert result == {"cloud": None, "domed": None, "tiny": None, "none": None}
+
+
+@requires_node
+def test_the_nearest_station_is_the_nearest_one(tmp_path):
+    result = _ring_js(
+        ORBIT + """
+        const ring = ringOf(orbit);
+        const at = (deg) => nearestStation(ring, deg * Math.PI / 180);
+        process.stdout.write(JSON.stringify({
+          exact: at(90), next: at(80),
+          // Either side of the 85 degree midpoint between them.
+          aboveMid: at(85.1), belowMid: at(84.9),
+          // The seam: naive subtraction puts these two turns apart and would
+          // snap across the whole ring.
+          justUnder: at(-179), justOver: at(179), half: at(-180),
+          wrapped: at(90 + 360),
+        }));
+    """, tmp_path, "r3.mjs")
+    assert result["exact"] == 0                 # station 0 sits at +90
+    assert result["next"] == 1                  # station 1 at +80
+    assert result["aboveMid"] == 0
+    assert result["belowMid"] == 1
+    # -179, +179 and -180 all land on the station at -180, the short way round.
+    assert result["justUnder"] == result["justOver"] == result["half"] == 27
+    assert result["wrapped"] == 0               # a full turn is the same place
+
+
+@requires_node
+def test_the_explore_station_follows_the_camera_yaw(tmp_path):
+    result = _ring_js(
+        ORBIT + """
+        globalThis.app = {scenes: {b: orbit}, scene: "b", camera: {yaw: 0}};
+        globalThis.rig = () => app.scenes[app.scene];
+        const seen = [];
+        for (const deg of [90, 45, 0, -90]) {
+          app.camera.yaw = deg * Math.PI / 180;
+          seen.push(exploreStation());
+        }
+        app.scenes.b = {poses: [{position: [0, 0, 1]}]};
+        seen.push(exploreStation());
+        process.stdout.write(JSON.stringify(seen));
+    """, tmp_path, "r4.mjs")
+    # 10 degrees a station, starting at +90 and going down.
+    assert result[:4] == [0, 4, 9, 18]
+    # No ring, no station: pixels stay compare-only rather than being snapped
+    # onto a viewpoint that does not exist.
+    assert result[4] is None
+
+
+@requires_node
+def test_a_pixel_method_becomes_usable_in_explore_on_a_ring(tmp_path):
+    body = ORBIT + '''
+        globalThis.REPRESENTATIONS = {
+          gaussians: { geometry: true }, pixels: { geometry: false },
+        };
+        globalThis.spec = (clip) => clip && REPRESENTATIONS[clip.representation];
+        globalThis.hasGeometry = (clip) => {
+          const s = spec(clip); return s !== undefined && s.geometry;
+        };
+        globalThis.isPixels = (clip) => {
+          const s = spec(clip); return s !== undefined && !s.geometry;
+        };
+        const clips = [
+          { scene: "b", method: "vega", representation: "gaussians" },
+          { scene: "b", method: "rerf", representation: "pixels", camera: 0 },
+          { scene: "b", method: "live", representation: "pixels", camera: null },
+        ];
+        globalThis.app = { scenes: { b: orbit }, index: { clips } };
+        const onRing = methodsFor("b", "explore");
+        globalThis.app = { scenes: { b: {poses: []} }, index: { clips } };
+        process.stdout.write(JSON.stringify({
+          onRing, offRing: methodsFor("b", "explore"),
+        }));
+    '''
+    script = tmp_path / "r5.mjs"
+    script.write_text(
+        _extract("RING_TOLERANCE", "ringOf", "methodsFor") + "\n"
+        + textwrap.dedent(body)
+    )
+    finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                              timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    result = json.loads(finished.stdout)
+
+    on = {entry["method"]: entry["usable"] for entry in result["onRing"]}
+    # ReRF's views were rendered around a ring, so a drag has somewhere to land.
+    assert on["rerf"] is True
+    assert on["vega"] is True
+    # A live clip has no station -- it renders its own camera -- so there is
+    # nothing to snap it to.
+    assert on["live"] is False
+    off = {entry["method"]: entry["usable"] for entry in result["offRing"]}
+    assert off == {"vega": True, "rerf": False, "live": False}
+
+
+def test_following_the_camera_is_debounced():
+    """A spin across 36 stations must not be 36 downloads.
+
+    Crossing a station changes which clip a pixel pane plays, so re-resolving on
+    every pointermove would fetch a container per station -- 50 MB of pictures
+    nobody stopped on. The geometry panes are unaffected either way: they redraw
+    from the camera every frame.
+    """
+    page = viewer_path().read_text()
+    start = page.index("function followCamera(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "clearTimeout(followTimer)" in body
+    assert "setTimeout(" in body
+    # And the resident check is what makes the one that does fire cheap.
+    start = page.index("  async downloadAll(")
+    assert "if (this.resident)" in page[start:page.index("\n  }\n", start)]

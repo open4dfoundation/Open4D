@@ -20,7 +20,22 @@ Two consequences shape everything here:
 - **It cannot be decoded in a browser.** There is no geometry to send, and the
   entropy coder ships only as a prebuilt CPython 3.8 binary with no published
   sources. So ReRF is decoded and rendered where the GPU is, and what reaches a
-  viewer is pixels at the renderer's viewpoint. No free camera.
+  viewer is pixels.
+
+  This is *not* a limit on the viewpoint, and an earlier version of this file
+  said it was, which was wrong. ReRF is free-viewpoint — it is in the paper's
+  title, and `upstream/rerf_render.py --render_360` walks a ring around the
+  subject, advancing the frame as the camera moves. `export.py --orbit N`
+  drives exactly that. The constraint is *where* the pixels are made: the march
+  runs in PyTorch over hand-written CUDA kernels (`upstream/lib/cuda/`), so a
+  free camera means a GPU on the far end of a live connection, or — for
+  on-demand delivery — rendering the ring in advance and picking the nearest
+  view. `streamer`'s viewer does the second: 72 stations, azimuth quantised to
+  5°, elevation fixed at the rendered one, and it says so on the pane.
+
+  What Vega has and ReRF does not is *explicit geometry*, so a browser can
+  rasterise a viewpoint nobody rendered. That is a real difference; the
+  viewpoint being fixed was not.
 - **Its bottleneck is compute, not bandwidth.** At full resolution a frame costs
   ~25 ms to entropy-decode and ~90 ms to ray-march: about 8 fps, and 2.6 Mbit/s
   of JPEG out. The link is never the constraint; the ray-march is.
