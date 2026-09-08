@@ -17,10 +17,10 @@ a motion field plus a leftover that is compressed the way a JPEG is.
 
 Two consequences shape everything here:
 
-- **It cannot be decoded in a browser.** There is no geometry to send, and the
-  entropy coder ships only as a prebuilt CPython 3.8 binary with no published
-  sources. So ReRF is decoded and rendered where the GPU is, and what reaches a
-  viewer is pixels.
+- **Its bitstream cannot be decoded in a browser.** The entropy coder ships
+  only as a prebuilt CPython 3.8 binary with no published sources. So ReRF is
+  decoded where the GPU is, and what reaches a viewer is either pixels or
+  geometry read out of the field — never the bitstream itself.
 
   This is *not* a limit on the viewpoint, and an earlier version of this file
   said it was, which was wrong. ReRF is free-viewpoint — it is in the paper's
@@ -45,12 +45,61 @@ Two consequences shape everything here:
   rings is about 9 minutes and 330 MB. Cheap enough that density is a choice
   rather than a constraint — which is the point, since it is all offline.
 
-  What Vega has and ReRF does not is *explicit geometry*, so a browser can
-  rasterise a viewpoint nobody rendered. That is a real difference; the
-  viewpoint being fixed was not.
+  What Vega has and ReRF does not is geometry *as its native output*. ReRF can
+  still be **read out** as geometry, which I also got wrong at first: upstream's
+  `tools/vis_volume.py` thresholds the density grid and takes the occupied
+  voxels as a coloured point cloud. `rerf_stream/geometry.py` does the same
+  from a decoded bitstream frame rather than from a training checkpoint, so it
+  works for every frame a receiver has — see below.
 - **Its bottleneck is compute, not bandwidth.** At full resolution a frame costs
   ~25 ms to entropy-decode and ~90 ms to ray-march: about 8 fps, and 2.6 Mbit/s
   of JPEG out. The link is never the constraint; the ray-march is.
+
+## Reading the field out as geometry
+
+```bash
+python -m rerf_stream.geometry --config <run>/config.py \
+    --compression-path <run>/rerf --out ~/rerf-points \
+    --name g_basketball --scene basketball --threshold 0.35
+```
+
+Writes one point-cloud clip — binary PLY per frame, float x/y/z and uchar
+colour — which `streamer.adopt` takes as a `points` clip. Because it is
+geometry, the browser rasterises any viewpoint: a genuinely free camera, no
+pre-rendered ring and nothing to snap to.
+
+Two details differ from upstream's tool on purpose. Voxel centres come from
+`linspace(xyz_min, xyz_max, shape)`, the convention `lib/dvgo.py` samples
+against; `vis_volume.py` uses `xyz / shape * (max - min) + min`, half a voxel
+off, which is fine for a viewer and not for geometry that must line up with
+another method's. And colour comes from the rgb network, because `k0` here is
+12 feature channels rather than RGB — that network is view-dependent, so the
+colour is baked at one azimuth and frozen, the same compromise the Vega
+`.splat` export makes.
+
+Measured on `g_basketball`:
+
+| | points | MB/frame | vs photograph |
+| --- | --- | --- | --- |
+| threshold 0.20 | 146,057 | 2.19 | 31.01 dB |
+| **threshold 0.35** | **110,813** | **1.66** | **31.27 dB** |
+| threshold 0.50 | 77,710 | 1.17 | 29.96 dB |
+| the ray-march itself | — | 0.05 (JPEG) | 45.53 dB |
+
+So the conversion costs about 14 dB. Thresholding a continuous density field
+into occupied-or-not discards the soft edges a volume render integrates over,
+and no threshold buys them back — 0.35 is simply the best of the three. The
+figures are from projecting the points into training camera 0 with a nearest-z
+point rasteriser, which is *this* rasteriser and not the browser's, so treat
+them as the cost of the representation rather than of any particular renderer.
+
+Placement is exact, which is the part that had to be checked: against Vega's
+own frame 0, per-axis bounding-box overlap/union is 0.985 / 0.998 / 0.986, and
+2 of 63,305 Gaussians fall outside the ReRF box (mean opacity 0.031 — two faint
+floaters).
+
+Extraction is nearly free next to the render: 30 frames in **1 second**, where
+ray-marching one 72-view ring of the same 30 frames takes 181 s.
 
 ## Layout
 
@@ -63,6 +112,7 @@ rerf_stream/
   mjpeg.py             push JPEG frames over multipart/x-mixed-replace
   serve.py             the live stream, and the rate ladder
   export.py            render prepared clips, at one quality or several
+  geometry.py          read the density field out as a coloured point cloud
 rerf_stream_tests/
 ```
 

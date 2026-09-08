@@ -111,6 +111,14 @@ def adopt(
                 method=entry.get("method"),
                 camera=entry.get("camera"),
                 frames=list(entry["frames"]),
+                # Carried through when the export measured them. A geometry
+                # clip that arrives without its counts and bounds shows a blank
+                # size in the pane table and gives the viewer nothing to frame
+                # the camera against -- both of which read as the clip being
+                # broken rather than under-described.
+                counts=list(entry.get("counts") or []),
+                bounds_min=entry.get("bounds_min"),
+                bounds_max=entry.get("bounds_max"),
                 variants=list(entry.get("variants") or []),
                 notes=list(entry.get("notes") or []),
                 detail=dict(entry.get("detail") or {}),
