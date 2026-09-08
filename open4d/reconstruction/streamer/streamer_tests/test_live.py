@@ -202,9 +202,13 @@ def test_a_live_pane_bypasses_the_scheduler():
     start = page.index("  setClip(clip) {")
     body = page[start : page.index("\n  }\n", start)]
     start_of_branch = body.index("if (isLive(clip))")
-    # The branch ends at its own early return; slicing past that would pick up
-    # the static path and its Scheduler, which is what this is asserting about.
-    live_branch = body[start_of_branch : body.index("return;", start_of_branch)]
+    # Sliced to where the static path begins, not to the first `return;`. The
+    # branch's error handler has an early return of its own, and slicing there
+    # cut the assertion's own subject out of the string -- a test that broke on
+    # a change it was not about.
+    live_branch = body[
+        start_of_branch : body.index("const make = kind.renderer;", start_of_branch)
+    ]
     assert "this.source = null" in live_branch
     assert "clip.stream.url" in live_branch
     assert "new Scheduler" not in live_branch
