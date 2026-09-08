@@ -1245,6 +1245,15 @@ class Scheduler {
   }
 
   _touch(index, value) {
+    // Nothing is cached after the pane has gone. A decode already in flight
+    // when `release` ran resolves afterwards and would re-populate a cache
+    // that was just cleared -- and for an image frame that also strands a blob
+    // URL, because the revoke pass has already been and gone. Guarded here
+    // rather than at each call site: this is the only way into the cache.
+    if (this.abandoned) {
+      Scheduler.release(value);
+      return;
+    }
     // Insertion-ordered Map as an LRU: re-inserting moves a key to the end, so
     // the oldest is always the first key.
     this.cache.delete(index);
@@ -2733,6 +2742,14 @@ async function downloadSelection() {
   for (let index = 0; index < panes.length; index++) {
     const pane = panes[index];
     if (token !== app.downloadToken) return;      // selection changed under us
+    // The pane list was taken before the first await, and a pane can go away
+    // during one -- clicking through subjects disposes panes, which sets their
+    // source to null. Reaching into it then throws, and the catch below would
+    // report a disposed pane as a decode failure onto DOM that is no longer on
+    // the page. The clip check is the same guard against a pane that is still
+    // here but has moved to another subject's clip: its old scheduler was
+    // released, so there is nothing left to download.
+    if (!pane.source || pane.source.abandoned) continue;
     app.download.pane = index + 1;
     let held = false;
     try {
