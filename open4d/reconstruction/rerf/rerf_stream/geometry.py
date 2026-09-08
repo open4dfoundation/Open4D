@@ -27,13 +27,17 @@ Two differences from upstream's tool, both deliberate:
   one direction and frozen -- the same compromise Vega's ``.splat`` export
   makes, and worth stating for the same reason.
 
-**What it costs.** Measured on `g_basketball` frame 0, projected into training
-camera 0 and scored against the photograph: the point cloud reaches 31.3 dB
-where the ray-march of the same frame reaches 45.5 dB. Thresholding a
-continuous density field into occupied-or-not discards the soft edges the
-volume render integrates over, and no choice of threshold buys them back. So
-this is a real representation of the same reconstruction and a visibly coarser
-one -- which is the trade for a camera the browser can aim anywhere.
+**What it costs.** :func:`fidelity` measures it per subject, because the answer
+differs by reconstruction -- and it reports three numbers rather than one,
+because there are two losses. On `g_basketball` frame 0, scored from training
+camera 0: the clip reaches 24.2 dB, the same geometry with colour re-evaluated
+per view would reach 31.3, and the ray-march reaches 45.5. So freezing one
+colour per point costs 7 dB and thresholding the density field costs 14.
+
+Telling those apart matters: an early hand measurement of the middle number was
+quoted as the clip's own score, overstating it by 7 dB on every subject's
+notes. Across the nine subjects here, thresholding costs 12-15 dB fairly
+consistently and the frozen colour costs 3.5-8.
 """
 from __future__ import annotations
 
@@ -65,6 +69,23 @@ class PointCloud:
     @property
     def bounds(self) -> tuple[list[float], list[float]]:
         return self.xyz.min(axis=0).tolist(), self.xyz.max(axis=0).tolist()
+
+
+def _colour(model, xyz, directions):
+    """The rgb network's answer at ``xyz`` looked at along ``directions``.
+
+    The same path `dvgo.forward` takes: k0 features at the point, concatenated
+    with the positionally encoded view direction, through the net and a
+    sigmoid. ``k0`` here is 12 feature channels rather than RGB, so there is no
+    shortcut past the network.
+    """
+    import torch
+
+    k0 = model.grid_sampler_new(xyz, model.k0)
+    frequencies = model.viewfreq.to(xyz.device)
+    embedded = (directions.unsqueeze(-1) * frequencies).flatten(-2)
+    embedded = torch.cat([directions, embedded.sin(), embedded.cos()], -1)
+    return torch.sigmoid(model.rgbnet(torch.cat([k0, embedded], -1)))
 
 
 def _world_transform(corpus_dir) -> tuple[np.ndarray, float]:
@@ -111,18 +132,12 @@ def point_cloud(model, corpus_dir, *, threshold: float = THRESHOLD,
         grid = torch.stack(torch.meshgrid(*axes, indexing="ij"), -1)
         xyz = grid[keep]
 
-        # Colour: k0 features at each point, plus the encoded view direction,
-        # through the rgb net -- the same path `dvgo.forward` takes.
-        k0 = model.grid_sampler_new(xyz, model.k0)
         angle = math.radians(azimuth)
         direction = torch.tensor(
             [math.sin(angle), 0.0, math.cos(angle)],
             dtype=torch.float32, device=xyz.device,
         ).expand_as(xyz)
-        frequencies = model.viewfreq.to(xyz.device)
-        embedded = (direction.unsqueeze(-1) * frequencies).flatten(-2)
-        embedded = torch.cat([direction, embedded.sin(), embedded.cos()], -1)
-        rgb = torch.sigmoid(model.rgbnet(torch.cat([k0, embedded], -1)))
+        rgb = _colour(model, xyz, direction)
 
         points = xyz.double().cpu().numpy()
         colours = rgb.clamp(0, 1).cpu().numpy()
@@ -178,18 +193,54 @@ def fidelity(player, cloud: PointCloud, *, view: int = 0) -> dict:
     ray-march of the same frame for comparison.
 
     Measured per subject rather than quoted from one. The note used to carry
-    basketball's 31.3 dB on every subject's clip, which states a measurement
-    of one reconstruction as a fact about another -- and the spread turns out
-    to matter, since how much of a density field clears the threshold varies a
-    lot between subjects.
+    basketball's number on every subject's clip, which states a measurement of
+    one reconstruction as a fact about another -- and the spread turns out to
+    matter, since how much of a density field clears the threshold varies a lot
+    between subjects.
+
+    The cloud is put back into the **normalised** frame before it is scored.
+    `point_cloud` returns world coordinates, because that is what a bundle
+    needs for two methods to line up in 3D, but `training_cameras` reads
+    ``cams_*.json`` and those extrinsics are normalised -- it is the frame the
+    model is trained and rendered in, which is why `player.render` takes the
+    same camera. Rasterising world points with a normalised camera scores 18 dB
+    where the truth is 31, and does it without failing: the subject covers a
+    small part of a frame composited on black, so a cloud landing in the wrong
+    place still agrees with the photograph about most of the pixels.
     """
     from .cameras import captured_image, psnr, training_cameras
 
     camera = training_cameras(player.corpus_dir)[view]
     photograph = captured_image(player.corpus_dir, 0, view,
                                 background=player.background)
+    centre, scale = _world_transform(player.corpus_dir)
+    positions = ((cloud.xyz.astype(np.float64) - centre) * scale).astype(np.float32)
+    local = PointCloud(xyz=positions, rgb=cloud.rgb)
+
+    # The same geometry with colour re-evaluated per point towards this camera.
+    # A shipped clip cannot do that -- it carries one colour per point -- so
+    # this is a ceiling rather than an alternative, and it is here to separate
+    # the two losses: the gap up to it is what freezing the colour costs, and
+    # the gap from it to the march is what thresholding the field costs.
+    #
+    # Worth naming because I conflated them: an early measurement of this
+    # ceiling was quoted as the clip's own score, overstating it by 7 dB.
+    import torch
+
+    with torch.no_grad():
+        points = torch.as_tensor(positions, device="cuda")
+        eye = torch.as_tensor(camera.c2w[:3, 3], dtype=torch.float32, device="cuda")
+        towards = torch.nn.functional.normalize(points - eye, dim=-1)
+        matched = _colour(player.model, points, towards)
+        ceiling = PointCloud(
+            xyz=positions,
+            rgb=np.rint(matched.clamp(0, 1).cpu().numpy() * 255).astype(np.uint8),
+        )
+
     return {
-        "points_psnr": round(float(psnr(rasterise(cloud, camera), photograph)), 2),
+        "points_psnr": round(float(psnr(rasterise(local, camera), photograph)), 2),
+        "view_matched_psnr": round(
+            float(psnr(rasterise(ceiling, camera), photograph)), 2),
         "march_psnr": round(float(psnr(player.render(camera), photograph)), 2),
         "against": f"training camera {view}, frame 0",
     }
@@ -305,7 +356,7 @@ def export(player, out_dir, *, name: str, scene: str,
             # `clipFor` then does the right thing per mode with no special
             # case: Explore takes the geometry, because a free camera can
             # rasterise it anywhere, and Compare takes the ray-march at the
-            # station, because at a fixed pose the march is 14 dB better.
+            # station, because at a fixed pose the march is ~20 dB better.
             "method": "rerf",
             "camera": None,
             "frames": paths,
@@ -321,10 +372,13 @@ def export(player, out_dir, *, name: str, scene: str,
                 "rasterises whatever viewpoint is asked for, with no "
                 "pre-rendered viewpoints and nothing to snap to",
                 (
-                    f"coarser than the ray-march of the same frame — "
+                    f"coarser than the ray-march of the same frame: "
                     f"{scored['points_psnr']} dB against the photograph where "
-                    f"the march reaches {scored['march_psnr']} — because a "
-                    "threshold discards the soft edges a volume render "
+                    f"the march reaches {scored['march_psnr']}. Two separate "
+                    f"losses — re-evaluating colour per view would reach "
+                    f"{scored['view_matched_psnr']} dB, so the gap up to that "
+                    "is the frozen colour and the gap above it is the "
+                    "threshold discarding the soft edges a volume render "
                     "integrates over. Scored with a nearest-z point splat, so "
                     "it is the cost of the representation rather than of any "
                     "particular renderer"

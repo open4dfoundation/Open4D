@@ -77,21 +77,55 @@ another method's. And colour comes from the rgb network, because `k0` here is
 colour is baked at one azimuth and frozen, the same compromise the Vega
 `.splat` export makes.
 
-Measured on `g_basketball`:
+`export` scores each subject against its own photograph and records the result
+in the clip, because the conversion costs different amounts for different
+reconstructions. Measured at threshold 0.35, from training camera 0:
 
-| | points | MB/frame | vs photograph |
-| --- | --- | --- | --- |
-| threshold 0.20 | 146,057 | 2.19 | 31.01 dB |
-| **threshold 0.35** | **110,813** | **1.66** | **31.27 dB** |
-| threshold 0.50 | 77,710 | 1.17 | 29.96 dB |
-| the ray-march itself | — | 0.05 (JPEG) | 45.53 dB |
+| subject | clip | ceiling | ray-march | frozen colour | threshold |
+| --- | --- | --- | --- | --- | --- |
+| basketball | 24.23 | 31.27 | 45.53 | 7.04 | 14.26 |
+| dancer | 24.84 | 30.45 | 45.16 | 5.61 | 14.71 |
+| mitch | 24.38 | 29.77 | 42.26 | 5.39 | 12.49 |
+| thomas | **32.04** | 35.51 | 49.08 | 3.47 | 13.57 |
+| UMA0 | 26.01 | 32.57 | 46.36 | 6.56 | 13.79 |
+| UMA1 | 24.75 | 33.09 | 46.74 | 8.34 | 13.65 |
+| UMA2 | 27.37 | 34.87 | 47.79 | 7.50 | 12.92 |
+| UMA3 | 25.01 | 30.72 | **38.19** | 5.71 | **7.47** |
+| UMA4 | 26.12 | 31.67 | 45.75 | 5.55 | 14.08 |
 
-So the conversion costs about 14 dB. Thresholding a continuous density field
-into occupied-or-not discards the soft edges a volume render integrates over,
-and no threshold buys them back — 0.35 is simply the best of the three. The
-figures are from projecting the points into training camera 0 with a nearest-z
-point rasteriser, which is *this* rasteriser and not the browser's, so treat
-them as the cost of the representation rather than of any particular renderer.
+Three numbers, because there are **two** losses and they are worth telling
+apart. *clip* is what the clip actually scores. *ceiling* is the same geometry
+with colour re-evaluated per view — which a shipped clip cannot do, since it
+carries one colour per point — so the gap up to it is what freezing the colour
+costs, and the gap from it to the ray-march is what thresholding the density
+field costs.
+
+Getting this wrong is easy and I did: an early hand measurement of the
+*ceiling* was quoted as the clip's own score, overstating it by 7 dB, and that
+figure was written into every subject's notes. Both numbers are recorded now,
+and `fidelity` asserts they are strictly ordered.
+
+Thresholding costs 12–15 dB fairly consistently. The frozen colour costs 3.5–8,
+and it is the part that could be improved: colour is baked at azimuth 0 to match
+what the Vega export does, so the two methods stay comparable, but for
+`g_basketball` the capture rig sits near azimuth −177° and baking there instead
+would recover about 2 dB.
+
+UMA3 is the outlier worth noticing: its ray-march is the weakest of the nine at
+38.19 dB, so its point cloud gives up only 7.47 — the conversion costs least
+where the reconstruction was already worst.
+
+All figures come from a nearest-z point rasteriser in `geometry.rasterise`,
+which is *not* the browser's point renderer, so they are the cost of the
+representation rather than of any particular renderer.
+
+One subtlety the code now guards: `point_cloud` returns **world** coordinates
+because a bundle needs them to line up with another method's geometry, while
+`training_cameras` reads `cams_*.json` and those extrinsics are **normalised**.
+Scoring world points against a normalised camera reported 18 dB where the truth
+was 24 — and it did not fail, because the subject covers a small part of a frame
+composited on black, so a cloud landing in the wrong place still agrees with the
+photograph about most of the pixels.
 
 Placement is exact, which is the part that had to be checked: against Vega's
 own frame 0, per-axis bounding-box overlap/union is 0.985 / 0.998 / 0.986, and
