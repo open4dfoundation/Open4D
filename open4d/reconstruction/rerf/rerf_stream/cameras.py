@@ -8,6 +8,7 @@ disagrees moves where sampling begins and quietly costs quality.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
@@ -184,6 +185,122 @@ def capture_rig(corpus_dir) -> dict:
         # From the intrinsics these views were rendered with, so a geometry
         # method added to this scene later frames the subject identically.
         "fov_y": float(2.0 * np.arctan(height * 0.5 / float(first["fy"]))),
+        "bounds_min": list(manifest["world_bounds_min"]),
+        "bounds_max": list(manifest["world_bounds_max"]),
+        "poses": poses,
+    }
+
+
+def _ring(corpus_dir):
+    """The training rig's circle: centre, radius, up axis, mean focal length.
+
+    ORBIT's corpus puts its eight cameras on one horizontal ring at a fixed
+    radius, which is what makes a denser orbit a matter of interpolation rather
+    than invention. Measured rather than assumed -- if a corpus ever arrives
+    with cameras off a single ring this raises instead of quietly producing an
+    orbit that does not match the views it claims to extend.
+    """
+    cameras = training_cameras(corpus_dir)
+    positions = np.array([camera.c2w[:3, 3] for camera in cameras])
+    centre = positions.mean(axis=0)
+    radii = np.linalg.norm(positions - centre, axis=1)
+    if radii.ptp() > 0.02 * radii.mean():
+        raise ValueError(
+            f"{corpus_dir}'s cameras are not on one ring (radii "
+            f"{radii.min():.3f} to {radii.max():.3f}); an orbit through them "
+            "would not pass through the views it is extending"
+        )
+    # The up axis is the one the ring does not span.
+    up_axis = int(np.argmin(positions.var(axis=0)))
+    focal = float(np.mean([camera.fx for camera in cameras]))
+    return cameras, centre, float(radii.mean()), up_axis, focal
+
+
+def orbit_cameras(corpus_dir, count: int = 36, *, height: float = 0.0):
+    """``count`` cameras evenly spaced around the training ring.
+
+    This is what a browser gets instead of a free camera for a representation
+    it cannot decode. A neural field has no geometry to send, so "look around"
+    becomes a dense set of prepared viewpoints: quantised, but a 10-degree step
+    reads as orbiting rather than as cutting between cameras.
+
+    Generated in the corpus's **normalised** frame, matching the extrinsics in
+    ``cams_*.json``, because that is the frame the model is trained and
+    rendered in. :func:`orbit_rig` converts the same orbit to world
+    coordinates for a bundle's rig, where a geometry method has to line up.
+
+    Every view shares one focal length -- the ring's mean -- so the framing
+    holds steady while orbiting. The training cameras' own focals differ by up
+    to 8%, and inheriting that would make the subject breathe as the view
+    moved.
+    """
+    if count < 3:
+        raise ValueError("an orbit needs at least 3 views")
+    cameras, centre, radius, up_axis, focal = _ring(corpus_dir)
+    first = cameras[0]
+    plane = [axis for axis in range(3) if axis != up_axis]
+
+    # Start where camera 0 is, so view 0 of the orbit is the view that already
+    # exists -- which is what makes the orbit checkable against a real render.
+    offset = first.c2w[:3, 3] - centre
+    start = math.atan2(offset[plane[1]], offset[plane[0]])
+
+    up = np.zeros(3)
+    up[up_axis] = 1.0
+    made = []
+    for index in range(count):
+        angle = start + 2.0 * math.pi * index / count
+        position = np.array(centre, dtype=np.float64)
+        position[plane[0]] += radius * math.cos(angle)
+        position[plane[1]] += radius * math.sin(angle)
+        position[up_axis] += height
+
+        forward = centre - position
+        forward /= np.linalg.norm(forward)
+        down = -up
+        right = np.cross(down, forward)
+        right /= np.linalg.norm(right)
+
+        c2w = np.eye(4)
+        c2w[:3, 0], c2w[:3, 1], c2w[:3, 2] = right, down, forward
+        c2w[:3, 3] = position
+        made.append(Camera(
+            camera_id=index, width=first.width, height=first.height,
+            fx=focal, fy=focal,
+            cx=(first.width - 1) * 0.5, cy=(first.height - 1) * 0.5,
+            c2w=c2w,
+        ))
+    return made
+
+
+def orbit_rig(corpus_dir, count: int = 36, *, height: float = 0.0) -> dict:
+    """The same orbit as a bundle ``scenes`` entry, in world coordinates.
+
+    A bundle's rig is what lets a viewer put every method at one pose, so it
+    has to be in the shared world frame rather than the frame this model
+    happens to be normalised into. The corpus records both:
+    ``normalised = (world - centre) * scale``, with rotations unchanged.
+    """
+    with open(Path(corpus_dir) / "nevo_corpus.json") as handle:
+        manifest = json.load(handle)
+    centre = np.asarray(manifest["world_centre"], dtype=np.float64)
+    scale = float(manifest["world_scale"])
+
+    poses = []
+    for camera in orbit_cameras(corpus_dir, count, height=height):
+        position = camera.c2w[:3, 3] / scale + centre
+        poses.append({
+            "position": position.tolist(),
+            "right": camera.c2w[:3, 0].tolist(),
+            "down": camera.c2w[:3, 1].tolist(),
+            "forward": camera.c2w[:3, 2].tolist(),
+        })
+    height_px = int(manifest["height"])
+    return {
+        "width": int(manifest["width"]),
+        "height": height_px,
+        "fov_y": float(2.0 * np.arctan(
+            height_px * 0.5 / orbit_cameras(corpus_dir, count)[0].fy)),
         "bounds_min": list(manifest["world_bounds_min"]),
         "bounds_max": list(manifest["world_bounds_max"]),
         "poses": poses,
