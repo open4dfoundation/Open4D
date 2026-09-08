@@ -216,13 +216,21 @@ def _ring(corpus_dir):
     return cameras, centre, float(radii.mean()), up_axis, focal
 
 
-def orbit_cameras(corpus_dir, count: int = 36, *, height: float = 0.0):
+def orbit_cameras(corpus_dir, count: int = 36, *, elevation: float = 0.0):
     """``count`` cameras evenly spaced around the training ring.
 
-    This is what a browser gets instead of a free camera for a representation
-    it cannot decode. A neural field has no geometry to send, so "look around"
-    becomes a dense set of prepared viewpoints: quantised, but a 10-degree step
-    reads as orbiting rather than as cutting between cameras.
+    ReRF renders free viewpoint -- this is upstream's ``--render_360`` path,
+    driven from here -- but the march needs a CUDA GPU, so on-demand delivery
+    means rendering the viewpoints ahead of time and letting a viewer pick the
+    nearest. Quantised, but at 5 degrees a step it reads as orbiting rather
+    than as cutting between cameras.
+
+    ``elevation`` tilts the ring, in degrees above the training plane, and does
+    so **spherically**: the camera stays at the ring's radius from the centre
+    rather than being lifted straight up. Lifting would move the cameras
+    further away -- ``sqrt(r^2 + h^2)`` -- and the subject would shrink in the
+    tilted rings, which for a viewer that snaps between rings would read as the
+    reconstruction changing size when it did not.
 
     Generated in the corpus's **normalised** frame, matching the extrinsics in
     ``cams_*.json``, because that is the frame the model is trained and
@@ -247,19 +255,29 @@ def orbit_cameras(corpus_dir, count: int = 36, *, height: float = 0.0):
 
     up = np.zeros(3)
     up[up_axis] = 1.0
+    tilt = math.radians(elevation)
+    if not -85.0 <= elevation <= 85.0:
+        # At the pole the azimuth stops meaning anything and `right` collapses,
+        # so the basis below would be singular rather than merely awkward.
+        raise ValueError(f"elevation {elevation} is outside +/-85 degrees")
+    planar, lift = radius * math.cos(tilt), radius * math.sin(tilt)
     made = []
     for index in range(count):
         angle = start + 2.0 * math.pi * index / count
         position = np.array(centre, dtype=np.float64)
-        position[plane[0]] += radius * math.cos(angle)
-        position[plane[1]] += radius * math.sin(angle)
-        position[up_axis] += height
+        position[plane[0]] += planar * math.cos(angle)
+        position[plane[1]] += planar * math.sin(angle)
+        position[up_axis] += lift
 
         forward = centre - position
         forward /= np.linalg.norm(forward)
-        down = -up
-        right = np.cross(down, forward)
+        # `right` from world up rather than from `down`, so it stays horizontal
+        # as the ring tilts; `down` is then recovered perpendicular to both. On
+        # the untilted ring this is the same basis as before.
+        right = np.cross(forward, up)
         right /= np.linalg.norm(right)
+        down = np.cross(forward, right)
+        down /= np.linalg.norm(down)
 
         c2w = np.eye(4)
         c2w[:3, 0], c2w[:3, 1], c2w[:3, 2] = right, down, forward
@@ -273,7 +291,7 @@ def orbit_cameras(corpus_dir, count: int = 36, *, height: float = 0.0):
     return made
 
 
-def orbit_rig(corpus_dir, count: int = 36, *, height: float = 0.0) -> dict:
+def orbit_rig(corpus_dir, count: int = 36, *, elevation: float = 0.0) -> dict:
     """The same orbit as a bundle ``scenes`` entry, in world coordinates.
 
     A bundle's rig is what lets a viewer put every method at one pose, so it
@@ -287,7 +305,7 @@ def orbit_rig(corpus_dir, count: int = 36, *, height: float = 0.0) -> dict:
     scale = float(manifest["world_scale"])
 
     poses = []
-    for camera in orbit_cameras(corpus_dir, count, height=height):
+    for camera in orbit_cameras(corpus_dir, count, elevation=elevation):
         position = camera.c2w[:3, 3] / scale + centre
         poses.append({
             "position": position.tolist(),

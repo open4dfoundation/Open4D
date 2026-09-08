@@ -1677,15 +1677,14 @@ class Pane {
     this.source = new Scheduler(clip, "./", kind.decode, {
       cacheSize: kind.cacheSize, meter,
     });
-    const ring = app.mode === "explore" && isPixels(clip) ? ringOf(rig()) : null;
+    const shell = app.mode === "explore" && isPixels(clip) ? shellOf(rig()) : null;
     this.label.textContent = clip.camera === null || clip.camera === undefined
       ? this.method
       // In Explore a pixel pane is the *nearest* rendered view, not the camera
       // asked for. Said in the label because the pane otherwise looks like it
       // followed exactly, and a viewer comparing it against a rasterised pane
       // beside it would read the offset as a reconstruction error.
-      : ring ? `${this.method} · nearest of ${ring.yaws.length} views (±${
-          ringError(ring).toFixed(0)}°)`
+      : shell ? `${this.method} · nearest of ${shell.dirs.length} views`
       : `${this.method} · cam ${clip.camera}`;
   }
 
@@ -1821,14 +1820,14 @@ function scenesInBundle() {
  */
 function methodsFor(scene, mode) {
   const seen = new Map();
-  const ring = ringOf(app.scenes[scene]);
+  const shell = shellOf(app.scenes[scene]);
   for (const clip of app.index.clips) {
     if (clip.scene !== scene) continue;
     // Pixels are usable in Explore when the scene's rig is a ring: the drag
     // then picks the nearest rendered view instead of being refused. Without a
     // ring there is nothing to snap onto and they stay compare-only.
     const usable = mode !== "explore" || hasGeometry(clip)
-      || (isPixels(clip) && !!ring && clip.camera !== null
+      || (isPixels(clip) && !!shell && clip.camera !== null
           && clip.camera !== undefined);
     // A method with several clips is usable if any one of them is: Vega has
     // Gaussians, so it survives Explore even where its image clips do not.
@@ -1855,51 +1854,127 @@ function rig() { return app.scenes[app.scene] || null; }
  * at -- both of which the pane label states rather than hides.
  */
 
-//: Tolerance for calling a rig a ring, as a fraction of its radius. Poses are
+//: Tolerance for calling a rig a shell, as a fraction of its radius. Poses are
 //: written from a float32 render pipeline, so exact equality is not available;
 //: 2% is far tighter than the arc between neighbouring stations.
-const RING_TOLERANCE = 0.02;
+const SHELL_TOLERANCE = 0.02;
 
-/* The ring a rig describes, or null if it does not describe one.
+//: Elevations within this many degrees of each other are one ring. The rings
+//: this recovers are 25 degrees apart, so the margin is wide.
+const RING_MERGE_DEG = 1.0;
+
+/* Where a rig's cameras are all looking.
+ *
+ * Solved from the poses rather than taken as the centroid of their positions.
+ * A single ring's centroid *is* its centre, which is why the centroid was good
+ * enough while there was one ring -- but stack two rings at different heights
+ * and the centroid sits between them, off the axis, and every radius measured
+ * from it comes out different. The cameras themselves know better: each one
+ * points at the target, so the target is the point closest to all of their view
+ * rays. Least squares over `sum |(I - ff')(x - p)|^2`, which is a 3x3 solve.
+ */
+function lookAtCentre(poses) {
+  const a = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const b = [0, 0, 0];
+  for (const pose of poses) {
+    const f = normalize(pose.forward);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const m = (r === c ? 1 : 0) - f[r] * f[c];
+        a[r * 3 + c] += m;
+        b[r] += m * pose.position[c];
+      }
+    }
+  }
+  const det = a[0] * (a[4] * a[8] - a[5] * a[7])
+            - a[1] * (a[3] * a[8] - a[5] * a[6])
+            + a[2] * (a[3] * a[7] - a[4] * a[6]);
+  // Degenerate when every camera looks the same way -- a rig with no
+  // convergence has no centre to find, and inverting anyway would produce a
+  // wild point and a shell that happened to fit it.
+  if (!isFinite(det) || Math.abs(det) < 1e-9) return null;
+  const solve = (column) => {
+    const m = a.slice();
+    for (let r = 0; r < 3; r++) m[r * 3 + column] = b[r];
+    return (m[0] * (m[4] * m[8] - m[5] * m[7])
+          - m[1] * (m[3] * m[8] - m[5] * m[6])
+          + m[2] * (m[3] * m[7] - m[4] * m[6])) / det;
+  };
+  return [solve(0), solve(1), solve(2)];
+}
+
+/* The shell of viewpoints a rig describes, or null if it does not describe one.
  *
  * Checked rather than assumed: a rig read from a capture corpus is wherever the
  * cameras physically were, and snapping a free camera onto an arbitrary cloud
  * of viewpoints would move it somewhere the user did not ask for. Only a rig
- * whose stations sit at one radius and one height about a common centre gets to
- * stand in for an orbit.
+ * whose stations sit at one radius about a common look-at point gets to stand
+ * in for an orbit.
+ *
+ * One radius and *not* one height, which is the generalisation from a single
+ * ring: `--elevations 0,25,-25` renders three of them, and the export puts the
+ * cameras at a constant distance precisely so that this holds and the subject
+ * does not change size between them.
  */
-function ringOf(scene) {
+function shellOf(scene) {
   if (!scene || !scene.poses || scene.poses.length < 4) return null;
-  if (scene._ring !== undefined) return scene._ring;
+  if (scene._shell !== undefined) return scene._shell;
+  scene._shell = null;
   const poses = scene.poses;
-  const centre = [0, 1, 2].map((axis) =>
-    poses.reduce((sum, pose) => sum + pose.position[axis], 0) / poses.length);
-  const radii = poses.map((pose) => Math.hypot(
-    pose.position[0] - centre[0], pose.position[2] - centre[2]));
+  if (!poses.every((pose) => pose.position && pose.forward)) return null;
+  const centre = lookAtCentre(poses);
+  if (!centre) return null;
+
+  const offsets = poses.map((pose) => [0, 1, 2].map((i) => pose.position[i] - centre[i]));
+  const radii = offsets.map((o) => Math.hypot(o[0], o[1], o[2]));
   const radius = radii.reduce((a, b) => a + b, 0) / radii.length;
-  const heights = poses.map((pose) => pose.position[1]);
-  const spread = Math.max(...heights) - Math.min(...heights);
-  const round = radii.every((r) => Math.abs(r - radius) <= RING_TOLERANCE * radius);
-  const level = spread <= RING_TOLERANCE * radius;
-  scene._ring = (round && level && radius > 0) ? {
-    centre, radius,
-    // Same convention as OrbitCamera.frame: +x is sin(yaw), +z is cos(yaw), so
-    // a yaw computed here is directly comparable to the camera's own.
-    yaws: poses.map((pose) => Math.atan2(
-      pose.position[0] - centre[0], pose.position[2] - centre[2])),
-  } : null;
-  return scene._ring;
+  if (!(radius > 0)) return null;
+  if (!radii.every((r) => Math.abs(r - radius) <= SHELL_TOLERANCE * radius)) return null;
+
+  // Unit direction from the subject out to each station. This is what a snap
+  // compares against, and it carries azimuth and elevation together -- so the
+  // seam at +/-180 degrees needs no special case and neither does the vertical.
+  const dirs = offsets.map((o, i) => [o[0] / radii[i], o[1] / radii[i], o[2] / radii[i]]);
+  const up = WORLD_UP;
+  const elevations = dirs.map((d) =>
+    Math.asin(Math.max(-1, Math.min(1, d[0] * up[0] + d[1] * up[1] + d[2] * up[2])))
+    * 180 / Math.PI);
+
+  // Recover the rings, so the label can quote an azimuth step and an elevation
+  // count instead of one number that means neither.
+  const rings = [];
+  for (const elevation of [...elevations].sort((x, y) => x - y)) {
+    const last = rings[rings.length - 1];
+    if (last && Math.abs(elevation - last.elevation) <= RING_MERGE_DEG) {
+      last.count += 1;
+    } else {
+      rings.push({ elevation, count: 1 });
+    }
+  }
+  scene._shell = {
+    centre, radius, dirs, rings,
+    //: Azimuth step of the most populated ring, in degrees. Every ring the
+    //: export writes holds the same number of views, so this is the step of
+    //: all of them.
+    azimuthStep: 360 / Math.max(...rings.map((ring) => ring.count)),
+  };
+  return scene._shell;
 }
 
-/* The station whose yaw is closest to `yaw`, comparing the short way round.
- * Naive subtraction puts 179 degrees and -179 degrees two turns apart and would
- * snap across the whole ring at the seam. */
-function nearestStation(ring, yaw) {
-  let best = 0, closest = Infinity;
-  for (let index = 0; index < ring.yaws.length; index++) {
-    let delta = Math.abs(((ring.yaws[index] - yaw + Math.PI * 3) % (Math.PI * 2))
-      - Math.PI);
-    if (delta < closest) { closest = delta; best = index; }
+/* The station pointing most nearly the same way as `direction`.
+ *
+ * Compared as directions from the subject, not as yaw and pitch separately: a
+ * dot product is monotone in the angle between them, so the largest one is the
+ * nearest station with no wrap-around to handle and no need to weigh a degree
+ * of azimuth against a degree of elevation.
+ */
+function nearestStation(shell, direction) {
+  const d = normalize(direction);
+  let best = 0, closest = -Infinity;
+  for (let index = 0; index < shell.dirs.length; index++) {
+    const s = shell.dirs[index];
+    const dot = s[0] * d[0] + s[1] * d[1] + s[2] * d[2];
+    if (dot > closest) { closest = dot; best = index; }
   }
   return best;
 }
@@ -1908,15 +1983,33 @@ function nearestStation(ring, yaw) {
  * the free camera is pointing. Null when the scene's rig is not a ring, in
  * which case pixels stay out of Explore as they were. */
 function exploreStation() {
-  const ring = ringOf(rig());
-  if (!ring) return null;
-  return nearestStation(ring, app.camera.yaw);
+  const shell = shellOf(rig());
+  if (!shell) return null;
+  // The camera's own direction from what it is looking at, in the same terms
+  // the shell holds its stations in.
+  const pitch = app.camera.pitch, yaw = app.camera.yaw;
+  return nearestStation(shell, [
+    Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch),
+    Math.cos(yaw) * Math.cos(pitch),
+  ]);
 }
 
-//: Half the arc between neighbouring stations -- the worst the snap can be off
-//: by, which is what the pane label quotes.
-function ringError(ring) {
-  return 180 / ring.yaws.length;
+/* How the shell is sampled, for the pane label: the azimuth step and the
+ * elevations. Quoted as two numbers rather than one, because that is how it is
+ * experienced -- dragging sideways steps finely and dragging up jumps between
+ * rings -- and a single worst-case figure would be the ring gap and would
+ * describe the sideways drag wrongly. */
+function shellSampling(shell) {
+  const elevations = shell.rings.map((ring) => {
+    // Rounded away from negative zero. The flat ring's elevation comes out of
+    // an asin as a whisker below zero, and `(-0).toFixed(0)` is the string
+    // "-0", so a level rig read "-0°".
+    const degrees = Math.round(ring.elevation);
+    return `${degrees === 0 ? 0 : degrees}°`;
+  });
+  return `±${(shell.azimuthStep / 2).toFixed(1)}° azimuth, `
+    + (shell.rings.length === 1 ? `elevation fixed at ${elevations[0]}`
+        : `${shell.rings.length} elevations (${elevations.join(", ")})`);
 }
 
 function clipFor(method) {
@@ -2316,13 +2409,12 @@ function renderNotes() {
   if (app.mode === "explore") {
     lines.push("free camera shared across every pane: differences are the reconstructions, not the viewpoint");
     const snapped = app.panes.filter((pane) => pane.clip && isPixels(pane.clip));
-    const ring = ringOf(rig());
-    if (snapped.length && ring) {
-      lines.push(`${snapped.map((pane) => pane.method).join(", ")}: rendered`
-        + ` offline on a GPU, so the drag picks the nearest of ${ring.yaws.length}`
-        + ` views rather than rasterising a new one — azimuth quantised to`
-        + ` ${(2 * ringError(ring)).toFixed(0)}°, elevation fixed at the one`
-        + ` they were rendered at`);
+    const shell = shellOf(rig());
+    if (snapped.length && shell) {
+      lines.push(`${snapped.map((pane) => pane.method).join(", ")}: free`
+        + ` viewpoint, but ray-marched on a GPU rather than in the browser, so`
+        + ` the views were rendered in advance and the drag picks the nearest of`
+        + ` ${shell.dirs.length} — ${shellSampling(shell)}`);
     }
   } else if (rig()) {
     const pose = rig().poses[app.station];

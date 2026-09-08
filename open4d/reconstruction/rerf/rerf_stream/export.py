@@ -107,6 +107,25 @@ def write_jpeg(path: Path, image: np.ndarray, quality: int = QUALITY) -> int:
     return path.stat().st_size
 
 
+def _stacked_rig(corpus_dir, count: int, elevations) -> dict:
+    """One rig holding every ring's poses, in camera order.
+
+    A bundle's rig is a flat list and a clip's ``camera`` is an index into it,
+    so the stations have to be laid out in exactly the order the cameras were
+    rendered -- ring by ring, view by view within a ring. A viewer recovers the
+    rings from the pose geometry rather than being told, which means nothing
+    here has to describe the stacking for it.
+    """
+    stacked = None
+    for elevation in elevations:
+        ring = orbit_rig(corpus_dir, count, elevation=elevation)
+        if stacked is None:
+            stacked = dict(ring)
+        else:
+            stacked["poses"] = stacked["poses"] + ring["poses"]
+    return stacked
+
+
 def run(args) -> int:
     player = BitstreamPlayer(
         args.config,
@@ -141,8 +160,25 @@ def run(args) -> int:
                 "only at a camera that was actually there, and an orbit view "
                 "between two of them has none"
             )
-        source = orbit_cameras(player.corpus_dir, args.orbit)
+        # One ring per elevation, concatenated. A single ring gives a viewer an
+        # azimuth to drag along and nothing for the vertical; a stack of them
+        # gives it both, at the cost of a render per ring -- which is 3 minutes
+        # and 110 MB, so it is a cost worth paying rather than a reason not to.
+        elevations = [float(part) for part in args.elevations.split(",") if part.strip()]
+        if not elevations:
+            raise SystemExit("--elevations needs at least one value")
+        if len(set(elevations)) != len(elevations):
+            raise SystemExit(f"--elevations {args.elevations} repeats a ring")
+        source = [
+            camera
+            for elevation in elevations
+            for camera in orbit_cameras(player.corpus_dir, args.orbit,
+                                        elevation=elevation)
+        ]
     else:
+        if args.elevations != "0":
+            raise SystemExit("--elevations only means something with --orbit")
+        elevations = [0.0]
         source = player.cameras()
     cameras = [camera.scaled(args.scale) for camera in source]
     views = (
@@ -163,17 +199,20 @@ def run(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     # name -> (clip metadata, list of relative frame paths)
+    # Two digits while that is enough, so a single-ring export keeps the names
+    # it has always had; wider only when a stack of rings needs it.
+    pad = max(2, len(str(len(cameras) - 1)))
     clips = {}
     for view in views:
-        clips[f"{args.name}-rerf-cam{view:02d}"] = {
+        clips[f"{args.name}-rerf-cam{view:0{pad}d}"] = {
             "method": "rerf", "camera": view, "kind": "colour", "frames": [],
         }
         if args.depth:
-            clips[f"{args.name}-rerf-cam{view:02d}-depth"] = {
+            clips[f"{args.name}-rerf-cam{view:0{pad}d}-depth"] = {
                 "method": "rerf-depth", "camera": view, "kind": "depth", "frames": [],
             }
         if args.captured:
-            clips[f"{args.name}-captured-cam{view:02d}"] = {
+            clips[f"{args.name}-captured-cam{view:0{pad}d}"] = {
                 "method": "captured", "camera": view, "kind": "captured",
                 "frames": [],
             }
@@ -191,7 +230,7 @@ def run(args) -> int:
             march_s += time.time() - began
             colour, depth = rendered if args.depth else (rendered, None)
 
-            name = f"{args.name}-rerf-cam{view:02d}"
+            name = f"{args.name}-rerf-cam{view:0{pad}d}"
             for rung, (scale, quality) in rungs.items():
                 # One ray-march per view, resampled per rung. The march is the
                 # expensive step (~90 ms) and re-marching at a lower resolution
@@ -215,7 +254,7 @@ def run(args) -> int:
                     clips[name].setdefault("default_bytes", 0)
                     clips[name]["default_bytes"] += written
             if args.depth:
-                name = f"{args.name}-rerf-cam{view:02d}-depth"
+                name = f"{args.name}-rerf-cam{view:0{pad}d}-depth"
                 relative = f"{name}/frame_{position:04d}.jpg"
                 total_bytes += write_jpeg(out / relative, depth, args.quality)
                 clips[name]["frames"].append(relative)
@@ -225,7 +264,7 @@ def run(args) -> int:
                 # left to another exporter so a scene arrives comparable: a
                 # reconstruction with nothing to compare against is a pane
                 # nobody can judge.
-                name = f"{args.name}-captured-cam{view:02d}"
+                name = f"{args.name}-captured-cam{view:0{pad}d}"
                 relative = f"{name}/frame_{position:04d}.jpg"
                 photo = captured_image(
                     player.corpus_dir, frame.index, view,
@@ -244,11 +283,15 @@ def run(args) -> int:
         # nearest one. Worth stating precisely: an earlier version of this note
         # said ReRF had no free camera, which is wrong about the method and only
         # true of a browser.
-        (f"free-viewpoint ReRF, ray-marched at {args.orbit} viewpoints evenly "
-         f"around the capture ring (upstream's --render_360 path) — rendered "
-         f"ahead of time because the march needs a CUDA GPU, so a viewer picks "
-         f"the nearest of the {args.orbit}: azimuth quantised to "
-         f"{360 / args.orbit:.0f}°, elevation fixed"
+        (f"free-viewpoint ReRF, ray-marched at {args.orbit} viewpoints around "
+         f"the capture ring on {len(elevations)} ring(s) at "
+         f"{', '.join(f'{e:g}°' for e in elevations)} elevation "
+         f"(upstream's --render_360 path) — rendered ahead of time because the "
+         f"march needs a CUDA GPU, so a viewer picks the nearest of "
+         f"{args.orbit * len(elevations)}: azimuth quantised to "
+         f"{360 / args.orbit:.0f}°"
+         + (", elevation fixed" if len(elevations) == 1 else
+            f", elevation to the nearest of {len(elevations)}")
          if args.orbit else
          "ReRF volume render at the scene's own capture camera — the same pose "
          "the photograph and every other method use here"),
@@ -271,8 +314,8 @@ def run(args) -> int:
         "bitstream_bytes": player.bitstream_bytes,
         # The scene's camera rig, so a bundle can offer station selection
         # across methods without being told the geometry separately.
-        "rig": (orbit_rig(player.corpus_dir, args.orbit) if args.orbit
-                else capture_rig(player.corpus_dir)),
+        "rig": (_stacked_rig(player.corpus_dir, args.orbit, elevations)
+                if args.orbit else capture_rig(player.corpus_dir)),
         "clips": [
             {
                 "name": name,
@@ -347,6 +390,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="the subject these reconstruct, shared with other methods")
     parser.add_argument("--views", default="",
                         help="comma-separated camera indices; default is every one")
+    parser.add_argument("--elevations", default="0", metavar="DEG",
+                        help="comma-separated elevations in degrees for --orbit, "
+                             "e.g. 0,25,-25 for three rings. Each ring holds N "
+                             "views, so the total is N x however many are given")
     parser.add_argument("--orbit", type=int, default=0, metavar="N",
                         help="render N views evenly around the capture ring "
                              "instead of at the rig's own cameras, so the result "

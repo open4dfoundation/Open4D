@@ -30,8 +30,20 @@ Two consequences shape everything here:
   runs in PyTorch over hand-written CUDA kernels (`upstream/lib/cuda/`), so a
   free camera means a GPU on the far end of a live connection, or — for
   on-demand delivery — rendering the ring in advance and picking the nearest
-  view. `streamer`'s viewer does the second: 72 stations, azimuth quantised to
-  5°, elevation fixed at the rendered one, and it says so on the pane.
+  view. `streamer`'s viewer does the second.
+
+  `--orbit N --elevations 0,25,-25` renders N views on each of three rings and
+  writes them as one rig, so a drag moves in azimuth *and* elevation. The tilt
+  is spherical rather than a lift: the cameras stay at the ring's radius from
+  the subject, because lifting them would put them `sqrt(r²+h²)` away and the
+  subject would shrink on the tilted rings — which, in a viewer that snaps
+  between rings, would read as the reconstruction changing size. Measured on
+  `g_basketball`: all three rings at radius 2.0000, elevations exactly 0 and
+  ±25°, every camera aiming at the centre to within 1e-6°.
+
+  Cost is a render per ring: 72 views × 30 frames is 181 s and 109 MB, so three
+  rings is about 9 minutes and 330 MB. Cheap enough that density is a choice
+  rather than a constraint — which is the point, since it is all offline.
 
   What Vega has and ReRF does not is *explicit geometry*, so a browser can
   rasterise a viewpoint nobody rendered. That is a real difference; the
