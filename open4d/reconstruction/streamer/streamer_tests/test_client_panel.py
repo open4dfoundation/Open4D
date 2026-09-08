@@ -412,12 +412,25 @@ def test_a_late_handler_cannot_overwrite_a_newer_clip():
     assert body.count("this.clip !== clip") + body.count("this.clip === clip") == 2
 
 
-def test_both_empty_reasons_use_one_overlay_builder():
-    """Two hand-built overlays drifted apart in styling once already; this is
-    the single place either reason is rendered."""
+def test_every_empty_reason_uses_one_overlay_builder():
+    """Two hand-built overlays drifted apart in styling once already, so there
+    is one builder and every reason routes through it.
+
+    The invariant is the *single builder*, not how many callers it has -- an
+    exact caller count passes for the wrong set and fails for a correctly wired
+    new one, which is what happened when a decode failure grew a third caller.
+    """
     page = viewer_path().read_text()
-    assert page.count("_explain(") == 3          # the definition plus two callers
+    # One place constructs the overlay.
     assert page.count('className = "missing"') == 1
+    assert page.count("_explain(headline, remedy)") == 1
+    # Callers there are, and each gives both a headline and a remedy: an
+    # overlay that says only what is wrong reads as a dead end.
+    callers = [
+        line for line in page.splitlines()
+        if "_explain(" in line and "_explain(headline" not in line
+    ]
+    assert len(callers) >= 3
 
 
 # ------------------------------------------------------- download, then play ---

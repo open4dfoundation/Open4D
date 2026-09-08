@@ -351,8 +351,8 @@ def test_a_sliced_frame_does_not_alias_the_container(tmp_path):
 # The container's whole point is the request count, so that is what these
 # assert on: one request for a clip, not one per frame.
 
-SCHEDULER = ("INDEPENDENT", "dependencyOf", "chain", "SEQ_MAGIC", "SEQ_PREAMBLE",
-             "readSequenceHeader", "sequenceFrame", "Scheduler")
+SCHEDULER = ("INDEPENDENT", "dependencyOf", "chain", "suffixOf", "SEQ_MAGIC",
+             "SEQ_PREAMBLE", "readSequenceHeader", "sequenceFrame", "Scheduler")
 
 HARNESS = """
     import {readFileSync} from "node:fs";
@@ -591,3 +591,136 @@ def test_a_rung_without_a_container_is_not_served_the_base_one(tmp_path):
     # The base container holds the right frames at the wrong quality. Reading
     # it for a rung that has none would silently serve the rung above.
     assert result == ["lo0.splat", "lo1.splat", "lo2.splat"]
+
+
+# ------------------------------------------------ decoded under its own name ---
+# Reported as "why is vega blank". A frame is decoded by the codec its *name*
+# selects (`worker.js` sniffs the suffix), so handing the decode the
+# container's name means a `.seq` in a table of `.ply` and `.splat`. Every
+# Gaussian pane went blank; the pixel panes did not, because an image is
+# decoded from its media type on the main thread -- so it looked like one
+# method being broken rather than one code path.
+
+
+@requires_node
+def test_a_packed_frame_is_decoded_under_its_own_name(tmp_path):
+    sequence.pack(_frames(tmp_path / "clip", [64] * 3), tmp_path / "clip.seq")
+    packed = {"url": "clip.seq", "frames": 3,
+              "bytes": (tmp_path / "clip.seq").stat().st_size}
+
+    result = run_js(
+        HARNESS
+        + f"""
+        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        // The real rule, from worker.js: the codec comes from the suffix.
+        const CODECS = {{gaussians: {{".ply": 1, ".splat": 1}}}};
+        const pick = (url) => {{
+          const path = url.split("?", 1)[0];
+          const suffix = path.slice(path.lastIndexOf(".")).toLowerCase();
+          if (!CODECS.gaussians[suffix]) {{
+            throw new Error(`no decoder for a gaussians frame ending ${{suffix}}`);
+          }}
+          return suffix;
+        }};
+        const s = new Scheduler(packedClip(3, {json.dumps(packed)}), "./",
+                                (buffer, url) => ({{url, suffix: pick(url)}}), {{}});
+        (async () => {{
+          let message = null, seen = [];
+          try {{
+            await s.downloadAll(null);
+            for (let i = 0; i < 3; i++) seen.push((await s.seek(i)).url);
+          }} catch (e) {{ message = e.message; }}
+          process.stdout.write(JSON.stringify({{message, seen}}));
+        }})();
+    """,
+        tmp_path,
+        names=SCHEDULER,
+    )
+    assert result["message"] is None, result["message"]
+    # The frame's own path, exactly as the unpacked path passes it -- so the
+    # two share one decode behaviour rather than having two to keep in step.
+    assert result["seen"] == ["./f0.splat", "./f1.splat", "./f2.splat"]
+
+
+@requires_node
+def test_a_container_whose_frames_are_a_different_format_is_refused(tmp_path):
+    # A `.jpg` container against a clip listing `.splat` frames. Both are
+    # plausible files and the length check passes, so without this the frames
+    # would be handed to the Gaussian parser and come out as noise.
+    sequence.pack(_frames(tmp_path / "clip", [64] * 3, suffix="jpg"),
+                  tmp_path / "clip.seq")
+    packed = {"url": "clip.seq", "frames": 3,
+              "bytes": (tmp_path / "clip.seq").stat().st_size}
+
+    result = run_js(
+        HARNESS
+        + f"""
+        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        const s = new Scheduler(packedClip(3, {json.dumps(packed)}), "./", decode, {{}});
+        (async () => {{
+          let message = null;
+          try {{ await s.downloadAll(null); }} catch (e) {{ message = e.message; }}
+          process.stdout.write(JSON.stringify({{message}}));
+        }})();
+    """,
+        tmp_path,
+        names=SCHEDULER,
+    )
+    assert "holds .jpg frames" in result["message"]
+    assert "lists .splat" in result["message"]
+
+
+def test_the_viewer_and_the_worker_agree_on_a_suffix():
+    """`suffixOf` exists in both, and a frame's codec depends on them agreeing.
+
+    The worker is a separate script, so the rule is transcribed rather than
+    shared -- which is exactly the kind of duplication that drifts. Held to the
+    original over the cases that distinguish plausible implementations.
+    """
+    from streamer.client import viewer_path
+
+    page = viewer_path().read_text()
+    worker = (viewer_path().parent / "worker.js").read_text()
+
+    def cut(source: str) -> str:
+        start = source.index("function suffixOf(")
+        return source[start:source.index("\n}\n", start) + 3]
+
+    body = (
+        cut(page)
+        + cut(worker).replace("function suffixOf(", "function original(")
+        + """
+        const cases = ["a/b.splat", "a/b.SPLAT", "a/b.ply?v=2", "b.tar.gz",
+                       "nodot", "a.b/c", "", "a/b.seq"];
+        const rows = cases.map((c) => [c, suffixOf(c), original(c)]);
+        process.stdout.write(JSON.stringify(rows));
+        """
+    )
+    finished = subprocess.run([NODE, "--input-type=module", "-e", body],
+                              capture_output=True, text=True, timeout=60)
+    if finished.returncode:
+        raise AssertionError(finished.stderr)
+    rows = json.loads(finished.stdout)
+    disagree = [row for row in rows if row[1] != row[2]]
+    assert not disagree, f"suffixOf disagrees with the worker on {disagree}"
+    # And the case that started this: a container is not a frame format.
+    assert dict((row[0], row[1]) for row in rows)["a/b.seq"] == ".seq"
+
+
+def test_a_failed_download_is_explained_in_the_pane():
+    """Not left blank.
+
+    The decoder error propagated out of `downloadSelection` as an unhandled
+    rejection: the pane stayed empty, nothing surfaced where anyone would look,
+    and the page went on reporting success. A pane that cannot show its content
+    has to say why -- and the panes beside it have to keep going.
+    """
+    from streamer.client import viewer_path
+
+    page = viewer_path().read_text()
+    start = page.index("async function downloadSelection(")
+    body = page[start:page.index("\n}\n", start)]
+    assert "catch (error)" in body
+    assert "_explain(" in body
+    # Carries on rather than abandoning the remaining panes.
+    assert "continue;" in body
