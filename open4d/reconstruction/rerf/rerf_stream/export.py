@@ -53,7 +53,7 @@ import numpy as np
 
 from .bitstream import BitstreamPlayer
 from .serve import RUNGS
-from .cameras import capture_rig, captured_image
+from .cameras import capture_rig, captured_image, orbit_cameras, orbit_rig
 
 #: What each kind of clip needs its viewer told, beyond the shared notes.
 KIND_NOTES = {
@@ -129,7 +129,22 @@ def run(args) -> int:
     # nothing about variants sees the method at its best rather than at
     # whatever happened to be listed first.
     default = max(rungs, key=lambda name: rungs[name][0])
-    cameras = [camera.scaled(args.scale) for camera in player.cameras()]
+    # An orbit instead of the capture rig. This is what a representation that
+    # cannot be decoded in a browser gets instead of a free camera: a dense set
+    # of prepared viewpoints, quantised but close enough together that stepping
+    # through them reads as orbiting. There is no photograph at an interpolated
+    # angle, so `--captured` cannot come along.
+    if args.orbit:
+        if args.captured:
+            raise SystemExit(
+                "--captured cannot be used with --orbit: a photograph exists "
+                "only at a camera that was actually there, and an orbit view "
+                "between two of them has none"
+            )
+        source = orbit_cameras(player.corpus_dir, args.orbit)
+    else:
+        source = player.cameras()
+    cameras = [camera.scaled(args.scale) for camera in source]
     views = (
         [int(v) for v in args.views.split(",")] if args.views
         else list(range(len(cameras)))
@@ -222,8 +237,13 @@ def run(args) -> int:
 
     camera = cameras[views[0]]
     shared_notes = [
-        "ReRF volume render at the scene's own capture camera — the same pose "
-        "the photograph and every other method use here",
+        (f"ReRF volume render at {args.orbit} viewpoints evenly around the "
+         "capture ring — a prepared orbit, not a free camera: a neural field "
+         "has no geometry to send, so looking around means stepping between "
+         "views that were rendered in advance"
+         if args.orbit else
+         "ReRF volume render at the scene's own capture camera — the same pose "
+         "the photograph and every other method use here"),
         f"rendered at the corpus's own {camera.width}x{camera.height} and "
         "intrinsics, so the framing matches the captured pane (upstream's "
         "loader letterboxes to 16:9, which earlier exports inherited)",
@@ -243,7 +263,8 @@ def run(args) -> int:
         "bitstream_bytes": player.bitstream_bytes,
         # The scene's camera rig, so a bundle can offer station selection
         # across methods without being told the geometry separately.
-        "rig": capture_rig(player.corpus_dir),
+        "rig": (orbit_rig(player.corpus_dir, args.orbit) if args.orbit
+                else capture_rig(player.corpus_dir)),
         "clips": [
             {
                 "name": name,
@@ -318,6 +339,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="the subject these reconstruct, shared with other methods")
     parser.add_argument("--views", default="",
                         help="comma-separated camera indices; default is every one")
+    parser.add_argument("--orbit", type=int, default=0, metavar="N",
+                        help="render N views evenly around the capture ring "
+                             "instead of at the rig's own cameras, so the result "
+                             "can be orbited. View 0 is camera 0, so the orbit "
+                             "passes through a view that really exists.")
     parser.add_argument("--frames", type=int, default=0, help="0 means all of them")
     parser.add_argument("--scale", type=float, default=1.0,
                         help="fraction of the corpus resolution")
