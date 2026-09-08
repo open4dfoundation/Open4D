@@ -105,6 +105,48 @@
   li { color: var(--dim); margin-bottom: 4px; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 4px 0 0; }
   dt { color: var(--dim); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  /* The metrics table. Monospace and tabular so columns of numbers line up and
+     a value that changes does not shift the ones beside it -- a readout that
+     jitters horizontally is unreadable while it updates. */
+  table.metrics { width: 100%; border-collapse: collapse; margin: 4px 0 0;
+                  font: 11px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+                  font-variant-numeric: tabular-nums; }
+  table.metrics th { text-align: right; font-weight: 600; color: var(--dim);
+                     padding: 0 0 3px 6px; border-bottom: 1px solid var(--edge);
+                     white-space: nowrap; }
+  table.metrics th:first-child, table.metrics td:first-child {
+    text-align: left; padding-left: 0; }
+  table.metrics td { text-align: right; padding: 2px 0 2px 6px; white-space: nowrap; }
+  table.metrics tbody tr:hover { background: #1c2027; }
+  table.metrics td.name { color: var(--text); max-width: 96px; overflow: hidden;
+                          text-overflow: ellipsis; }
+  table.metrics td.n { color: var(--text); }
+  table.metrics td.void { color: #5b6472; }
+  table.metrics tr.frozen td { color: #d8a657; }
+  table.metrics tfoot td { border-top: 1px solid var(--edge); color: var(--dim);
+                           padding-top: 3px; }
+
+  /* Terse tags instead of sentences. A caveat a reader needs while looking at a
+     render -- "SH deg 0", "training view" -- is a label, not a paragraph, and
+     three paragraphs of them pushed the numbers off the screen. */
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 0; }
+  .tag { font: 10px/1.6 ui-monospace, monospace; letter-spacing: .02em;
+         background: #21252c; border: 1px solid var(--edge); border-radius: 3px;
+         padding: 0 5px; color: var(--dim); white-space: nowrap; }
+  .tag.warn { border-color: #6b5426; color: #d8a657; }
+  .tag b { color: var(--text); font-weight: 600; }
+
+  details { margin: 6px 0 0; }
+  details > summary { cursor: pointer; color: var(--dim); font-size: 11px;
+                      text-transform: uppercase; letter-spacing: .08em;
+                      font-weight: 600; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "\25B8 "; color: var(--dim); }
+  details[open] > summary::before { content: "\25BE "; }
+  label.toggle { display: flex; align-items: center; gap: 7px; margin: 8px 0 0;
+                 color: var(--dim); font-size: 11px; cursor: pointer; }
+  label.toggle input { accent-color: var(--accent); }
   kbd { background: #21252c; border: 1px solid var(--edge); border-radius: 4px; padding: 0 4px;
         font: 11px ui-monospace, monospace; }
 </style>
@@ -118,8 +160,8 @@
       <div id="transportRow">
         <button id="playPause" title="Space">▶</button>
         <div class="seg" style="flex:1">
-          <button id="modeExplore" aria-pressed="true">Explore — free camera</button>
-          <button id="modeCompare" aria-pressed="false">Compare — rig camera</button>
+          <button id="modeExplore" aria-pressed="true" title="Free camera, shared across panes">explore</button>
+          <button id="modeCompare" aria-pressed="false" title="Every pane at one rig pose">compare</button>
         </div>
         <button id="wipeToggle" aria-pressed="false" title="A/B wipe between two panes">A|B</button>
       </div>
@@ -136,22 +178,35 @@
     </div>
   </div>
   <div id="side">
-    <h1 id="title">gs-tools view</h1>
+    <h1 id="title">open4d streamer</h1>
     <p class="sub" id="source"></p>
-    <h2>scene</h2>
+
+    <h2>subject</h2>
     <select id="sceneSelect"></select>
+
     <h2>methods</h2>
     <div class="methods" id="methodList"></div>
-    <h2 id="notesHeading">notes</h2>
-    <ul id="notes"></ul>
-    <h2>stats</h2>
-    <dl id="stats"></dl>
-    <label id="adaptRow" hidden>
-      <input type="checkbox" id="adapt" checked>
-      adapt to the measured link
+
+    <h2>per pane</h2>
+    <table class="metrics" id="paneTable"></table>
+
+    <h2>session</h2>
+    <table class="metrics" id="sessionTable"></table>
+    <label class="toggle" id="adaptRow" hidden>
+      <input type="checkbox" id="adapt" checked> adapt to measured link
     </label>
-    <h2>controls</h2>
-    <ul id="controlHelp"></ul>
+
+    <div class="tags" id="tags"></div>
+
+    <details id="notesBlock">
+      <summary>caveats</summary>
+      <ul id="notes"></ul>
+    </details>
+
+    <details>
+      <summary>controls</summary>
+      <ul id="controlHelp"></ul>
+    </details>
   </div>
 </div>
 
@@ -1060,7 +1115,13 @@ class Scheduler {
     this.pending = new Map();        // index -> in-flight promise
     this.decoded = null;             // where a stateful decoder currently sits
     this.rung = null;                // chosen rendition, or null for the default
-    this.stats = { decodes: 0, bytes: 0, hits: 0, misses: 0, replays: 0 };
+    this.stats = { decodes: 0, bytes: 0, hits: 0, misses: 0, replays: 0,
+                   // Milliseconds, exponentially smoothed, and kept apart:
+                   // fetch and decode fail for different reasons and have
+                   // different fixes -- a slow fetch is the link, a slow decode
+                   // is this machine -- so one readout for both would send a
+                   // reader to the wrong place.
+                   fetchMs: 0, decodeMs: 0 };
   }
 
   get length() { return this.clip.frames.length; }
@@ -1137,6 +1198,7 @@ class Scheduler {
       if (this.meter) {
         this.meter.record(buffer.byteLength, (performance.now() - began) / 1000);
       }
+      const fetched = performance.now();
       // The response's own Content-Type, which the server takes from the
       // representation registry -- so an image is decoded as the type it was
       // served as rather than by leaving a browser to sniff a typeless blob.
@@ -1145,6 +1207,9 @@ class Scheduler {
       this.pending.delete(index);
       this.stats.decodes += 1;
       this.stats.bytes += buffer.byteLength;
+      const smooth = (was, now) => (was ? was + 0.25 * (now - was) : now);
+      this.stats.fetchMs = smooth(this.stats.fetchMs, fetched - began);
+      this.stats.decodeMs = smooth(this.stats.decodeMs, performance.now() - fetched);
       this._touch(index, parsed);
       return parsed;
     }).catch((error) => { this.pending.delete(index); throw error; });
@@ -1195,6 +1260,7 @@ class Scheduler {
       pending: this.pending.size,
       mode: this.dependency.mode,
       rung: this.rung ? this.rung.name : "default",
+      frozen: !!this.frozen,
     };
   }
 }
@@ -1556,107 +1622,265 @@ function rebuildPanes() {
   showFrame(app.frame);
 }
 
-function refreshPanel() {
+/* ------------------------------------------------------------ the readouts ---
+ * A research panel, so: numbers in aligned columns, units in the header, one
+ * row per pane. Not prose.
+ *
+ * The earlier version summed across panes and wrote sentences -- "8 panes
+ * holding their last frame so the rest keep playing". That reads once and is
+ * useless afterwards: the question while watching is always *which* pane, and
+ * a total cannot answer it. Every figure here is per pane, and the aggregate
+ * sits in one footer row where it belongs.
+ *
+ * Every column is something a reader would act on:
+ *   rung/res   what is being sent, and how big it is
+ *   kB/f, Mb/s what it costs -- measured from the manifest, not estimated
+ *   PSNR/SSIM  what it is worth, against the captured reference
+ *   buf        seconds of decoded playback ahead: the margin before it slows
+ *   net/dec    where the time goes, and they are separate because the fixes are
+ */
+
+function fmt(value, digits = 1) {
+  return value === null || value === undefined || !isFinite(value)
+    ? "" : value.toFixed(digits);
+}
+
+function paneRow(pane) {
+  const rungs = rungsOf(pane.clip, app.fps);
+  const snap = pane.source && pane.source.snapshot ? pane.source.snapshot() : null;
+  const name = snap ? snap.rung : null;
+  const rung = rungs.find((r) => r.name === (name || "default")) || rungs[0] || null;
+  const stats = pane.source ? pane.source.stats : null;
+  const detail = rung && rung.name === "default"
+    ? (pane.clip.detail || {})
+    : ((pane.clip.variants || []).find((v) => v.name === (rung && rung.name)) || {}).detail
+      || {};
+  return {
+    pane,
+    method: pane.method,
+    live: isLive(pane.clip),
+    frozen: !!(pane.source && pane.source.frozen),
+    rung: rungs.length > 1 ? (name || "default") : "\u2014",
+    resolution: detail.resolution || null,
+    kbPerFrame: rung ? rung.bitsPerSecond / (8 * app.fps) / 1000 : null,
+    mbits: rung ? rung.bitsPerSecond / 1e6 : null,
+    psnr: rung && rung.quality ? rung.quality.psnr : null,
+    ssim: rung && rung.quality ? rung.quality.ssim : null,
+    buffered: pane.source ? bufferedSeconds(pane, app.frame, app.fps) : null,
+    fetchMs: stats ? stats.fetchMs : null,
+    decodeMs: stats ? stats.decodeMs : null,
+    bytes: stats ? stats.bytes : 0,
+    switches: stats ? (stats.switches || 0) : 0,
+  };
+}
+
+function renderPaneTable() {
+  const table = document.getElementById("paneTable");
+  table.innerHTML = "";
+  const rows = app.panes.filter((pane) => pane.clip).map(paneRow);
+  if (!rows.length) return;
+
+  const anyLadder = rows.some((row) => row.rung !== "\u2014");
+  const anyQuality = rows.some((row) => row.psnr !== null && row.psnr !== undefined);
+  const columns = [
+    ["method", (r) => r.method, "name"],
+    ...(anyLadder ? [["rung", (r) => (r.frozen ? "frozen" : r.rung), "n"]] : []),
+    ["res", (r) => r.resolution, ""],
+    ["kB/f", (r) => fmt(r.kbPerFrame), "n"],
+    ["Mb/s", (r) => fmt(r.mbits, 2), "n"],
+    ...(anyQuality ? [
+      ["PSNR", (r) => fmt(r.psnr, 2), "n"],
+      ["SSIM", (r) => fmt(r.ssim, 4), "n"],
+    ] : []),
+    ["buf s", (r) => fmt(r.buffered, 2), "n"],
+    ["net ms", (r) => fmt(r.fetchMs, 0), ""],
+    ["dec ms", (r) => fmt(r.decodeMs, 0), ""],
+  ];
+
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const [label] of columns) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headRow.appendChild(th);
+  }
+  head.appendChild(headRow);
+  table.appendChild(head);
+
+  const body = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    if (row.frozen) tr.className = "frozen";
+    for (const [, read, kind] of columns) {
+      const td = document.createElement("td");
+      const value = row.live ? (read === columns[0][1] ? row.method : "live") : read(row);
+      td.textContent = (value === null || value === undefined || value === "")
+        ? "\u2013" : value;
+      td.className = (value === null || value === undefined || value === "")
+        ? "void" : kind;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+
+  const totalBytes = rows.reduce((sum, row) => sum + row.bytes, 0);
+  const totalMbits = rows.reduce((sum, row) => sum + (row.mbits || 0), 0);
+  const foot = document.createElement("tfoot");
+  const footRow = document.createElement("tr");
+  const cells = [`${rows.length} panes`];
+  if (anyLadder) cells.push("");
+  cells.push("", "", fmt(totalMbits, 2));
+  if (anyQuality) cells.push("", "");
+  cells.push("", "", `${(totalBytes / 1e6).toFixed(1)} MB`);
+  for (const text of cells) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    footRow.appendChild(td);
+  }
+  foot.appendChild(footRow);
+  table.appendChild(foot);
+}
+
+function renderSessionTable() {
+  const table = document.getElementById("sessionTable");
+  table.innerHTML = "";
+  const shown = app.shownAt || [];
+  const achieved = shown.length > 1
+    ? (shown.length - 1) / ((shown[shown.length - 1] - shown[0]) / 1000) : null;
+
+  const rows = [
+    ["mode", app.mode],
+    ["frame", `${app.frame + 1} / ${frameCount()}`],
+    ["fps", achieved === null ? "\u2013"
+      : `${fmt(achieved)} / ${app.fps} target`],
+  ];
+  if (app.late) rows.push(["late advances", String(app.late)]);
+
+  const laddered = app.panes.filter(
+    (pane) => pane.source && rungsOf(pane.clip, app.fps).length > 1);
+  if (laddered.length) {
+    document.getElementById("adaptRow").hidden = false;
+    rows.push(["link", meter.samples
+      ? `${fmt(meter.bitsPerSecond / 1e6, 2)} Mbit/s`
+      : "unmeasured"]);
+    if (app.adapt && app.decision) {
+      rows.push(["share/pane", `${fmt(app.decision.share / 1e6, 2)} Mbit/s`]);
+      if (app.decision.frozen) {
+        rows.push(["frozen", `${app.decision.frozen} / ${app.decision.ladders}`]);
+      }
+    } else if (!app.adapt) {
+      rows.push(["adaptation", "pinned to default"]);
+    }
+    const switches = laddered.reduce(
+      (sum, pane) => sum + (pane.source.stats.switches || 0), 0);
+    rows.push(["rung switches", String(switches)]);
+  }
+
+  const active = app.panes.filter((pane) => pane.source && pane.source.snapshot);
+  if (active.length) {
+    const snaps = active.map((pane) => pane.source.snapshot());
+    const pending = snaps.reduce((sum, snap) => sum + snap.pending, 0);
+    rows.push(["in flight", String(pending)]);
+    const modes = new Set(snaps.map((snap) => snap.mode));
+    if (!(modes.size === 1 && modes.has("independent"))) {
+      rows.push(["decode order", [...modes].join(",")]);
+      rows.push(["replays", String(
+        active.reduce((sum, pane) => sum + pane.source.stats.replays, 0))]);
+    }
+  }
+
+  const body = document.createElement("tbody");
+  for (const [key, value] of rows) {
+    const tr = document.createElement("tr");
+    const label = document.createElement("td");
+    label.textContent = key;
+    label.className = "name";
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    cell.className = "n";
+    tr.append(label, cell);
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+}
+
+/* Caveats as tags. A reader looking at a render needs the ones that change how
+ * to read it -- that a camera was in the training set, that colour is baked at
+ * one direction -- and needs them at a glance. The full sentences are still
+ * available under `caveats`, because some of them genuinely need a sentence. */
+const TAG_RULES = [
+  [/training view/i, "training view", true],
+  [/sh_degree 0|no view-dependent/i, "SH deg 0", true],
+  [/colour baked|color baked/i, "baked colour", true],
+  [/relative depth|ray-march steps/i, "depth (relative)", false],
+  [/replay|rendered earlier/i, "replay", true],
+  [/rendered on demand|decoded and drawn per frame/i, "live render", false],
+  [/quantised|quantized/i, "quantised", true],
+  [/sequential|residual over its predecessor/i, "sequential decode", false],
+  [/no free camera|fixed viewpoint|cannot be steered/i, "fixed camera", false],
+  [/reference, not a reconstruction/i, "reference", false],
+];
+
+function renderTags() {
+  const host = document.getElementById("tags");
+  host.innerHTML = "";
+  const seen = new Map();
+  for (const pane of app.panes) {
+    for (const note of (pane.clip && pane.clip.notes) || []) {
+      for (const [pattern, label, warn] of TAG_RULES) {
+        if (pattern.test(note) && !seen.has(label)) seen.set(label, warn);
+      }
+    }
+  }
+  if (app.mode === "compare" && !rig()) seen.set("no rig for this subject", true);
+  for (const [label, warn] of seen) {
+    const tag = document.createElement("span");
+    tag.className = warn ? "tag warn" : "tag";
+    tag.textContent = label;
+    host.appendChild(tag);
+  }
+}
+
+function renderNotes() {
   const notes = document.getElementById("notes");
   notes.innerHTML = "";
   const lines = [];
   if (app.mode === "explore") {
-    lines.push("free camera, shared across every pane — differences you see are the reconstructions, not the viewpoint");
+    lines.push("free camera shared across every pane: differences are the reconstructions, not the viewpoint");
   } else if (rig()) {
     const pose = rig().poses[app.station];
-    lines.push(`rig camera ${app.station}${pose && pose.view_id !== null ? ` (captured view ${pose.view_id})` : " (interpolated)"} — every pane is at this exact pose`);
+    lines.push(`rig camera ${app.station}${pose && pose.view_id !== null && pose.view_id !== undefined ? ` (captured view ${pose.view_id})` : " (interpolated)"}: every pane at this pose`);
   } else {
-    lines.push("this scene has no capture rig in the bundle, so there is no shared camera to compare at");
+    lines.push("no capture rig in the bundle for this subject, so there is no shared camera to compare at");
   }
   for (const pane of app.panes) {
-    for (const note of (pane.clip && pane.clip.notes) || []) lines.push(`${pane.method}: ${note}`);
+    for (const note of (pane.clip && pane.clip.notes) || []) {
+      lines.push(`${pane.method}: ${note}`);
+    }
   }
+  document.getElementById("notesBlock").hidden = lines.length === 0;
   for (const line of lines) {
     const li = document.createElement("li");
     li.textContent = line;
     notes.appendChild(li);
   }
+}
 
-  const stats = document.getElementById("stats");
-  stats.innerHTML = "";
-  const rows = [["mode", app.mode], ["panes", app.panes.length], ["frames", frameCount()]];
-  for (const pane of app.panes) {
-    if (pane.clip && pane.clip.counts && pane.clip.counts.length) {
-      const noun = pane.clip.representation === "gaussians" ? "gaussians" : "vertices";
-      rows.push([`${pane.method} ${noun}`,
-                 Math.round(pane.clip.counts.reduce((a, b) => a + b, 0) / pane.clip.counts.length).toLocaleString()]);
-    }
-  }
-  // What the scheduler actually did. Summed across panes, because the question
-  // is whether playback is keeping up, not which pane is behind.
-  const active = app.panes.filter((pane) => pane.source && pane.source.snapshot);
-  if (active.length) {
-    const totals = active.reduce((sum, pane) => {
-      const snap = pane.source.snapshot();
-      return {
-        cached: sum.cached + snap.cached,
-        pending: sum.pending + snap.pending,
-        decodes: sum.decodes + snap.decodes,
-        bytes: sum.bytes + snap.bytes,
-        replays: sum.replays + snap.replays,
-      };
-    }, { cached: 0, pending: 0, decodes: 0, bytes: 0, replays: 0 });
-    rows.push(["buffered", `${totals.cached} frames`
-      + (totals.pending ? ` (+${totals.pending} in flight)` : "")]);
-    rows.push(["decoded", `${totals.decodes} frames · `
-      + `${(totals.bytes / 1e6).toFixed(1)} MB`]);
-    // The adaptation loop, when there is a ladder to adapt on. Reported as
-    // measured rate and chosen rung rather than a single "quality" number: the
-    // two can disagree -- a rate that has just dropped shows up here before
-    // the rung moves -- and collapsing them would hide the lag that is the
-    // most interesting thing about an adaptive client.
-    const laddered = active.filter(
-      (pane) => rungsOf(pane.clip, app.fps).length > 1);
-    if (laddered.length) {
-      document.getElementById("adaptRow").hidden = false;
-      rows.push(["link", meter.samples
-        ? `${(meter.bitsPerSecond / 1e6).toFixed(1)} Mbit/s measured`
-        : "not measured yet"]);
-      if (app.adapt && app.decision) {
-        rows.push(["share", `${(app.decision.share / 1e6).toFixed(1)} Mbit/s `
-          + `each across ${app.decision.panes} panes`]);
-      }
-      const picked = laddered.map((pane) => {
-        const snap = pane.source.snapshot();
-        return `${pane.method.slice(-5)}=`
-          + (pane.source.frozen ? "frozen" : snap.rung);
-      });
-      if (app.decision && app.decision.frozen) {
-        rows.push(["frozen", `${app.decision.frozen} of ${app.decision.ladders}`
-          + " panes holding their last frame so the rest keep playing"]);
-      }
-      rows.push([app.adapt ? "rungs" : "rungs (pinned)", picked.join(" ")]);
-      const switches = laddered.reduce(
-        (sum, pane) => sum + (pane.source.stats.switches || 0), 0);
-      if (switches) rows.push(["switches", String(switches)]);
-    }
-    const modes = new Set(active.map((pane) => pane.source.snapshot().mode));
-    if (!(modes.size === 1 && modes.has("independent"))) {
-      // Only worth the row when something is not independent: a replay count of
-      // zero on an independent clip says nothing.
-      rows.push(["decode order", [...modes].join(", ")]);
-      rows.push(["replays", String(totals.replays)]);
-    }
-  }
-  for (const [key, value] of rows) {
-    const dt = document.createElement("dt"); dt.textContent = key;
-    const dd = document.createElement("dd"); dd.textContent = value;
-    stats.append(dt, dd);
-  }
+function refreshPanel() {
+  renderPaneTable();
+  renderSessionTable();
+  renderTags();
+  renderNotes();
 
   const help = document.getElementById("controlHelp");
   help.innerHTML = "";
   const items = app.mode === "explore"
-    ? ["<kbd>drag</kbd> orbit · <kbd>shift</kbd>+drag or right-drag pan",
-       "<kbd>wheel</kbd> zoom · <kbd>r</kbd> reset camera",
-       "<kbd>space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> step one frame"]
+    ? ["<kbd>drag</kbd> orbit \u00b7 <kbd>shift</kbd>+drag or right-drag pan",
+       "<kbd>wheel</kbd> zoom \u00b7 <kbd>r</kbd> reset camera",
+       "<kbd>space</kbd> play/pause \u00b7 <kbd>\u2190</kbd> <kbd>\u2192</kbd> step one frame"]
     : ["<kbd>,</kbd> <kbd>.</kbd> step the rig camera",
-       "<kbd>space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> step one frame",
+       "<kbd>space</kbd> play/pause \u00b7 <kbd>\u2190</kbd> <kbd>\u2192</kbd> step one frame",
        "<kbd>A|B</kbd> wipes between two panes; drag the handle"];
   for (const item of items) {
     const li = document.createElement("li");
@@ -1764,8 +1988,20 @@ async function showFrame(index) {
     await Promise.all(app.panes
       .filter((pane) => !(pane.source && pane.source.frozen))
       .map((pane) => pane.show(app.frame)));
-    (app.shownAt = app.shownAt || []).push(performance.now());
-    if (app.shownAt.length > 30) app.shownAt.shift();
+    /* Achieved frame rate, and how often an advance arrived late.
+     *
+     * The honest stall measure for this client: playback advances only once the
+     * previous frame has actually been shown, so it never freezes mid-frame --
+     * it runs slow instead. "Did it stall" is really "how far below the target
+     * rate did it run", and a late count says whether that was steady or
+     * bursty. */
+    const now = performance.now();
+    const shown = (app.shownAt = app.shownAt || []);
+    if (shown.length && now - shown[shown.length - 1] > 1.5 * (1000 / app.fps)) {
+      app.late = (app.late || 0) + 1;
+    }
+    shown.push(now);
+    if (shown.length > 30) shown.shift();
     statusEl.hidden = true;
   } catch (error) {
     setStatus(String(error.message || error));
