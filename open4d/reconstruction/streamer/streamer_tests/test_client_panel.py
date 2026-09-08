@@ -357,3 +357,49 @@ def test_the_panel_writes_no_sentences():
                 continue
             for quoted in line.split('"')[1::2]:
                 assert len(quoted) < 26, f"{name}: prose in the panel: {quoted!r}"
+
+
+# --------------------------------------------------- why a pane is empty ---
+
+
+def test_a_dead_live_stream_explains_itself_on_the_pane():
+    """A live pane depends on a renderer this page does not control, and those
+    die -- the box reboots, the GPU is wanted elsewhere. The proxy then answers
+    502 and an <img> shows nothing at all, so the subject looks simply absent
+    while the page insists everything is fine. That is how four subjects came
+    to be reported missing when the renderers had stopped.
+    """
+    page = viewer_path().read_text()
+    start = page.index("    if (isLive(clip)) {")
+    body = page[start:page.index("    const make = kind.renderer;", start)]
+    assert "this.image.onerror" in body
+    assert "_explain(" in body
+    # And the message has to name the renderer, because the fix is not here.
+    assert "clip.detail && clip.detail.upstream" in body
+
+
+def test_the_explanation_clears_when_the_stream_recovers():
+    """Starting the renderer and reloading is the documented remedy, but a
+    stream that comes back on its own should not leave the overlay up."""
+    page = viewer_path().read_text()
+    start = page.index("    if (isLive(clip)) {")
+    body = page[start:page.index("    const make = kind.renderer;", start)]
+    assert "this.image.onload" in body
+    assert "this.missing.remove()" in body
+
+
+def test_a_late_handler_cannot_overwrite_a_newer_clip():
+    """An error can arrive after the pane has moved to another clip; writing
+    the overlay then would blame the wrong method."""
+    page = viewer_path().read_text()
+    start = page.index("    if (isLive(clip)) {")
+    body = page[start:page.index("    const make = kind.renderer;", start)]
+    assert body.count("this.clip !== clip") + body.count("this.clip === clip") == 2
+
+
+def test_both_empty_reasons_use_one_overlay_builder():
+    """Two hand-built overlays drifted apart in styling once already; this is
+    the single place either reason is rendered."""
+    page = viewer_path().read_text()
+    assert page.count("_explain(") == 3          # the definition plus two callers
+    assert page.count('className = "missing"') == 1
