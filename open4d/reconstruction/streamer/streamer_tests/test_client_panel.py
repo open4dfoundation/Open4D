@@ -574,7 +574,8 @@ def test_a_pixel_method_is_listed_in_explore_not_hidden(tmp_path):
         }));
     '''
     script = tmp_path / "m.mjs"
-    script.write_text(_extract("RING_TOLERANCE", "ringOf", "methodsFor") + "\n" + textwrap.dedent(body))
+    script.write_text(_extract("SHELL_TOLERANCE", "RING_MERGE_DEG", "lookAtCentre",
+                   "shellOf", "methodsFor") + "\n" + textwrap.dedent(body))
     finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                               timeout=60)
     if finished.returncode:
@@ -612,7 +613,8 @@ def test_a_method_with_both_kinds_survives_explore(tmp_path):
         process.stdout.write(JSON.stringify(methodsFor("b", "explore")));
     '''
     script = tmp_path / "m2.mjs"
-    script.write_text(_extract("RING_TOLERANCE", "ringOf", "methodsFor") + "\n" + textwrap.dedent(body))
+    script.write_text(_extract("SHELL_TOLERANCE", "RING_MERGE_DEG", "lookAtCentre",
+                   "shellOf", "methodsFor") + "\n" + textwrap.dedent(body))
     finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                               timeout=60)
     if finished.returncode:
@@ -642,20 +644,28 @@ def test_every_caller_of_methodsFor_filters_to_usable():
         assert marker in page, marker
 
 
-# --------------------------------------------- a free camera onto a ring ---
+# ------------------------------------------- a free camera onto a shell ---
 # ReRF renders free viewpoint -- `rerf_render.py --render_360` is the path that
 # produced this bundle's orbit clips -- but it needs a CUDA GPU, so the pixels
 # are made offline and a drag picks the nearest rendered view rather than
 # rasterising a new one. These hold the "nearest" to being actually nearest,
 # and hold the guard that stops an arbitrary rig being treated as an orbit.
 
-RING = ("RING_TOLERANCE", "ringOf", "nearestStation", "exploreStation",
-        "ringError")
+SHELL = ("SHELL_TOLERANCE", "RING_MERGE_DEG", "lookAtCentre", "shellOf",
+         "nearestStation", "exploreStation", "shellSampling")
+
+PRELUDE = """
+    const WORLD_UP = [0, 1, 0];
+    const normalize = (v) => {
+      const n = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / n, v[1] / n, v[2] / n];
+    };
+"""
 
 
-def _ring_js(body: str, tmp_path: Path, name: str) -> object:
+def _shell_js(body: str, tmp_path: Path, name: str) -> object:
     script = tmp_path / name
-    script.write_text(_extract(*RING) + "\n" + textwrap.dedent(body))
+    script.write_text(PRELUDE + _extract(*SHELL) + "\n" + textwrap.dedent(body))
     finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                               timeout=60)
     if finished.returncode:
@@ -663,113 +673,235 @@ def _ring_js(body: str, tmp_path: Path, name: str) -> object:
     return json.loads(finished.stdout)
 
 
-# The shape of the bundle's own rig: 36 stations, 10 degrees apart, one radius
-# and one height about a common centre.
-ORBIT = """
-    const poses = [];
-    for (let i = 0; i < 36; i++) {
-      const yaw = Math.PI / 2 - i * Math.PI / 18;
-      poses.push({position: [3 + 3.176 * Math.sin(yaw), 0.937,
-                             15 + 3.176 * Math.cos(yaw)]});
-    }
-    const orbit = {poses};
+# The shape of the bundle's own rig: N stations per ring, at a constant radius
+# about a common look-at point, on one ring per elevation. Poses carry
+# `forward` because that is what locates the centre.
+BUILD = """
+    const ringsAt = (centre, radius, count, elevations) => {
+      const poses = [];
+      for (const deg of elevations) {
+        const el = deg * Math.PI / 180;
+        for (let i = 0; i < count; i++) {
+          const yaw = Math.PI / 2 - i * 2 * Math.PI / count;
+          const dir = [Math.sin(yaw) * Math.cos(el), Math.sin(el),
+                       Math.cos(yaw) * Math.cos(el)];
+          const position = [0, 1, 2].map((k) => centre[k] + radius * dir[k]);
+          poses.push({position, forward: dir.map((v) => -v)});
+        }
+      }
+      return {poses};
+    };
+    const orbit = ringsAt([3, 0.937, 15], 3.176, 72, [0]);
+    const stack = ringsAt([3, 0.937, 15], 3.176, 72, [0, 25, -25]);
 """
 
 
 @requires_node
-def test_a_ring_rig_is_recognised_with_its_spacing(tmp_path):
-    result = _ring_js(
-        ORBIT + """
-        const ring = ringOf(orbit);
+def test_the_centre_is_found_from_where_the_cameras_look(tmp_path):
+    result = _shell_js(
+        BUILD + """
+        // The centroid of a stack of rings is not its centre: the +25 and -25
+        // rings pull it off the axis, and every radius measured from it comes
+        // out different. Solving from the view rays is what fixes that.
+        const poses = stack.poses.slice(0, 72 + 36);   // one full ring, half of another
+        const centroid = [0, 1, 2].map((k) =>
+          poses.reduce((sum, p) => sum + p.position[k], 0) / poses.length);
         process.stdout.write(JSON.stringify({
-          found: ring !== null,
-          centre: ring.centre.map((v) => Math.round(v * 1000) / 1000),
-          radius: Math.round(ring.radius * 1000) / 1000,
-          stations: ring.yaws.length,
-          worstError: ringError(ring),
+          solved: lookAtCentre(poses).map((v) => Math.round(v * 1000) / 1000),
+          centroid: centroid.map((v) => Math.round(v * 1000) / 1000),
         }));
-    """, tmp_path, "r1.mjs")
-    assert result["found"] is True
-    assert result["centre"] == [3.0, 0.937, 15.0]
-    assert result["radius"] == 3.176
-    assert result["stations"] == 36
-    # Half the arc between neighbours: the most the snap can be off by, which is
-    # the number the pane label quotes.
-    assert result["worstError"] == 5.0
+    """, tmp_path, "s0.mjs")
+    assert result["solved"] == [3.0, 0.937, 15.0]
+    assert result["centroid"] != result["solved"]
 
 
 @requires_node
-def test_a_rig_that_is_not_a_ring_is_refused(tmp_path):
-    result = _ring_js("""
-        const cloud = {poses: [
-          {position: [0, 0, 3]}, {position: [3, 0, 0]},
-          {position: [0, 0, -3]}, {position: [8, 2, 0]},
+def test_a_stack_of_rings_is_recognised_with_its_sampling(tmp_path):
+    result = _shell_js(
+        BUILD + """
+        const one = shellOf(orbit), three = shellOf(stack);
+        const describe = (shell) => ({
+          centre: shell.centre.map((v) => Math.round(v * 1000) / 1000),
+          radius: Math.round(shell.radius * 1000) / 1000,
+          stations: shell.dirs.length,
+          rings: shell.rings.map((r) => [Math.round(r.elevation), r.count]),
+          azimuthStep: shell.azimuthStep,
+          sampling: shellSampling(shell),
+        });
+        process.stdout.write(JSON.stringify({one: describe(one), three: describe(three)}));
+    """, tmp_path, "s1.mjs")
+
+    assert result["one"]["centre"] == [3.0, 0.937, 15.0]
+    assert result["one"]["radius"] == 3.176
+    assert result["one"]["stations"] == 72
+    assert result["one"]["rings"] == [[0, 72]]
+    assert result["one"]["azimuthStep"] == 5.0
+    assert result["one"]["sampling"] == "±2.5° azimuth, elevation fixed at 0°"
+
+    # Three rings, recovered from the pose geometry -- nothing in the manifest
+    # says how they were stacked.
+    assert result["three"]["stations"] == 216
+    assert result["three"]["rings"] == [[-25, 72], [0, 72], [25, 72]]
+    assert result["three"]["radius"] == 3.176
+    # Two numbers, because that is how it is experienced: fine sideways, coarse
+    # vertically. One worst-case figure would be the 25 degree ring gap and
+    # would describe the sideways drag wrongly.
+    assert result["three"]["sampling"] == (
+        "±2.5° azimuth, 3 elevations (-25°, 0°, 25°)")
+
+
+@requires_node
+def test_a_rig_that_is_not_a_shell_is_refused(tmp_path):
+    result = _shell_js(
+        BUILD + """
+        const aim = (position, centre) => ({
+          position,
+          forward: normalize([0, 1, 2].map((k) => centre[k] - position[k])),
+        });
+        // Two radii about one centre: half the stations are twice as far out, so
+        // snapping between them would jump the subject's size.
+        const twoRadii = {poses: [
+          aim([3, 0, 0], [0, 0, 0]), aim([0, 0, 3], [0, 0, 0]),
+          aim([-6, 0, 0], [0, 0, 0]), aim([0, 0, -6], [0, 0, 0]),
         ]};
-        const domed = {poses: [
-          {position: [0, 0, 3]}, {position: [3, 0, 0]},
-          {position: [0, 0, -3]}, {position: [0, 3, 0.01]},
+        // Every camera pointing the same way: no convergence, so no centre.
+        const parallel = {poses: [
+          {position: [0, 0, 0], forward: [0, 0, 1]},
+          {position: [1, 0, 0], forward: [0, 0, 1]},
+          {position: [2, 0, 0], forward: [0, 0, 1]},
+          {position: [3, 0, 0], forward: [0, 0, 1]},
         ]};
+        // Poses with no forward at all -- a rig from a corpus that recorded
+        // only positions.
+        const poseless = {poses: orbit.poses.map((p) => ({position: p.position}))};
         process.stdout.write(JSON.stringify({
-          cloud: ringOf(cloud), domed: ringOf(domed),
-          tiny: ringOf({poses: [{position: [0, 0, 1]}]}), none: ringOf(null),
+          twoRadii: shellOf(twoRadii), parallel: shellOf(parallel),
+          poseless: shellOf(poseless),
+          tiny: shellOf({poses: [{position: [0, 0, 1], forward: [0, 0, -1]}]}),
+          none: shellOf(null),
         }));
-    """, tmp_path, "r2.mjs")
+    """, tmp_path, "s2.mjs")
     # Snapping a free camera onto an arbitrary cloud of capture positions would
-    # move it somewhere the user never pointed it. One radius, one height, or
-    # no snapping.
-    assert result == {"cloud": None, "domed": None, "tiny": None, "none": None}
+    # move it somewhere the user never pointed it. One radius about one look-at
+    # point, or no snapping.
+    assert result == {"twoRadii": None, "parallel": None, "poseless": None,
+                      "tiny": None, "none": None}
+
+
+@requires_node
+def test_a_tilted_ring_is_still_one_radius(tmp_path):
+    """The export tilts spherically rather than lifting, and this is why.
+
+    Lifting a ring straight up puts its cameras `sqrt(r^2 + h^2)` from the
+    subject, so it would fail the one-radius guard -- and, worse, would pass a
+    loosened one while quietly shrinking the subject in the tilted rings.
+    """
+    result = _shell_js("""
+        const lifted = {poses: []};
+        for (const h of [0, 1.3]) {
+          for (let i = 0; i < 8; i++) {
+            const yaw = i * Math.PI / 4;
+            const position = [3 * Math.sin(yaw), h, 3 * Math.cos(yaw)];
+            const forward = normalize([-position[0], -h, -position[2]]);
+            lifted.poses.push({position, forward});
+          }
+        }
+        process.stdout.write(JSON.stringify({lifted: shellOf(lifted)}));
+    """, tmp_path, "s3.mjs")
+    assert result["lifted"] is None
 
 
 @requires_node
 def test_the_nearest_station_is_the_nearest_one(tmp_path):
-    result = _ring_js(
-        ORBIT + """
-        const ring = ringOf(orbit);
-        const at = (deg) => nearestStation(ring, deg * Math.PI / 180);
+    result = _shell_js(
+        BUILD + """
+        const shell = shellOf(orbit);
+        const at = (yawDeg, pitchDeg = 0) => {
+          const y = yawDeg * Math.PI / 180, p = (pitchDeg || 0) * Math.PI / 180;
+          return nearestStation(shell, [Math.sin(y) * Math.cos(p), Math.sin(p),
+                                        Math.cos(y) * Math.cos(p)]);
+        };
         process.stdout.write(JSON.stringify({
-          exact: at(90), next: at(80),
-          // Either side of the 85 degree midpoint between them.
-          aboveMid: at(85.1), belowMid: at(84.9),
-          // The seam: naive subtraction puts these two turns apart and would
-          // snap across the whole ring.
+          exact: at(90), next: at(85),
+          // Either side of the 87.5 degree midpoint between them.
+          aboveMid: at(87.6), belowMid: at(87.4),
+          // The seam: yaw is never differenced, so there is nothing to wrap.
           justUnder: at(-179), justOver: at(179), half: at(-180),
           wrapped: at(90 + 360),
+          // A single ring absorbs any pitch -- there is nowhere else to go.
+          tilted: at(90, 40),
         }));
-    """, tmp_path, "r3.mjs")
+    """, tmp_path, "s4.mjs")
     assert result["exact"] == 0                 # station 0 sits at +90
-    assert result["next"] == 1                  # station 1 at +80
+    assert result["next"] == 1                  # station 1 at +85
     assert result["aboveMid"] == 0
     assert result["belowMid"] == 1
     # -179, +179 and -180 all land on the station at -180, the short way round.
-    assert result["justUnder"] == result["justOver"] == result["half"] == 27
+    assert result["justUnder"] == result["justOver"] == result["half"] == 54
     assert result["wrapped"] == 0               # a full turn is the same place
+    assert result["tilted"] == 0
 
 
 @requires_node
-def test_the_explore_station_follows_the_camera_yaw(tmp_path):
-    result = _ring_js(
-        ORBIT + """
-        globalThis.app = {scenes: {b: orbit}, scene: "b", camera: {yaw: 0}};
+def test_dragging_up_moves_between_rings(tmp_path):
+    result = _shell_js(
+        BUILD + """
+        const shell = shellOf(stack);
+        const at = (yawDeg, pitchDeg) => {
+          const y = yawDeg * Math.PI / 180, p = pitchDeg * Math.PI / 180;
+          return nearestStation(shell, [Math.sin(y) * Math.cos(p), Math.sin(p),
+                                        Math.cos(y) * Math.cos(p)]);
+        };
+        process.stdout.write(JSON.stringify({
+          level: at(90, 0), up: at(90, 25), down: at(90, -25),
+          // Either side of the midpoint between the level and raised rings.
+          justBelowMid: at(90, 12.4), justAboveMid: at(90, 12.6),
+          // Past the top ring there is nothing higher to snap to.
+          overhead: at(90, 80),
+          // Azimuth and elevation move independently.
+          quarterUp: at(0, 25),
+        }));
+    """, tmp_path, "s5.mjs")
+    # The rings were built 0, +25, -25, so their stations are laid out in that
+    # order and station 0 of each ring is 72 apart.
+    assert result["level"] == 0
+    assert result["up"] == 72
+    assert result["down"] == 144
+    assert result["justBelowMid"] == 0
+    assert result["justAboveMid"] == 72
+    assert result["overhead"] == 72
+    # A quarter turn on the raised ring: 18 stations round, on ring 1.
+    assert result["quarterUp"] == 72 + 18
+
+
+@requires_node
+def test_the_explore_station_follows_both_axes(tmp_path):
+    result = _shell_js(
+        BUILD + """
+        globalThis.app = {scenes: {b: stack}, scene: "b",
+                          camera: {yaw: 0, pitch: 0}};
         globalThis.rig = () => app.scenes[app.scene];
         const seen = [];
-        for (const deg of [90, 45, 0, -90]) {
-          app.camera.yaw = deg * Math.PI / 180;
+        for (const [yaw, pitch] of [[90, 0], [0, 0], [0, 25], [-90, -25]]) {
+          app.camera.yaw = yaw * Math.PI / 180;
+          app.camera.pitch = pitch * Math.PI / 180;
           seen.push(exploreStation());
         }
-        app.scenes.b = {poses: [{position: [0, 0, 1]}]};
+        app.scenes.b = {poses: [{position: [0, 0, 1], forward: [0, 0, -1]}]};
         seen.push(exploreStation());
         process.stdout.write(JSON.stringify(seen));
-    """, tmp_path, "r4.mjs")
-    # 10 degrees a station, starting at +90 and going down.
-    assert result[:4] == [0, 4, 9, 18]
-    # No ring, no station: pixels stay compare-only rather than being snapped
+    """, tmp_path, "s6.mjs")
+    # 5 degrees a station starting at +90 and going down, so yaw 0 is station 18
+    # and yaw -90 is station 36; +72 a ring, in the order they were built.
+    assert result[:4] == [0, 18, 72 + 18, 144 + 36]
+    # No shell, no station: pixels stay compare-only rather than being snapped
     # onto a viewpoint that does not exist.
     assert result[4] is None
 
 
 @requires_node
-def test_a_pixel_method_becomes_usable_in_explore_on_a_ring(tmp_path):
-    body = ORBIT + '''
+def test_a_pixel_method_becomes_usable_in_explore_on_a_shell(tmp_path):
+    body = BUILD + '''
         globalThis.REPRESENTATIONS = {
           gaussians: { geometry: true }, pixels: { geometry: false },
         };
@@ -785,17 +917,19 @@ def test_a_pixel_method_becomes_usable_in_explore_on_a_ring(tmp_path):
           { scene: "b", method: "rerf", representation: "pixels", camera: 0 },
           { scene: "b", method: "live", representation: "pixels", camera: null },
         ];
-        globalThis.app = { scenes: { b: orbit }, index: { clips } };
-        const onRing = methodsFor("b", "explore");
+        globalThis.app = { scenes: { b: stack }, index: { clips } };
+        const onShell = methodsFor("b", "explore");
         globalThis.app = { scenes: { b: {poses: []} }, index: { clips } };
         process.stdout.write(JSON.stringify({
-          onRing, offRing: methodsFor("b", "explore"),
+          onShell, offShell: methodsFor("b", "explore"),
         }));
     '''
-    script = tmp_path / "r5.mjs"
+    script = tmp_path / "s7.mjs"
     script.write_text(
-        _extract("RING_TOLERANCE", "ringOf", "methodsFor") + "\n"
-        + textwrap.dedent(body)
+        PRELUDE
+        + _extract("SHELL_TOLERANCE", "RING_MERGE_DEG", "lookAtCentre", "shellOf",
+                   "methodsFor")
+        + "\n" + textwrap.dedent(body)
     )
     finished = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                               timeout=60)
@@ -803,24 +937,24 @@ def test_a_pixel_method_becomes_usable_in_explore_on_a_ring(tmp_path):
         raise AssertionError(finished.stderr)
     result = json.loads(finished.stdout)
 
-    on = {entry["method"]: entry["usable"] for entry in result["onRing"]}
-    # ReRF's views were rendered around a ring, so a drag has somewhere to land.
+    on = {entry["method"]: entry["usable"] for entry in result["onShell"]}
+    # ReRF's views were rendered around a shell, so a drag has somewhere to land.
     assert on["rerf"] is True
     assert on["vega"] is True
     # A live clip has no station -- it renders its own camera -- so there is
     # nothing to snap it to.
     assert on["live"] is False
-    off = {entry["method"]: entry["usable"] for entry in result["offRing"]}
+    off = {entry["method"]: entry["usable"] for entry in result["offShell"]}
     assert off == {"vega": True, "rerf": False, "live": False}
 
 
 def test_following_the_camera_is_debounced():
-    """A spin across 36 stations must not be 36 downloads.
+    """A spin across 216 stations must not be 216 downloads.
 
     Crossing a station changes which clip a pixel pane plays, so re-resolving on
-    every pointermove would fetch a container per station -- 50 MB of pictures
-    nobody stopped on. The geometry panes are unaffected either way: they redraw
-    from the camera every frame.
+    every pointermove would fetch a container per station -- hundreds of MB of
+    pictures nobody stopped on. The geometry panes are unaffected either way:
+    they redraw from the camera every frame.
     """
     page = viewer_path().read_text()
     start = page.index("function followCamera(")
@@ -830,3 +964,17 @@ def test_following_the_camera_is_debounced():
     # And the resident check is what makes the one that does fire cheap.
     start = page.index("  async downloadAll(")
     assert "if (this.resident)" in page[start:page.index("\n  }\n", start)]
+
+
+def test_dragging_the_pitch_follows_the_camera_too():
+    """Both axes now select a station, so both have to trigger the follow.
+
+    Hooked to the branch rather than to the handler: the pan branch moves the
+    look-at target, which changes what is being looked at and not from where.
+    """
+    page = viewer_path().read_text()
+    start = page.index("panesEl.addEventListener(\"pointermove\"")
+    body = page[start:page.index("\n  });\n", start)]
+    orbit = body[body.index("} else {"):]
+    assert "camera.pitch" in orbit and "followCamera()" in orbit
+    assert "followCamera()" not in body[:body.index("} else {")]
