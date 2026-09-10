@@ -193,7 +193,7 @@ frames.
 | `open4d.io._mesh` | `.obj` and `.ply`, trimesh fallback |
 | `formats_usd.py` | Compatibility wrappers over the public USD backend |
 | `open4d.visualization` | Public viewer, renderer-neutral frames, rotation, shading |
-| `mesh_metrics.py` | Nearest-neighbour search, point-to-point/plane, RMS and PSNR |
+| [`open4d.metrics`](../../open4d/metrics.py) | Nearest-neighbour search, point-to-point/plane, RMS and PSNR |
 | `compare_frames.py` | Frame pairing, per-frame error, error colours |
 | `colormaps.py` | The sequential ramp and the colourbar gradient |
 | `viewer_compare_qt.py` | The two-pane synchronized viewer |

@@ -30,6 +30,7 @@ from _common import require
 import colormaps
 import compare_frames
 from open4d.visualization import _frames as render_frames
+from open4d.visualization._qt import _mesh_shader
 
 # Ink colours for overlay text, on the dark surface the comparison defaults to.
 _TEXT = (222, 222, 228)
@@ -49,23 +50,11 @@ PANES = (PaneSpec("reference", "shaded"), PaneSpec("decoded", "error"))
 
 
 def _qt():
-    """Import PyQt6 and pyqtgraph's GL module, or exit with the pip command.
-
-    Also enables OpenGL context sharing, which more than one GL view *requires*
-    here: pyqtgraph caches each compiled shader program globally while every
-    `GLViewWidget` gets its own context, so the second pane would look the
-    program up in a context that has never seen it and fail to draw with
-    GL_INVALID_VALUE. Qt only honours the attribute before the application is
-    constructed, so it is set here rather than beside the panes.
-    """
+    """Import PyQt6 and pyqtgraph's GL module, or exit with the pip command."""
     QtWidgets = require("PyQt6.QtWidgets", "player")
     QtCore = require("PyQt6.QtCore", "player")
     QtGui = require("PyQt6.QtGui", "player")
     gl = require("pyqtgraph.opengl", "player")
-    if QtWidgets.QApplication.instance() is None:
-        QtCore.QCoreApplication.setAttribute(
-            QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True
-        )
     return QtWidgets, QtCore, QtGui, gl
 
 
@@ -125,6 +114,7 @@ class _Pane:
 
         self.mesh_item = gl_module.GLMeshItem(
             meshdata=gl_module.MeshData(),
+            shader=_mesh_shader(),
             smooth=False,
             drawFaces=True,
             drawEdges=args.wireframe,
@@ -310,8 +300,8 @@ def _framebuffer(view, args, image_module):
     raw = image.constBits().asstring(height * image.bytesPerLine())
     # Rows are padded to a stride; crop the padding before reshaping.
     pixels = np.frombuffer(raw, dtype=np.uint8).reshape(
-        height, image.bytesPerLine() // 3, 3
-    )[:, :width]
+        height, image.bytesPerLine()
+    )[:, :width * 3].reshape(height, width, 3)
     picture = image_module.fromarray(pixels.copy())
     target = (args.width, args.height)
     if picture.size != target:
@@ -598,27 +588,22 @@ def record(comparison, args, output: Path) -> None:
             f"--save writes an animated .gif; got {output.suffix or 'no suffix'}"
         )
 
+    from open4d.visualization._qt import _gif_durations, _save_gif
+
+    durations = _gif_durations(len(comparison), args.fps)
     scene = Comparison3D(comparison, args)
-    # An unshown widget keeps its default 640x480 and renders at that aspect, so
-    # size every pane explicitly rather than having to show the window.
-    for pane in scene.panes:
-        pane.view.resize(args.width, args.height)
-    scene.application.processEvents()
-
-    captured = []
-    for index in range(len(comparison)):
-        scene.show_frame(index)
-        captured.append(scene.grab(image_module))
-        print(f"\r  rendered {index + 1}/{len(comparison)}", end="", flush=True)
-    print()
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    captured[0].save(
-        output,
-        save_all=True,
-        append_images=captured[1:],
-        duration=max(int(1000.0 / args.fps), 20),
-        loop=0,
-        optimize=True,
-    )
+    try:
+        for pane in scene.panes:
+            pane.view.resize(args.width, args.height)
+        scene.application.processEvents()
+        captured = []
+        for index in range(len(comparison)):
+            scene.show_frame(index)
+            captured.append(scene.grab(image_module))
+            print(f"\r  rendered {index + 1}/{len(comparison)}", end="", flush=True)
+        print()
+        _save_gif(captured, output, durations)
+    finally:
+        for pane in scene.panes:
+            pane.view.close()
     print(f"wrote {output} ({output.stat().st_size / 1e6:.2f} MB)")

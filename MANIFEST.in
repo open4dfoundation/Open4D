@@ -10,7 +10,6 @@ prune open4d/codecs
 prune open4d/reconstruction
 prune integrations/unity
 prune examples
-prune apps
 prune docs
 prune scripts
 prune .github
@@ -25,3 +24,10 @@ recursive-exclude integrations/open3d/tests *
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store
+
+recursive-exclude open4d/streaming/tests *
+prune open4d/streaming/app
+prune open4d/streaming/src
+prune open4d/streaming/include
+prune open4d/streaming/python
+prune open4d/streaming/tools

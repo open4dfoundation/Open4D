@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .codec import Codec, available_codecs, decode_sequence, encode_sequence
 from .core import Sequence
+from .gaussians import NeuralGaussianFrame
 from .io import open_sequence, write_sequence
 
 _USD_SUFFIXES = frozenset((".usd", ".usda", ".usdc", ".usdz"))
@@ -45,7 +46,7 @@ def load(
     codec: str | Codec | None = None,
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
-) -> Sequence:
+) -> Sequence | tuple[NeuralGaussianFrame, ...]:
     """Open a sequence artifact, raw V-DMC bitstream, or geometry source."""
     if format is not None and codec is not None:
         raise TypeError("format and codec are mutually exclusive")
@@ -61,7 +62,7 @@ def load(
             raise TypeError("format cannot select a raw V-DMC bitstream")
         _set_raw_fps(values, fps)
         return decode_sequence(path, codec="vdmc", **values)
-    if not path.is_dir() and path.suffix.lower() in _codec_suffixes():
+    if path.suffix.lower() in _codec_suffixes():
         if format is not None:
             raise TypeError("format cannot select a codec artifact")
         if fps is not None:
@@ -80,7 +81,7 @@ def save(
     up_axis: str | None = None,
     options: Mapping[str, object] | None = None,
 ) -> Path:
-    """Write a sequence to one OpenUSD or codec artifact file."""
+    """Write a sequence to an OpenUSD file or a research codec artifact."""
     if not isinstance(sequence, Sequence):
         raise TypeError("sequence must be an open4d.Sequence")
     if not isinstance(overwrite, bool):
@@ -106,9 +107,7 @@ def save(
     suffixes = _codec_suffixes()
     if codec is None:
         matches = suffixes.get(suffix, [])
-        if suffix == ".o4d":
-            codec = "npz"
-        elif len(matches) == 1:
+        if len(matches) == 1:
             codec = matches[0]
         elif len(matches) > 1:
             raise ValueError(
@@ -143,3 +142,24 @@ def unload(sequence: Sequence) -> None:
     if not isinstance(sequence, Sequence):
         raise TypeError("sequence must be an open4d.Sequence")
     sequence.close()
+
+
+def reconstruct(source, output=None, *, method="rgbd", **options):
+    """Build meshes from depth images, or splats from calibrated camera images.
+
+    RGB-D: reconstruct(depth, color=rgb, intrinsics=(fx, fy, cx, cy)).
+    Gaussian: reconstruct(scene_folder, output_folder, method="queen").
+    """
+    if method == "rgbd":
+        if output is not None:
+            raise TypeError("RGB-D reconstruction returns a Sequence; omit output")
+        from .streaming import reconstruct as reconstruct_rgbd
+
+        return reconstruct_rgbd(source, **options)
+    if method in ("queen", "3dgstream"):
+        if output is None:
+            raise TypeError("Gaussian reconstruction requires an output folder")
+        from .gaussians import reconstruct_gaussians
+
+        return reconstruct_gaussians(source, output, method=method, **options)
+    raise ValueError("method must be 'rgbd', 'queen' or '3dgstream'")

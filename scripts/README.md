@@ -9,8 +9,9 @@ run from anywhere inside the checkout and resolve the repository root.
   With the `[tools]` extra it also measures OFF, STL, GLB, and glTF decoding.
 - `benchmark_codec.py` measures a complete encode, lazy decoder open, and
   validated full decode using the selected backend. The reference and Python
-  research adapters are in-process; V-DMC invokes its configured native
-  executable once per direction. Pass `--source 4d_files/Rafa_Approves_hd_4k`
+  research adapters are in-process; native adapters use their configured
+  runtime. Utility codecs are private benchmark baselines, not public API choices.
+  Pass `--source 4d_files/Rafa_Approves_hd_4k`
   for real OBJ frames instead of the generated moving grid.
 - `smoke_installed_io.py` is the package CI smoke test. It deliberately imports
   an installed wheel and loads a real OBJ from outside the checkout.
@@ -19,7 +20,6 @@ run from anywhere inside the checkout and resolve the repository root.
   backing the `codecs/draco` baseline, and TVMC's and TSMC's copies.
 - `fetch_artifact.sh URL SHA256 DESTINATION` downloads an externally stored
   dataset or checkpoint and rejects it if its SHA-256 checksum does not match.
-- `download_datasets.sh` is reserved for a future shared dataset registry.
 
 Module-specific setup and pipeline commands remain in each module directory.
 See `docs/artifacts.md` before adding datasets, checkpoints, or generated runs.

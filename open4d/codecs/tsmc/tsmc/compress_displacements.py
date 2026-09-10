@@ -188,8 +188,15 @@ print(f"Matrix sample (first 5 rows):\n{D[:5, :]}")
 
 # Quantize float values to integers, QuantizedGaussian model and AnsCoder can only be applied on integers.
 scaling_factor = 10000
-D_quantized = np.round(D * scaling_factor).astype(np.int32)
-min_val, max_val = np.min(D_quantized), np.max(D_quantized)
+rounded = np.round(D.astype(np.float64) * scaling_factor)
+if not np.isfinite(rounded).all() or np.any(rounded < -(2**31)) or np.any(rounded >= 2**31):
+    raise ValueError("entropy values exceed int32 range")
+D_quantized = rounded.astype(np.int32)
+min_val, max_val = int(np.min(D_quantized)), int(np.max(D_quantized))
+if min_val == max_val:
+    min_val, max_val = (min_val - 1, max_val) if max_val == 2**31 - 1 else (min_val, max_val + 1)
+if max_val - min_val >= 2**24:
+    raise ValueError("entropy range exceeds the ANS model's 24-bit precision")
 print(f"Quantized data range: [{min_val}, {max_val}]")
 
 # Define the QuantizedGaussian model
@@ -236,4 +243,3 @@ print(f"Reconstructed matrix sample (first 5 rows):\n{reconstructed[:5, :]}")
 print("Matrix successfully encoded and decoded!")
 
 np.save(os.path.join(output_path, "delta_trajectories_decoded.npy"), reconstructed)
-

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
-from importlib import import_module
 import json
 import os
 from pathlib import Path
@@ -17,16 +16,30 @@ import numpy as np
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import open_sequence
 
-from ._npz import _json_value
+from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
+from ._research import research_module
 from ._tsdf import write_tsdf_sequence
 
 _SCHEMA = "open4d.klt-sequence/v1"
 
 
+def _normalization(manifest):
+    try:
+        normalization = manifest["normalization"]
+        center = np.asarray(normalization["center"], dtype=np.float64)
+        scale = normalization["scale"]
+        if (center.shape != (3,) or not np.isfinite(center).all()
+                or type(scale) not in (int, float) or not np.isfinite(scale) or scale <= 0):
+            raise ValueError("expected a finite XYZ center and positive scale")
+    except (KeyError, TypeError, ValueError) as error:
+        raise CodecError(f"invalid TSDF normalization: {error}") from error
+    return center, float(scale)
+
+
 def _backend():
     try:
-        return import_module("open4d.codecs.klt.klt")
+        return research_module("klt.klt")
     except ImportError as error:
         raise CodecError("KLT dependencies are missing; install open4d[klt]") from error
 
@@ -42,9 +55,7 @@ class _KLTProvider:
         self.allow_nonmonotonic_timestamps = manifest.get(
             "allow_nonmonotonic_timestamps", False
         )
-        normalization = manifest["normalization"]
-        self.center = np.asarray(normalization["center"], dtype=np.float32)
-        self.scale = float(normalization["scale"])
+        self.center, self.scale = _normalization(manifest)
 
     @property
     def frame_count(self):
@@ -66,8 +77,10 @@ class _KLTProvider:
         )
 
     def close(self):
-        self.decoded.close()
-        self.temporary.cleanup()
+        try:
+            self.decoded.close()
+        finally:
+            self.temporary.cleanup()
 
 
 class KLTCodec:
@@ -80,8 +93,9 @@ class KLTCodec:
     def can_decode(self, source: Path) -> bool:
         try:
             with ZipFile(source) as archive:
-                return json.loads(archive.read("manifest.json")).get("schema") == _SCHEMA
-        except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
+                manifest = json.loads(archive.read("manifest.json"))
+                return isinstance(manifest, dict) and manifest.get("schema") == _SCHEMA
+        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
             return False
 
     def encode(
@@ -134,7 +148,7 @@ class KLTCodec:
                 shutil.copyfile(work / "encoded/compressed_archive.zip", temporary)
                 with ZipFile(temporary, "a", compression=ZIP_DEFLATED) as archive:
                     archive.writestr("manifest.json", json.dumps(manifest))
-                temporary.replace(destination)
+                _publish_file(temporary, destination, overwrite=overwrite)
             except Exception:
                 temporary.unlink(missing_ok=True)
                 raise
@@ -144,11 +158,12 @@ class KLTCodec:
         source = Path(source).absolute()
         temporary = tempfile.TemporaryDirectory(prefix="open4d-klt-decode-")
         work = Path(temporary.name)
+        decoded = None
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
-                if manifest.get("schema") != _SCHEMA:
-                    raise CodecError("unsupported KLT artifact schema")
+                _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
+                _normalization(manifest)
                 members = [item for item in archive.infolist() if item.filename != "manifest.json"]
                 if any(Path(item.filename).is_absolute() or ".." in Path(item.filename).parts
                        for item in members):
@@ -161,8 +176,12 @@ class KLTCodec:
                     f"KLT decoded {len(decoded)} frames, expected {len(manifest['frames'])}"
                 )
             return Sequence(_KLTProvider(temporary, decoded, manifest))
-        except Exception:
-            temporary.cleanup()
+        except BaseException:
+            try:
+                if decoded is not None:
+                    decoded.close()
+            finally:
+                temporary.cleanup()
             raise
 
 

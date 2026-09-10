@@ -6,6 +6,8 @@ import pytest
 
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from open4d.codec import available_codecs, decode_sequence, encode_sequence
+from open4d.codec._npz import NumPyZipCodec, REFERENCE_CODECS
+from open4d.codec._draco import DRACO_CODEC
 from open4d.io import available_formats, open_sequence, write_sequence
 
 pytestmark = [pytest.mark.cpu, pytest.mark.slow]
@@ -27,8 +29,8 @@ def test_rafa_obj_frames_encode_and_decode(tmp_path):
 
     source = open_sequence(dataset, fps=30)
     sample = source[:2]
-    artifact = encode_sequence(sample, tmp_path / "rafa.o4d")
-    decoded = decode_sequence(artifact)
+    artifact = NumPyZipCodec().encode(sample, tmp_path / "rafa.o4d")
+    decoded = NumPyZipCodec().decode(artifact)
 
     assert len(source) >= 2
     assert len(decoded) == 2
@@ -50,8 +52,8 @@ def test_real_draco_round_trip_on_rafa(tmp_path):
         pytest.skip("Rafa_Approves_hd_4k is not available")
 
     source = open_sequence(dataset, fps=30)[:2]
-    artifact = encode_sequence(source, tmp_path / "rafa.d4d", codec="draco")
-    decoded = decode_sequence(artifact)
+    artifact = encode_sequence(source, tmp_path / "rafa.d4d", codec=DRACO_CODEC)
+    decoded = DRACO_CODEC.decode(artifact)
 
     assert len(decoded) == len(source)
     for expected, actual in zip(source, decoded, strict=True):
@@ -91,15 +93,13 @@ def test_every_input_codec_and_output_combination(tmp_path):
         source = write_sequence(
             canonical, tmp_path / f"in.{input_info.id}", allow_lossy=True
         )
-        for codec_info in available_codecs():
-            if codec_info.backend not in {"python", "python-binding"}:
-                continue
+        for codec_info in (*REFERENCE_CODECS, DRACO_CODEC):
             artifact = encode_sequence(
                 source,
                 tmp_path / f"{input_info.id}-{codec_info.id}{codec_info.suffixes[0]}",
-                codec=codec_info.id,
+                codec=codec_info,
             )
-            decoded = decode_sequence(artifact)
+            decoded = codec_info.decode(artifact)
             for output_info in available_formats():
                 output = write_sequence(
                     decoded,

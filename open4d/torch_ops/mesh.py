@@ -24,8 +24,9 @@ call sites that take a square root afterwards keep working unchanged.
 
 from __future__ import annotations
 
+import operator
+
 import torch
-import torch.nn.functional as F
 
 __all__ = [
     "Meshes",
@@ -37,7 +38,22 @@ __all__ = [
     "vertex_normals",
 ]
 
-_EPS = 1e-6
+def _validate_mesh(verts, faces):
+    if verts.ndim != 2 or verts.shape[1] != 3 or not verts.is_floating_point():
+        raise ValueError("verts must be a floating-point (N, 3) tensor")
+    if faces.ndim != 2 or faces.shape[1] != 3 or faces.dtype not in (torch.int32, torch.int64):
+        raise ValueError("faces must be an integer (M, 3) tensor")
+    if faces.device != verts.device:
+        raise ValueError("verts and faces must be on the same device")
+    if not torch.isfinite(verts).all():
+        raise ValueError("verts must be finite")
+    if faces.numel() and (faces.min() < 0 or faces.max() >= len(verts)):
+        raise ValueError("faces contain out-of-range vertex indices")
+
+
+def _unit_vectors(values):
+    lengths = torch.linalg.vector_norm(values, dim=-1, keepdim=True)
+    return values / torch.where(lengths > 0, lengths, torch.ones_like(lengths))
 
 
 # ----------------------------
@@ -45,11 +61,12 @@ _EPS = 1e-6
 # ----------------------------
 def face_normals(verts: torch.Tensor, faces: torch.Tensor) -> torch.Tensor:
     """Unit normal per face, following PyTorch3D's corner ordering."""
+    _validate_mesh(verts, faces)
     tri = verts[faces]
     normals = torch.cross(
         tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0], dim=1
     )
-    return F.normalize(normals, eps=_EPS, dim=1)
+    return _unit_vectors(normals)
 
 
 def vertex_normals(verts: torch.Tensor, faces: torch.Tensor) -> torch.Tensor:
@@ -59,13 +76,14 @@ def vertex_normals(verts: torch.Tensor, faces: torch.Tensor) -> torch.Tensor:
     area -- to all three of its corners, so larger faces count for more. This is
     the weighting PyTorch3D uses, reproduced here so results do not shift.
     """
+    _validate_mesh(verts, faces)
     result = torch.zeros_like(verts)
     tri = verts[faces]
     v0, v1, v2 = tri[:, 0], tri[:, 1], tri[:, 2]
     result.index_add_(0, faces[:, 0], torch.cross(v1 - v0, v2 - v0, dim=1))
     result.index_add_(0, faces[:, 1], torch.cross(v2 - v1, v0 - v1, dim=1))
     result.index_add_(0, faces[:, 2], torch.cross(v0 - v2, v1 - v2, dim=1))
-    return F.normalize(result, eps=_EPS, dim=1)
+    return _unit_vectors(result)
 
 
 # ----------------------------
@@ -83,20 +101,30 @@ def sample_points_from_mesh(
     the chosen triangle using the square-root barycentric trick, which keeps the
     distribution uniform rather than clustering at the first corner.
     """
+    _validate_mesh(verts, faces)
+    if isinstance(num_samples, bool):
+        raise ValueError("num_samples must be a nonnegative integer")
+    num_samples = operator.index(num_samples)
+    if num_samples < 0:
+        raise ValueError("num_samples must be a nonnegative integer")
+    if normals is not None and (normals.shape != verts.shape or normals.device != verts.device):
+        raise ValueError("normals must match the vertices' shape and device")
     tri = verts[faces]
     areas = 0.5 * torch.linalg.norm(
         torch.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0], dim=1), dim=1
     )
-    cdf = torch.cumsum(areas / areas.sum().clamp_min(_EPS), dim=0)
+    total_area = areas.sum()
+    if not torch.isfinite(total_area) or total_area <= 0:
+        raise ValueError("cannot sample a mesh with no finite positive surface area")
+    cdf = torch.cumsum(areas / total_area, dim=0)
 
-    num_samples = int(num_samples)
     picked = torch.searchsorted(
-        cdf, torch.rand(num_samples, device=verts.device)
+        cdf, torch.rand(num_samples, device=verts.device, dtype=verts.dtype), right=True
     ).clamp_max(len(faces) - 1)
     chosen = faces[picked]
 
-    u = torch.rand(num_samples, 1, device=verts.device)
-    v = torch.rand(num_samples, 1, device=verts.device)
+    u = torch.rand(num_samples, 1, device=verts.device, dtype=verts.dtype)
+    v = torch.rand(num_samples, 1, device=verts.device, dtype=verts.dtype)
     root = v.sqrt()
     w0, w1, w2 = 1.0 - root, (1.0 - u) * root, u * root
 
@@ -112,7 +140,7 @@ def sample_points_from_mesh(
         + normals[chosen[:, 1]] * w1
         + normals[chosen[:, 2]] * w2
     )
-    return points, F.normalize(sampled, eps=_EPS, dim=1)
+    return points, _unit_vectors(sampled)
 
 
 # ----------------------------
@@ -120,7 +148,7 @@ def sample_points_from_mesh(
 # ----------------------------
 def _nearest_square_distance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """Squared distance from each point of *a* to its nearest point in *b*."""
-    return torch.cdist(a, b).min(dim=2).values ** 2
+    return torch.cdist(a, b, compute_mode="donot_use_mm_for_euclid_dist").min(dim=2).values ** 2
 
 
 def chamfer_distance(
@@ -137,8 +165,15 @@ def chamfer_distance(
     computed here -- no Open4D call site requested them -- so the second element
     is always None, which is what those call sites already discard.
     """
-    if x.dim() != 3 or y.dim() != 3:
+    if (x.dim() != 3 or y.dim() != 3 or x.shape[2] != 3 or y.shape[2] != 3
+            or x.shape[0] != y.shape[0]):
         raise ValueError("chamfer_distance expects (N, P, 3) tensors")
+    if batch_reduction not in ("mean", "sum", None):
+        raise ValueError(f"unknown batch_reduction {batch_reduction!r}")
+    if point_reduction is None and batch_reduction is not None:
+        raise ValueError("batch_reduction must be None when point_reduction is None")
+    if not x.shape[0] or not x.shape[1] or not y.shape[1]:
+        raise ValueError("chamfer_distance requires nonempty point sets")
 
     def reduce_points(values: torch.Tensor) -> torch.Tensor:
         if point_reduction == "mean":
@@ -153,7 +188,10 @@ def chamfer_distance(
 
     loss = reduce_points(_nearest_square_distance(x, y))
     if not single_directional:
-        loss = loss + reduce_points(_nearest_square_distance(y, x))
+        backward = reduce_points(_nearest_square_distance(y, x))
+        if point_reduction is None:
+            return (loss, backward), None
+        loss = torch.maximum(loss, backward) if point_reduction == "max" else loss + backward
 
     if point_reduction is None:
         return loss, None
@@ -193,7 +231,10 @@ def _closest_point_on_triangle(
     va = d3 * d6 - d5 * d4
     vb = d5 * d2 - d1 * d6
     vc = d1 * d4 - d3 * d2
-    denom = (va + vb + vc).clamp_min(_EPS)
+    def nonzero(values):
+        return torch.where(values != 0, values, torch.ones_like(values))
+
+    denom = nonzero(va + vb + vc)
 
     v = (vb / denom).unsqueeze(-1)
     w = (vc / denom).unsqueeze(-1)
@@ -206,7 +247,7 @@ def _closest_point_on_triangle(
     # vertex answer wherever floating point makes two conditions overlap.
     result = a.unsqueeze(0) + ab * v + ac * w
 
-    denom_bc = ((d4 - d3) + (d5 - d6)).clamp_min(_EPS)
+    denom_bc = nonzero((d4 - d3) + (d5 - d6))
     t_bc = ((d4 - d3) / denom_bc).unsqueeze(-1)
     result = torch.where(
         ((va <= 0) & ((d4 - d3) >= 0) & ((d5 - d6) >= 0)).unsqueeze(-1),
@@ -214,7 +255,7 @@ def _closest_point_on_triangle(
         result,
     )
 
-    t_ac = (d2 / (d2 - d6).clamp_min(_EPS)).unsqueeze(-1)
+    t_ac = (d2 / nonzero(d2 - d6)).unsqueeze(-1)
     result = torch.where(
         ((vb <= 0) & (d2 >= 0) & (d6 <= 0)).unsqueeze(-1),
         a.unsqueeze(0) + ac * t_ac,
@@ -225,7 +266,7 @@ def _closest_point_on_triangle(
         ((d6 >= 0) & (d5 <= d6)).unsqueeze(-1), c.unsqueeze(0), result
     )
 
-    t_ab = (d1 / (d1 - d3).clamp_min(_EPS)).unsqueeze(-1)
+    t_ab = (d1 / nonzero(d1 - d3)).unsqueeze(-1)
     result = torch.where(
         ((vc <= 0) & (d1 >= 0) & (d3 <= 0)).unsqueeze(-1),
         a.unsqueeze(0) + ab * t_ab,
@@ -238,7 +279,31 @@ def _closest_point_on_triangle(
     result = torch.where(
         ((d1 <= 0) & (d2 <= 0)).unsqueeze(-1), a.unsqueeze(0), result
     )
+    degenerate = torch.cross(b - a, c - a, dim=1).square().sum(dim=1) == 0
+    if degenerate.any():
+        closest = a.unsqueeze(0).expand(len(points), -1, -1)
+        distance = (points[:, None] - closest).square().sum(-1)
+        for start, end in ((a, b), (b, c), (c, a)):
+            edge = end - start
+            length = edge.square().sum(-1)
+            ratio = ((points[:, None] - start) * edge).sum(-1) / nonzero(length)
+            candidate = start + ratio.clamp(0, 1)[..., None] * edge
+            candidate_distance = (points[:, None] - candidate).square().sum(-1)
+            closer = candidate_distance < distance
+            closest = torch.where(closer[..., None], candidate, closest)
+            distance = torch.minimum(distance, candidate_distance)
+        result = torch.where(degenerate[None, :, None], closest, result)
     return result
+
+
+def _validate_distance(points, verts, faces):
+    _validate_mesh(verts, faces)
+    if not len(faces):
+        raise ValueError("point-to-face distance needs at least one triangle")
+    if points.ndim != 2 or points.shape[1] != 3 or not points.is_floating_point():
+        raise ValueError("points must be a floating-point (N, 3) tensor")
+    if points.device != verts.device or not torch.isfinite(points).all():
+        raise ValueError("points must be finite and on the mesh's device")
 
 
 def point_face_distance_bruteforce(
@@ -252,6 +317,11 @@ def point_face_distance_bruteforce(
     reference the accelerated path is checked against, and as the fallback when
     Open3D is unavailable.
     """
+    _validate_distance(points, verts, faces)
+    if isinstance(chunk, bool) or operator.index(chunk) < 1:
+        raise ValueError("chunk must be a positive integer")
+    if not len(points):
+        return points.new_empty(0), torch.empty(0, dtype=torch.int64, device=points.device)
     tri = verts[faces]
     best_distance, best_index = [], []
     for start in range(0, len(points), chunk):
@@ -274,6 +344,9 @@ def point_face_distance(
     Not differentiable, and the tensors make a round trip through the CPU;
     both are fine for the evaluation-only call sites that need it.
     """
+    _validate_distance(points, verts, faces)
+    if not len(points):
+        return points.new_empty(0), torch.empty(0, dtype=torch.int64, device=points.device)
     try:
         import numpy as np
         import open3d as o3d

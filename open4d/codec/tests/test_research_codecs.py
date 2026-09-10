@@ -77,12 +77,13 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
               "qndf-int8": ".qi4d"}[codec]
     artifact = encode_sequence(
         input_path, tmp_path / f"rafa-{codec}{suffix}",
-        codec=codec, fps=30,
+        codec=codec,
         **options[codec],
     )
     first = decode_sequence(artifact, device="cuda:0")
     second = decode_sequence(artifact, device="cuda:0")
     assert len(first) == len(second) == 2
+    assert first.timestamps == second.timestamps == source.timestamps
     for left, right in zip(first, second, strict=True):
         assert len(left.geometry.positions) and len(left.geometry.triangles)
         np.testing.assert_array_equal(left.geometry.positions, right.geometry.positions)

@@ -26,6 +26,7 @@ ALLOWED_EGG_INFO = {
     "PKG-INFO",
     "SOURCES.txt",
     "dependency_links.txt",
+    "entry_points.txt",
     "requires.txt",
     "top_level.txt",
 }

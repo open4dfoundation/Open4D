@@ -153,6 +153,9 @@ def decode_all(sequence, stride: int, order: list[int]) -> list[RenderFrame]:
 
 def bounds(frames: list[RenderFrame]) -> tuple[np.ndarray, np.ndarray]:
     """Overall lower and upper corner across every frame."""
+    frames = [frame for frame in frames if len(frame.positions)]
+    if not frames:
+        raise ValueError("sequence contains no vertices to display")
     lower = np.min([frame.positions.min(axis=0) for frame in frames], axis=0)
     upper = np.max([frame.positions.max(axis=0) for frame in frames], axis=0)
     return lower, upper
@@ -176,9 +179,9 @@ def shade(
     without needing adjacency. The light term uses `abs`, so faces stay lit
     whichever way they are wound — reconstructed meshes are not consistent.
     """
-    normals = np.zeros_like(positions)
+    normals = np.zeros(positions.shape, dtype=np.float64)
     if len(triangles):
-        corners = positions[triangles]
+        corners = np.asarray(positions, dtype=np.float64)[triangles]
         face_normals = np.cross(
             corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
         )
@@ -188,7 +191,7 @@ def shade(
             np.add.at(normals, triangles[:, column], face_normals)
 
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-    normals = normals / np.maximum(lengths, 1e-12)
+    np.divide(normals, lengths, out=normals, where=lengths > 0)
 
     direction = np.asarray(light, dtype=np.float32)
     direction = direction / np.linalg.norm(direction)
@@ -196,8 +199,6 @@ def shade(
     # An ambient floor keeps faces turned away from the light off black.
     intensity = ambient + (1.0 - ambient) * diffuse
 
-    # float32 throughout: a Python tuple of floats would promote this to float64
-    # and double the largest per-vertex buffer for no visible gain.
     shaded = np.clip(intensity[:, None] * np.asarray(base, dtype=np.float32),
                      0.0, 1.0)
     return np.column_stack(

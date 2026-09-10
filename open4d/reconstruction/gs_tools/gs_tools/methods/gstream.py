@@ -127,14 +127,7 @@ def train_command(spec: RunSpec, options: GstreamOptions | None = None) -> list[
 
 
 def render_command(spec: RunSpec) -> list[str]:
-    """Upstream's FVV extraction, which is also how it renders a finished run."""
-    return [
-        sys.executable,
-        "scripts/extract_fvv.py",
-        "-o",
-        str(spec.run_dir.resolve()),
-        *spec.passthrough,
-    ]
+    raise NotImplementedError("3DGStream rendering requires its separate native viewer")
 
 
 def train(spec: RunSpec, options: GstreamOptions | None = None, *, stage: str = "frames") -> int:
