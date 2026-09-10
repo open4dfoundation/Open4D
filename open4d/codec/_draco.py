@@ -25,7 +25,7 @@ def _backend():
         return import_module("DracoPy")
     except ImportError as error:
         raise CodecError(
-            "Draco needs the optional binding; install open4d[draco]"
+            "Draco needs the optional binding; install 'DracoPy>=2,<3'"
         ) from error
 
 

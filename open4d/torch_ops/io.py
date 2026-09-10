@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import NamedTuple
 
 import torch
+import numpy as np
+
+from open4d.io._mesh import read_obj, write_obj
 
 __all__ = ["Faces", "load_obj", "save_obj"]
 
@@ -36,11 +39,6 @@ class Properties(NamedTuple):
     verts_uvs: torch.Tensor | None = None
 
 
-def _corner(token: str) -> int:
-    """OBJ indices are 1-based and may be `v`, `v/vt`, `v//vn`, or `v/vt/vn`."""
-    return int(token.split("/", 1)[0]) - 1
-
-
 def load_obj(
     path: str | Path,
     load_textures: bool = False,
@@ -58,36 +56,20 @@ def load_obj(
             "site loads textures. Use trimesh if you need materials."
         )
 
-    positions: list[tuple[float, float, float]] = []
-    corners: list[tuple[int, int, int]] = []
-    with open(path, "r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if line.startswith("v "):
-                x, y, z = line.split()[1:4]
-                positions.append((float(x), float(y), float(z)))
-            elif line.startswith("f "):
-                indices = [_corner(token) for token in line.split()[1:]]
-                for i in range(1, len(indices) - 1):
-                    corners.append((indices[0], indices[i], indices[i + 1]))
-
-    verts = torch.tensor(positions, dtype=dtype, device=device)
-    faces = torch.tensor(corners, dtype=torch.int64, device=device)
-    if corners and int(faces.max()) >= len(positions):
-        raise ValueError(
-            f"{path} references vertex {int(faces.max()) + 1} but declares "
-            f"{len(positions)}"
-        )
+    if not torch.empty((), dtype=dtype).is_floating_point():
+        raise TypeError("vertex dtype must be floating point")
+    positions, corners, _ = read_obj(Path(path), dtype=np.float64)
+    verts = torch.as_tensor(positions, dtype=dtype, device=device)
+    if not torch.isfinite(verts).all():
+        raise ValueError("vertex coordinates exceed the requested dtype")
+    faces = torch.as_tensor(corners.astype(np.int64), device=device)
     return verts, Faces(verts_idx=faces), Properties()
 
 
 def save_obj(path: str | Path, verts: torch.Tensor, faces: torch.Tensor) -> None:
     """Write vertices and triangles as an OBJ, with 1-based indices."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    v = verts.detach().cpu().numpy()
-    f = faces.detach().cpu().numpy() + 1
-    with open(path, "w", encoding="utf-8") as stream:
-        for x, y, z in v:
-            stream.write(f"v {x:f} {y:f} {z:f}\n")
-        for a, b, c in f:
-            stream.write(f"f {a} {b} {c}\n")
+    from .mesh import _validate_mesh
+
+    _validate_mesh(verts, faces)
+    write_obj(Path(path), verts.detach().to(dtype=torch.float64, device="cpu").numpy(),
+              faces.detach().cpu().numpy())

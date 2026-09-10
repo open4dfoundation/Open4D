@@ -7,7 +7,7 @@ from types import MappingProxyType
 import numpy as np
 import pytest
 
-from open4d import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
+from open4d import Frame, MemoryFrameProvider, Sequence, SequenceView, TopologyMode, TriangleMesh
 
 pytestmark = pytest.mark.cpu
 
@@ -244,10 +244,11 @@ def test_topology_declarations(mode, constant):
     assert sequence.has_constant_topology is constant
 
 
-def test_fixed_topology_implies_default_correspondence_flags_but_explicit_values_win():
+def test_fixed_connectivity_does_not_imply_vertex_count_or_identity():
     fixed = Sequence(MemoryFrameProvider(frames(), topology=TopologyMode.FIXED))
-    assert fixed.has_constant_vertex_count is True
-    assert fixed.has_vertex_correspondence is True
+    assert fixed.has_constant_topology is True
+    assert fixed.has_constant_vertex_count is None
+    assert fixed.has_vertex_correspondence is None
     explicit = Sequence(MemoryFrameProvider(
         frames(), topology=TopologyMode.CHANGING,
         has_constant_vertex_count=True, has_vertex_correspondence=False,
@@ -357,3 +358,37 @@ def test_closed_sequence_rejects_frame_and_timing_access_but_keeps_declarations(
         _ = sequence[0]
     with pytest.raises(RuntimeError, match="closed"):
         _ = sequence.timestamps
+
+
+def test_closing_parent_invalidates_cached_view_timing():
+    parent = Sequence(MemoryFrameProvider(frames()))
+    view = parent[:]
+    assert view.timestamps == parent.timestamps
+    parent.close()
+    assert view.closed
+    with pytest.raises(RuntimeError, match="closed"):
+        _ = view.timestamps
+    with pytest.raises(RuntimeError, match="closed"):
+        with view:
+            pass
+
+
+def test_direct_view_construction_checks_parent_and_bounds():
+    parent = Sequence(MemoryFrameProvider(frames(2)))
+    with pytest.raises(IndexError, match="outside"):
+        SequenceView(parent, range(3))
+    with pytest.raises(IndexError, match="outside"):
+        SequenceView(parent, range(-1, 1))
+    with pytest.raises(TypeError, match="range"):
+        SequenceView(parent, [0, 1])
+
+
+def test_strided_view_updates_declared_fps_without_reading_frames():
+    provider = RecordingProvider()
+    provider.metadata["fps"] = 30
+    parent = Sequence(provider)
+    assert parent[::3].metadata["fps"] == 10
+    assert parent[::3][::2].metadata["fps"] == 5
+    assert parent[::-1].metadata["fps"] == 30
+    assert parent.metadata["fps"] == 30
+    assert provider.calls == []

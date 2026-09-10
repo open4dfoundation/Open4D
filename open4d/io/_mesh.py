@@ -30,7 +30,7 @@ class UnsupportedPlyVariant(ValueError):
 # ----------------------------
 # Wavefront OBJ
 # ----------------------------
-def read_obj(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+def read_obj(path: Path, *, dtype=np.float32) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Read positions, triangles, and colors from a Wavefront `.obj` file.
 
     Handles `v` and `f` lines, `v/vt/vn` corner references, negative
@@ -43,16 +43,25 @@ def read_obj(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
 
     with open(path, "r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
-            if line.startswith("v "):
-                fields = line.split()
+            fields = line.partition("#")[0].split()
+            if not fields:
+                continue
+            if fields[0] == "v":
+                if len(fields) < 4:
+                    raise ValueError(f"{path} contains an incomplete vertex")
                 positions.append((fields[1], fields[2], fields[3]))
-            elif line.startswith("f "):
+            elif fields[0] == "f":
                 # "f 1/2/3 4//5 6" -> the vertex index is the first field.
                 indices = [
-                    int(field.partition("/")[0]) for field in line.split()[1:]
+                    int(field.partition("/")[0]) for field in fields[1:]
                 ]
                 # Negative indices count back from the vertices seen so far.
                 count = len(positions)
+                if len(indices) < 3:
+                    raise ValueError(f"{path} contains a face with fewer than three vertices")
+                for index in indices:
+                    if index == 0 or index < -count:
+                        raise ValueError(f"{path} contains invalid OBJ vertex index {index}")
                 resolved = [
                     index - 1 if index > 0 else count + index for index in indices
                 ]
@@ -63,8 +72,14 @@ def read_obj(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
 
     if not positions:
         raise ValueError(f"{path} contains no vertices")
+    if corners and max(max(face) for face in corners) >= len(positions):
+        raise ValueError(f"{path} references vertex {max(max(face) for face in corners) + 1} "
+                         f"but declares {len(positions)}")
+    vertices = np.array(positions, dtype=dtype)
+    if not np.isfinite(vertices).all():
+        raise ValueError(f"{path} contains nonfinite vertex coordinates")
     return (
-        np.array(positions, dtype=np.float32),
+        vertices,
         np.array(corners, dtype=np.uint32).reshape(-1, 3),
         None,
     )
@@ -72,10 +87,12 @@ def read_obj(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
 
 def write_obj(path: Path, positions: np.ndarray, triangles: np.ndarray) -> Path:
     """Write one mesh frame as a Wavefront `.obj` file."""
+    positions = np.asarray(positions)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as stream:
         stream.write(f"# {len(positions)} vertices, {len(triangles)} triangles\n")
-        np.savetxt(stream, positions, fmt="v %.6g %.6g %.6g")
+        precision = 17 if positions.dtype.itemsize > 4 else 9
+        np.savetxt(stream, positions, fmt="v " + " ".join([f"%.{precision}g"] * 3))
         # OBJ indices are 1-based.
         np.savetxt(stream, np.asarray(triangles) + 1, fmt="f %d %d %d")
     return path
@@ -113,15 +130,23 @@ def _parse_ply_header(stream) -> tuple[str, list[dict[str, Any]], int]:
             continue
         keyword = fields[0]
         if keyword == b"format":
+            if (ply_format or len(fields) != 3 or fields[2] != b"1.0"
+                    or fields[1] not in (b"ascii", b"binary_little_endian", b"binary_big_endian")):
+                raise ValueError("invalid PLY format declaration")
             ply_format = fields[1].decode()
         elif keyword == b"element":
+            count = int(fields[2])
+            if count < 0:
+                raise ValueError("PLY element count cannot be negative")
             elements.append(
-                {"name": fields[1].decode(), "count": int(fields[2]), "properties": []}
+                {"name": fields[1].decode(), "count": count, "properties": []}
             )
         elif keyword == b"property":
             if not elements:
                 raise ValueError("PLY property outside of an element")
             if fields[1] == b"list":
+                if _ply_dtype(fields[2].decode()).kind not in "iu":
+                    raise ValueError("PLY list counts must have an integer type")
                 elements[-1]["properties"].append(
                     {
                         "name": fields[4].decode(),
@@ -139,6 +164,8 @@ def _parse_ply_header(stream) -> tuple[str, list[dict[str, Any]], int]:
                     }
                 )
         elif keyword == b"end_header":
+            if not ply_format:
+                raise ValueError("PLY header has no format declaration")
             return ply_format, elements, stream.tell()
 
 
@@ -151,7 +178,8 @@ def _ply_dtype(name: str) -> np.dtype:
 def _ascii_face_indices(
     row: list[bytes], properties: list[dict[str, Any]], path: Path
 ) -> list[int]:
-    """Read the first face list while consuming every property in order."""
+    """Read vertex indices while consuming every property in order."""
+    index_property = _face_index_property(properties)
     if len(properties) == 1 and properties[0]["list"] and row:
         declared = int(row[0])
         if len(row) != declared + 1:
@@ -179,7 +207,7 @@ def _ascii_face_indices(
             )
         values = row[cursor : cursor + value_count]
         cursor += value_count
-        if selected is None:
+        if prop is index_property:
             selected = [int(value) for value in values]
 
     if cursor != len(row):
@@ -187,6 +215,16 @@ def _ascii_face_indices(
             f"{path} face contains {len(row) - cursor} undeclared value(s)"
         )
     assert selected is not None
+    return selected
+
+
+def _face_index_property(properties):
+    lists = [prop for prop in properties if prop["list"]]
+    if not lists:
+        raise UnsupportedPlyVariant("PLY faces need a vertex index list")
+    selected = next((prop for prop in lists if prop["name"] in ("vertex_indices", "vertex_index")), lists[0])
+    if _ply_dtype(selected["value_type"]).kind not in "iu":
+        raise ValueError("PLY vertex indices must have an integer type")
     return selected
 
 
@@ -200,7 +238,8 @@ def _read_exact(stream: Any, byte_count: int, path: Path) -> bytes:
 def _binary_face_indices(
     stream: Any, properties: list[dict[str, Any]], path: Path
 ) -> np.ndarray:
-    """Read the first face list while consuming every binary property."""
+    """Read vertex indices while consuming every binary property."""
+    index_property = _face_index_property(properties)
     selected: np.ndarray | None = None
     for prop in properties:
         if not prop["list"]:
@@ -226,7 +265,7 @@ def _binary_face_indices(
             dtype=value_dtype,
             count=value_count,
         )
-        if selected is None:
+        if prop is index_property:
             selected = values
 
     assert selected is not None
@@ -238,9 +277,9 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
 
     Supports `ascii` and `binary_little_endian`, the two formats the tools in
     this repository produce. Vertices need `x`, `y`, `z`; `red`/`green`/`blue`
-    are picked up when present. Faces come from the first list property of a
-    `face` element, and polygons are fan-triangulated. Point clouds — a `.ply`
-    with no `face` element — return zero triangles.
+    are picked up when present. Faces use `vertex_indices` or `vertex_index`,
+    falling back to the first integer list. Polygons are fan-triangulated.
+    Files with no `face` element return zero triangles.
     """
     with open(path, "rb") as stream:
         ply_format, elements, _offset = _parse_ply_header(stream)
@@ -254,6 +293,8 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
         positions = np.empty((0, 3), dtype=np.float32)
         colors: np.ndarray | None = None
         triangles = _empty_triangles()
+        found_vertices = False
+        vertex_count = next((element["count"] for element in elements if element["name"] == "vertex"), 0)
 
         for element in elements:
             name = element["name"]
@@ -267,14 +308,15 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                 dtype = np.dtype(
                     [(prop["name"], _ply_dtype(prop["type"])) for prop in properties]
                 )
-                rows = np.frombuffer(stream.read(dtype.itemsize * count), dtype=dtype)
+                rows = np.frombuffer(_read_exact(stream, dtype.itemsize * count, path), dtype=dtype)
             else:
                 rows = None  # read per-row below
 
             if name == "vertex":
+                found_vertices = True
                 if ascii_mode:
                     order = [prop["name"] for prop in properties]
-                    table = np.array(rows, dtype=np.float64)
+                    table = np.array(rows, dtype=np.float64).reshape(count, len(order))
                     columns = {key: table[:, i] for i, key in enumerate(order)}
                 else:
                     columns = {key: rows[key] for key in rows.dtype.names}
@@ -324,6 +366,8 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                 if ascii_mode:
                     for row in rows:
                         indices = _ascii_face_indices(row, properties, path)
+                        if any(index < 0 or index >= vertex_count for index in indices):
+                            raise ValueError(f"{path} contains out-of-range vertex indices")
                         for corner in range(1, len(indices) - 1):
                             corners.append(
                                 (indices[0], indices[corner], indices[corner + 1])
@@ -331,6 +375,8 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                 else:
                     for _ in range(count):
                         indices = _binary_face_indices(stream, properties, path)
+                        if np.any(indices < 0) or np.any(indices >= vertex_count):
+                            raise ValueError(f"{path} contains out-of-range vertex indices")
                         for corner in range(1, len(indices) - 1):
                             corners.append(
                                 (
@@ -346,8 +392,8 @@ def read_ply(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
                     f"{path} has an unsupported binary list element {name!r}"
                 )
 
-    if len(positions) == 0:
-        raise ValueError(f"{path} contains no vertices")
+    if not found_vertices:
+        raise ValueError(f"{path} contains no vertex element")
     return positions, triangles, colors
 
 

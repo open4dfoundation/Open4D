@@ -17,7 +17,11 @@ from .core import (
     TriangleMesh,
     dtypes,
 )
-from ._api import load, save, unload
+from ._api import load, save, unload, reconstruct
+from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode
+from .streaming import receive, send as stream
+from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
+from .metrics import compare_meshes, compare_sequences
 from .visualization import visualize
 
 __all__ = [
@@ -25,6 +29,9 @@ __all__ = [
     "ATTRIBUTE_INT_DTYPE",
     "COLOR_DTYPE",
     "Frame",
+    "GaussianSplats",
+    "GaussianRun",
+    "NeuralGaussianFrame",
     "FrameProvider",
     "INDEX_DTYPE",
     "MemoryFrameProvider",
@@ -35,8 +42,17 @@ __all__ = [
     "TopologyMode",
     "TriangleMesh",
     "UV_DTYPE",
+    "available_codecs",
+    "decode",
+    "encode",
+    "compare_meshes",
+    "compare_sequences",
     "dtypes",
     "load",
+    "load_gaussians",
+    "reconstruct",
+    "receive",
+    "stream",
     "save",
     "unload",
     "visualize",

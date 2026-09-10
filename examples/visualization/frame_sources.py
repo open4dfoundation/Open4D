@@ -11,9 +11,11 @@ from open4d.io import available_formats, inspect_sequence
 DEFAULT_FPS = 30.0
 _USD_SUFFIXES = {".usd", ".usda", ".usdc", ".usdz"}
 _RAW_CODEC_SUFFIXES = {".vmesh"}
-_CODEC_SUFFIXES = {
-    suffix for info in available_codecs() for suffix in info.suffixes
-}
+
+
+def _codec_suffixes():
+    return {suffix for info in available_codecs() if info.representation == "triangle_mesh"
+            for suffix in info.suffixes}
 
 
 def supported_formats() -> str:
@@ -28,7 +30,7 @@ def supported_formats() -> str:
         )
         target = sequence_lines if info.id == "usd" else frame_lines
         target.append(f"  {'/'.join(info.suffixes):<24}{extra}".rstrip())
-    sequence_lines.append("  codec artifacts such as .o4d, .d4d, and .v4d")
+    sequence_lines.append("  research codec files/directories: " + ", ".join(sorted(_codec_suffixes())))
     sequence_lines.append("  .vmesh                  needs a native V-DMC decoder")
     return "\n".join((*sequence_lines, *frame_lines))
 
@@ -36,14 +38,14 @@ def supported_formats() -> str:
 def source_kind(path: Path | str) -> str:
     """Classify a source without decoding its geometry."""
     path = Path(path)
-    if path.is_dir():
-        return "folder"
     if not path.exists():
         raise SystemExit(f"{path} does not exist")
     if path.suffix.lower() in (
-        _USD_SUFFIXES | _CODEC_SUFFIXES | _RAW_CODEC_SUFFIXES
+        _USD_SUFFIXES | _codec_suffixes() | _RAW_CODEC_SUFFIXES
     ):
         return "sequence-file"
+    if path.is_dir():
+        return "folder"
     try:
         inspect_sequence(path)
     except Exception as error:
@@ -54,27 +56,20 @@ def source_kind(path: Path | str) -> str:
 def open_sequence(path: Path | str, fps: float | None = None):
     """Load a source, using ``fps`` for manifest-free frame timing."""
     path = Path(path)
-    uses_import_fps = path.is_dir() or path.suffix.lower() in _RAW_CODEC_SUFFIXES
+    uses_import_fps = (path.is_dir() and path.suffix.lower() not in _codec_suffixes()) or path.suffix.lower() in _RAW_CODEC_SUFFIXES
     return _open_sequence(path, fps=fps if uses_import_fps else None)
 
 
 def describe_source(path: Path | str, frame_count: int | None = None) -> str:
     """Describe a source without eagerly parsing its frame geometry."""
     path = Path(path)
-    if (
-        path.suffix.lower() in _CODEC_SUFFIXES | _RAW_CODEC_SUFFIXES
-        and path.is_file()
-    ):
-        if frame_count is not None:
-            return (
-                f"sequence file: {path.suffix.lower()} ({frame_count} frames), "
-                f"{path.stat().st_size / 1e6:.2f} MB on disk"
-            )
-        with _open_sequence(path) as opened:
-            return (
-                f"sequence file: {path.suffix.lower()} ({len(opened)} frames), "
-                f"{path.stat().st_size / 1e6:.2f} MB on disk"
-            )
+    if path.suffix.lower() in _codec_suffixes() | _RAW_CODEC_SUFFIXES:
+        if frame_count is None:
+            with _open_sequence(path) as opened:
+                frame_count = len(opened)
+        size = (sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+                if path.is_dir() else path.stat().st_size)
+        return f"sequence artifact: {path.suffix.lower()} ({frame_count} frames), {size / 1e6:.2f} MB on disk"
     info = inspect_sequence(path)
     if path.is_dir():
         megabytes = sum(

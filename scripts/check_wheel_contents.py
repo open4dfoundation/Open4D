@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import sys
 import zipfile
 from email.parser import Parser
@@ -21,6 +22,7 @@ PACKAGE_DIRS = {
     "open4d.codec": ROOT / "open4d/codec",
     "open4d.core": ROOT / "open4d/core",
     "open4d.io": ROOT / "open4d/io",
+    "open4d.streaming": ROOT / "open4d/streaming",
     "open4d.torch_ops": ROOT / "open4d/torch_ops",
     "open4d.visualization": ROOT / "open4d/visualization",
     "integrations": ROOT / "integrations",
@@ -81,6 +83,7 @@ def check_wheel(path: Path) -> list[str]:
             f"{metadata_dir}/RECORD",
             f"{metadata_dir}/top_level.txt",
             f"{metadata_dir}/licenses/LICENSE",
+            f"{metadata_dir}/entry_points.txt",
         }
         missing_metadata = expected_metadata - members
         if missing_metadata:
@@ -88,6 +91,16 @@ def check_wheel(path: Path) -> list[str]:
         unexpected = members - expected_python - expected_metadata
         if unexpected:
             errors.append(f"unexpected wheel members: {sorted(unexpected)}")
+
+        entry_points_path = f"{metadata_dir}/entry_points.txt"
+        if entry_points_path in members:
+            entry_points = configparser.ConfigParser()
+            entry_points.read_string(wheel.read(entry_points_path).decode("utf-8"))
+            if (
+                entry_points.sections() != ["console_scripts"]
+                or dict(entry_points["console_scripts"]) != {"open4d": "open4d._cli:main"}
+            ):
+                errors.append("wheel must expose exactly the open4d console command")
 
         metadata_path = f"{metadata_dir}/METADATA"
         if metadata_path in members:

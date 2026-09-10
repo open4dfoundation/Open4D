@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d._files import publish_file
 
 from ._errors import (
     DecodeError,
@@ -150,6 +151,17 @@ def _read_manifest(stage: Any) -> tuple[dict[str, Any], bool]:
     return record, False
 
 
+def _vertex_values(value, interpolation, count, channels):
+    if value is None:
+        return None
+    array = np.asarray(value, dtype=np.float32).reshape(-1, channels)
+    if interpolation == "constant" and len(array) == 1:
+        return np.repeat(array, count, axis=0)
+    if interpolation in ("vertex", "varying") and len(array) == count:
+        return array
+    return None
+
+
 class UsdSequenceProvider:
     """Lazy frame provider over one time-sampled USD geometry prim."""
 
@@ -201,6 +213,13 @@ class UsdSequenceProvider:
         }
 
         self._manifest, self._native = _read_manifest(self._stage)
+        transform_attributes = []
+        ancestor = self._prim
+        while ancestor and not ancestor.IsPseudoRoot():
+            xform = self._UsdGeom.Xformable(ancestor)
+            if xform:
+                transform_attributes.extend(op.GetAttr() for op in xform.GetOrderedXformOps())
+            ancestor = ancestor.GetParent()
         custom_streams = tuple(
             attribute
             for attribute in self._prim.GetAttributes()
@@ -212,6 +231,8 @@ class UsdSequenceProvider:
             self._indices,
             self._colors,
             self._opacity,
+            self._colors.GetIndicesAttr() if self._colors else None,
+            self._opacity.GetIndicesAttr() if self._opacity else None,
             self._normals,
             self._vertex_uv,
             self._corner_uv,
@@ -220,6 +241,7 @@ class UsdSequenceProvider:
             self._descriptor,
             *self._legacy_streams.values(),
             *custom_streams,
+            *transform_attributes,
         ))
         stage_fps = self._stage.GetTimeCodesPerSecond() or _DEFAULT_FPS
         self.fps = _positive_fps(stage_fps if fps is None else fps)
@@ -266,11 +288,8 @@ class UsdSequenceProvider:
             "prim_type": str(self._prim.GetTypeName()),
             "schema": self._manifest.get("schema", SCHEMA if self._native else None),
         }
-        # The prototype layout exposed its custom-layer record as provider
-        # metadata. Keep that behavior for old files; v1 instead restores the
-        # sequence metadata stored in its manifest and reserves provider keys.
         if self._native:
-            metadata = {**dict(sequence_metadata), **provider_metadata}
+            metadata = {**provider_metadata, **dict(sequence_metadata)}
         else:
             metadata = {**provider_metadata, **dict(self._manifest)}
         self.metadata = MappingProxyType(metadata)
@@ -334,15 +353,28 @@ class UsdSequenceProvider:
                 else:
                     colors = rgb
             elif not self._native and self._colors:
-                value = self._colors.Get(time)
-                if value is not None:
-                    candidate = np.asarray(value, dtype=np.float32).reshape(-1, 3)
-                    if len(candidate) == len(positions):
-                        colors = candidate
+                colors = _vertex_values(self._colors.ComputeFlattened(time),
+                                        self._colors.GetInterpolation(), len(positions), 3)
+                if colors is not None and self._opacity:
+                    alpha = _vertex_values(self._opacity.ComputeFlattened(time),
+                                           self._opacity.GetInterpolation(), len(positions), 1)
+                    if alpha is not None:
+                        colors = np.column_stack((colors, alpha))
 
             normals = None
             if descriptor.get("normals") and self._normals:
                 normals = np.asarray(self._normals.Get(time), dtype=np.float32).reshape(-1, 3)
+            elif not self._native and self._normals:
+                interpolation = self._UsdGeom.Mesh(self._prim).GetNormalsInterpolation()
+                normals = _vertex_values(self._normals.Get(time), interpolation, len(positions), 3)
+
+            transform = np.asarray(self._UsdGeom.XformCache(time).GetLocalToWorldTransform(self._prim))
+            if not np.array_equal(transform, np.eye(4)):
+                positions = positions @ transform[:3, :3] + transform[3, :3]
+                if normals is not None:
+                    normals = normals @ np.linalg.inv(transform[:3, :3]).T
+                    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+                    normals = np.divide(normals, lengths, out=np.zeros_like(normals), where=lengths > 0)
 
             texture_coordinates = None
             uv_layout = descriptor.get("uv_layout")
@@ -457,6 +489,8 @@ def _preflight(sequence: Sequence) -> tuple[dict[str, Any], list[dict[str, Any]]
     raw_descriptors: list[dict[str, Any]] = []
     schemas: set[tuple[str, str]] = set()
     for ordinal, frame in enumerate(sequence):
+        if frame.frame_index > np.iinfo(np.int64).max:
+            raise EncodeError("USD frame indices must fit a signed 64-bit integer")
         mesh = frame.geometry
         attributes = []
         for name, array in mesh.attributes.items():
@@ -522,7 +556,7 @@ def _author_stage(
     schema.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
     vertex_uv = prim.CreateAttribute("open4d:vertexUV", Sdf.ValueTypeNames.Float2Array)
     corner_uv = prim.CreateAttribute("open4d:cornerUV", Sdf.ValueTypeNames.Float2Array)
-    frame_index = prim.CreateAttribute("open4d:frameIndex", Sdf.ValueTypeNames.Int)
+    frame_index = prim.CreateAttribute("open4d:frameIndex", Sdf.ValueTypeNames.Int64)
     timestamp = prim.CreateAttribute("open4d:timestamp", Sdf.ValueTypeNames.Double)
     descriptor_attr = prim.CreateAttribute("open4d:frameDescriptor", Sdf.ValueTypeNames.String)
     custom_attrs = {}
@@ -673,11 +707,12 @@ def write_usd_sequence(
                 temporary, sequence, manifest, descriptors, streams,
                 fps=selected_fps, up_axis=selected_up,
             )
-        temporary.replace(destination)
+        publish_file(temporary, destination, overwrite=overwrite)
         return destination
     except Exception as error:
         temporary.unlink(missing_ok=True)
-        if isinstance(error, (EncodeError, UnsupportedFeatureError, MissingDependencyError, TypeError, ValueError)):
+        if isinstance(error, (EncodeError, UnsupportedFeatureError, MissingDependencyError,
+                              FileExistsError, TypeError, ValueError)):
             raise
         raise EncodeError(
             f"Could not encode {destination}: {type(error).__name__}: {error}"

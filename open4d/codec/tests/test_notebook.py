@@ -1,67 +1,56 @@
 from __future__ import annotations
 
+import ast
 import json
-from importlib.util import find_spec
+import os
 from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.cpu, pytest.mark.slow]
+
+NOTEBOOK = Path(__file__).resolve().parents[3] / "examples/open4d_sequence_codec.ipynb"
 
 
-def test_notebook_default_artifacts_are_repository_relative(tmp_path, monkeypatch):
-    root = Path(__file__).resolve().parents[3]
-    notebook_path = root / "examples/open4d_sequence_codec.ipynb"
-    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    first_code = next(
-        "".join(cell["source"])
-        for cell in notebook["cells"]
-        if cell["cell_type"] == "code"
-    )
-    monkeypatch.chdir(root)
-    monkeypatch.setenv("OPEN4D_DATASET", str(tmp_path / "capture"))
-    monkeypatch.delenv("OPEN4D_ARTIFACT_DIR", raising=False)
-    namespace = {"__name__": "__notebook_path_test__"}
-
-    exec(compile(first_code, str(notebook_path), "exec"), namespace)
-
-    assert namespace["ARTIFACT_DIR"] == root / ".context/rafa_codecs"
+def run_cells(tags):
+    namespace = {"__name__": "__notebook__"}
+    for cell in json.loads(NOTEBOOK.read_text())["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        source = "".join(cell["source"])
+        ast.parse(source)
+        required = set(cell["metadata"].get("tags", ()))
+        if required <= tags:
+            exec(compile(source, str(NOTEBOOK), "exec"), namespace)
+    return namespace
 
 
-def test_sequence_codec_notebook_executes_real_data_headlessly(
-    tmp_path, monkeypatch
-):
-    root = Path(__file__).resolve().parents[3]
-    if not (root / "4d_files/Rafa_Approves_hd_4k").is_dir():
-        pytest.skip("Rafa_Approves_hd_4k is not available")
-    notebook_path = root / "examples/open4d_sequence_codec.ipynb"
-    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    monkeypatch.chdir(root)
-    monkeypatch.setenv("OPEN4D_ARTIFACT_DIR", str(tmp_path))
-    monkeypatch.setenv("OPEN4D_DEMO_FRAMES", "2")
-    monkeypatch.setenv("OPEN4D_NOTEBOOK_HEADLESS", "1")
+@pytest.mark.cpu
+def test_notebook_sample_needs_no_dataset(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    values = run_cells({"cpu"})
+    assert values["sequence"].closed
+    assert not list(tmp_path.iterdir())
 
-    namespace = {"__name__": "__notebook_test__"}
-    for cell in notebook["cells"]:
-        if cell["cell_type"] == "code":
-            source = "".join(cell["source"])
-            exec(compile(source, str(notebook_path), "exec"), namespace)
 
-    assert namespace["info"].frame_count == 157
-    assert len(namespace["demo"]) == 2
-    rows = {row["codec"]: row for row in namespace["results"]}
-    assert set(rows) == set(namespace["CODECS"]) == set(namespace["CODEC_INFOS"])
-    reference = {"raw", "deflate", "bzip2", "lzma", "rle", "npz"}
-    assert all(rows[codec]["status"] == "ok" for codec in reference)
-    assert not {"tvmc", "tsmc"} & set(rows)
-    for codec, row in rows.items():
-        if row["status"] == "ok":
-            suffix = namespace["CODEC_INFOS"][codec].suffixes[0]
-            assert (tmp_path / f"rafa-{codec}{suffix}").is_file()
-            assert row["surface_rms"] < namespace["QUALITY_RMS_LIMIT"]
-            assert row["components"] <= namespace["QUALITY_COMPONENT_LIMIT"]
-            assert row["triangles"] >= namespace["QUALITY_MIN_TRIANGLES"]
-    if all(find_spec(module) for module in (
-        "torch", "trimesh", "skimage", "point_cloud_utils"
-    )):
-        assert rows["n4mc"]["status"] == "ok", rows["n4mc"]
+@pytest.mark.open3d
+def test_notebook_depth_example_reconstructs_real_geometry(tmp_path, monkeypatch):
+    pytest.importorskip("open3d")
+    monkeypatch.chdir(tmp_path)
+    values = run_cells({"cpu", "open3d"})
+    with values["reconstructed"] as sequence:
+        assert len(sequence) == 3
+        assert len(sequence[0].geometry.triangles) > 0
+
+
+@pytest.mark.slow
+def test_notebook_native_vdmc_round_trip(tmp_path, monkeypatch):
+    if not all(os.environ.get(name) for name in
+               ("OPEN4D_VDMC_ENCODER", "OPEN4D_VDMC_DECODER")):
+        pytest.skip("configure the native V-DMC encoder and decoder")
+    monkeypatch.chdir(tmp_path)
+    values = run_cells({"cpu", "native-vdmc"})
+    assert values["encoded"].is_file()
+    assert values["decoded"].closed
+    assert values["decoded"].topology.value == "unknown"
+    assert values["decoded"].has_constant_vertex_count is None
+    assert values["decoded"].has_vertex_correspondence is None

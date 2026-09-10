@@ -1,16 +1,4 @@
-"""QUEEN, wrapped.
-
-Upstream's interface is close to what Open4D wants already:
-
-    python train.py --config configs/dynerf.yaml -s <scene> -m <run_dir>
-    python render.py -s <scene> -m <run_dir>
-    python metrics_video.py -m <run_dir>
-
-so the translation is mostly path resolution. Two things need care: the config
-must be an absolute path because the child runs with cwd set to the checkout, and
-`render_fvv_compressed.py` -- not `render.py` -- is what evaluates the compressed
-representation, which is the interesting output of this method.
-"""
+"""QUEEN training and camera-path rendering commands."""
 
 from __future__ import annotations
 
@@ -46,31 +34,17 @@ def train_command(spec: RunSpec) -> list[str]:
 
 
 def render_command(spec: RunSpec, *, compressed: bool = True) -> list[str]:
-    """Render from the trained model.
-
-    `compressed=True` runs the decode-side path, which is the one that
-    corresponds to what a viewer would receive; the dense path is the fallback
-    when a run predates quantization.
-    """
-    if compressed:
-        return [
-            sys.executable,
-            "render_fvv_compressed.py",
-            "--config",
-            str(_config(spec)),
-            "-s",
-            str(spec.scene.resolve()),
-            "-m",
-            str(spec.run_dir.resolve()),
-            *spec.passthrough,
-        ]
+    """Render the same camera path from either compressed or dense frames."""
     return [
         sys.executable,
-        "render.py",
+        "render_fvv_compressed.py",
+        "--config",
+        str(_config(spec)),
         "-s",
         str(spec.scene.resolve()),
         "-m",
         str(spec.run_dir.resolve()),
+        *(["--render_compressed"] if compressed else []),
         *spec.passthrough,
     ]
 

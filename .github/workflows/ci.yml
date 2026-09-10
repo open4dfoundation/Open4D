@@ -70,7 +70,8 @@ jobs:
       - name: Run every Open3D-backed test
         run: >-
           python -m pytest -m open3d
-          integrations/open3d/tests open4d/torch_ops/tests
+          integrations/open3d/tests open4d/torch_ops/tests open4d/streaming/tests
+          open4d/codec/tests/test_notebook.py
 
   research-codecs:
     name: Research codec contracts / CPU
@@ -103,16 +104,16 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install optional I/O tier
-        run: python -m pip install -e '.[dev,tools,draco,usd]'
+        run: python -m pip install -e '.[dev,tools,usd,gaussians]' 'DracoPy>=2,<3'
       - name: Exercise built-in and optional I/O formats
-        run: python -m pytest open4d/io/tests open4d/codec/tests/test_draco.py
+        run: python -m pytest open4d/io/tests open4d/codec/tests/test_draco.py open4d/core/tests/test_gaussians.py
       - name: Validate benchmark paths
         run: |
           python scripts/benchmark_io.py --side 24 --frames 20 --repeats 2 --json
           python scripts/benchmark_codec.py --side 24 --frames 5 --json
 
   visualization:
-    name: Visualization / optional dependency boundary
+    name: Visualization / imports and GIF rendering
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
@@ -121,6 +122,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install virtual display and software OpenGL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth libegl1 libgl1-mesa-dri libopengl0 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-xinerama0
       - name: Install player and OpenUSD tier
         run: python -m pip install -e '.[dev,player,usd]'
       - name: Test public visualizer and dependency imports
@@ -128,33 +135,77 @@ jobs:
           python -c "import PyQt6, pyqtgraph, OpenGL, PIL, open4d.visualization"
           python -c "from pxr import Usd; print(Usd.GetVersion())"
           python -m pytest open4d/visualization/tests examples/visualization/tests
+      - name: Render and check the synthetic sample GIF
+        env:
+          OPEN4D_TEST_RENDER: "1"
+          QT_QPA_PLATFORM: xcb
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: >-
+          xvfb-run -a -s '-screen 0 1024x768x24'
+          python -m pytest open4d/visualization/tests/test_real_player.py
+          examples/visualization/tests/test_compare.py
+          -k 'synthetic or empty or gif_after_single' --basetemp '${{ runner.temp }}/open4d-render'
+      - name: Keep the rendered GIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-render
+          path: ${{ runner.temp }}/open4d-render/**/*.gif
+          if-no-files-found: ignore
+          retention-days: 7
 
   package:
-    name: Exact distribution boundary
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    name: Install / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [blacksmith-2vcpu-ubuntu-2404, macos-14, windows-2022]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Build source and wheel distributions
+      - name: Build and check distributions
+        shell: python
         run: |
-          python -m pip install 'build>=1.2'
-          python -m build --outdir "$RUNNER_TEMP/open4d-dist"
-      - name: Assert exact wheel contents
-        run: python scripts/check_wheel_contents.py "$(find "$RUNNER_TEMP/open4d-dist" -maxdepth 1 -name '*.whl' -print -quit)"
-      - name: Assert source-distribution contents
-        run: python scripts/check_sdist_contents.py "$(find "$RUNNER_TEMP/open4d-dist" -maxdepth 1 -name '*.tar.gz' -print -quit)"
-      - name: Install wheel in a clean environment
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          dist = Path(os.environ["RUNNER_TEMP"]) / "open4d-dist"
+          subprocess.run([
+              sys.executable, "-m", "pip", "install", "build>=1.2",
+              "tomli>=2; python_version < '3.11'",
+          ], check=True)
+          subprocess.run([sys.executable, "-m", "build", "--outdir", str(dist)], check=True)
+          wheel, = dist.glob("*.whl")
+          sdist, = dist.glob("*.tar.gz")
+          subprocess.run([sys.executable, "scripts/check_wheel_contents.py", str(wheel)], check=True)
+          subprocess.run([sys.executable, "scripts/check_sdist_contents.py", str(sdist)], check=True)
+      - name: Test a clean wheel installation
+        shell: python
         run: |
-          python -m venv "$RUNNER_TEMP/open4d-wheel-smoke"
-          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" -m pip install "$(find "$RUNNER_TEMP/open4d-dist" -maxdepth 1 -name '*.whl' -print -quit)"
-          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" -m pip check
-          cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" -c "import open4d, integrations; print(open4d.__file__)"
-          "$RUNNER_TEMP/open4d-wheel-smoke/bin/python" "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py"
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          repository = Path.cwd()
+          work = Path(os.environ["RUNNER_TEMP"])
+          environment = work / "open4d wheel smoke"
+          subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+          python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          wheel, = (work / "open4d-dist").glob("*.whl")
+          subprocess.run([str(python), "-m", "pip", "install", str(wheel)], check=True, cwd=work)
+          subprocess.run([str(python), "-m", "pip", "check"], check=True, cwd=work)
+          subprocess.run([
+              str(python), "-I", str(repository / "scripts/smoke_installed_io.py"),
+          ], check=True, cwd=work)
 
   quality:
     name: Source, documentation, and provenance
@@ -168,7 +219,7 @@ jobs:
       - name: Compile supported Python sources
         run: >-
           python -m compileall -q
-          open4d/__init__.py open4d/codec open4d/core open4d/io
+          open4d/*.py open4d/streaming/*.py open4d/codec open4d/core open4d/io
           open4d/torch_ops open4d/visualization
           integrations/__init__.py integrations/open3d
           examples/visualization scripts

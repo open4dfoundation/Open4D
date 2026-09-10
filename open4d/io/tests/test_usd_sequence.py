@@ -19,6 +19,94 @@ from open4d.io import (
 pytestmark = pytest.mark.cpu
 
 
+def test_usd_preserves_user_metadata_and_large_frame_indices(tmp_path):
+    geometry = TriangleMesh(np.zeros((1, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint32))
+    source = Sequence(MemoryFrameProvider([Frame(2**40, 0, geometry)],
+                                          metadata={"source": "camera1", "name": "capture"}))
+    with open_sequence(write_sequence(source, tmp_path / "large.usda")) as decoded:
+        assert decoded[0].frame_index == 2**40
+        assert decoded.metadata["source"] == "camera1"
+        assert decoded.metadata["name"] == "capture"
+    too_large = Sequence(MemoryFrameProvider([Frame(2**63, 0, geometry)]))
+    with pytest.raises(EncodeError, match="64-bit"):
+        write_sequence(too_large, tmp_path / "too-large.usda")
+
+
+def test_generic_usd_keeps_motion_in_parent_transforms(tmp_path):
+    from pxr import Usd, UsdGeom
+
+    path = tmp_path / "transform-animation.usda"
+    stage = Usd.Stage.CreateNew(str(path))
+    stage.SetTimeCodesPerSecond(10)
+    parent = UsdGeom.Xform.Define(stage, "/Model")
+    translation = parent.AddTranslateOp()
+    translation.Set((0, 0, 0), 0)
+    translation.Set((10, 0, 0), 10)
+    mesh = UsdGeom.Mesh.Define(stage, "/Model/Mesh")
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2])
+    stage.GetRootLayer().Save()
+
+    with open_sequence(path) as sequence:
+        assert sequence.timestamps == (0, 1)
+        np.testing.assert_array_equal(sequence[0].geometry.positions[0], [0, 0, 0])
+        np.testing.assert_array_equal(sequence[1].geometry.positions[0], [10, 0, 0])
+
+
+def test_generic_usd_does_not_claim_constant_point_count_or_identity(tmp_path):
+    from pxr import Usd, UsdGeom
+
+    path = tmp_path / "points.usda"
+    stage = Usd.Stage.CreateNew(str(path))
+    points = UsdGeom.Points.Define(stage, "/Points").CreatePointsAttr()
+    points.Set([(0, 0, 0)], 0)
+    points.Set([(0, 0, 0), (1, 0, 0)], 1)
+    stage.GetRootLayer().Save()
+
+    with open_sequence(path) as sequence:
+        assert [len(frame.geometry.positions) for frame in sequence] == [1, 2]
+        assert sequence.has_constant_vertex_count is None
+        assert sequence.has_vertex_correspondence is None
+
+
+def test_generic_usd_preserves_constant_color_opacity_and_vertex_normals(tmp_path):
+    from pxr import Sdf, Usd, UsdGeom
+
+    path = tmp_path / "attributes.usda"
+    stage = Usd.Stage.CreateNew(str(path))
+    mesh = UsdGeom.Mesh.Define(stage, "/Mesh")
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2])
+    mesh.CreateNormalsAttr([(0, 0, 1)] * 3)
+    mesh.SetNormalsInterpolation("vertex")
+    primvars = UsdGeom.PrimvarsAPI(mesh.GetPrim())
+    primvars.CreatePrimvar("displayColor", Sdf.ValueTypeNames.Color3fArray, "constant").Set([(1, 0, 0)])
+    primvars.CreatePrimvar("displayOpacity", Sdf.ValueTypeNames.FloatArray, "constant").Set([0.25])
+    stage.GetRootLayer().Save()
+
+    with open_sequence(path) as sequence:
+        np.testing.assert_array_equal(sequence[0].geometry.colors, [[1, 0, 0, 0.25]] * 3)
+        np.testing.assert_array_equal(sequence[0].geometry.normals, [[0, 0, 1]] * 3)
+
+
+def test_usd_does_not_overwrite_a_concurrently_created_file(tmp_path, monkeypatch):
+    from open4d.io import _usd
+
+    destination = tmp_path / "concurrent.usda"
+    original = _usd._author_stage
+
+    def competing_writer(*args, **kwargs):
+        original(*args, **kwargs)
+        destination.write_bytes(b"other writer")
+
+    monkeypatch.setattr(_usd, "_author_stage", competing_writer)
+    with pytest.raises(FileExistsError):
+        write_sequence(rich_sequence(), destination)
+    assert destination.read_bytes() == b"other writer"
+
+
 def rich_sequence() -> Sequence:
     first = TriangleMesh(
         positions=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),

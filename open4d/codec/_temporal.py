@@ -11,7 +11,7 @@ import numpy as np
 
 from open4d.core import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
 
-from ._npz import _json_value
+from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
 
 
@@ -42,7 +42,7 @@ def _fit(sequence: Sequence, face_budget: int):
         try:
             open3d = import_module("open3d")
         except ImportError as error:
-            raise CodecError("surface fitting needs open4d[temporal]") from error
+            raise CodecError("surface fitting needs open3d; install 'open3d>=0.19'") from error
         mesh = open3d.geometry.TriangleMesh(
             open3d.utility.Vector3dVector(first.positions),
             open3d.utility.Vector3iVector(first.triangles),
@@ -64,7 +64,7 @@ def _fit(sequence: Sequence, face_budget: int):
         try:
             pcu = import_module("point_cloud_utils")
         except ImportError as error:
-            raise CodecError("changing-topology fitting needs open4d[temporal]") from error
+            raise CodecError("changing-topology fitting needs point-cloud-utils") from error
         _, face_indices, barycentric = pcu.closest_points_on_mesh(
             np.asarray(reference, dtype=np.float64),
             np.asarray(mesh.positions, dtype=np.float64),
@@ -101,8 +101,8 @@ class TemporalMeshCodec:
         try:
             with np.load(source, allow_pickle=False) as artifact:
                 manifest = json.loads(artifact["manifest"].tobytes())
-                return manifest.get("schema") == self.schema
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                return isinstance(manifest, dict) and manifest.get("schema") == self.schema
+        except (OSError, ValueError, TypeError, KeyError):
             return False
 
     def encode(
@@ -152,7 +152,7 @@ class TemporalMeshCodec:
                     manifest=np.frombuffer(json.dumps(manifest).encode(), dtype=np.uint8),
                     **payload,
                 )
-            temporary.replace(destination)
+            _publish_file(temporary, destination, overwrite=overwrite)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -164,15 +164,36 @@ class TemporalMeshCodec:
         try:
             with np.load(source, allow_pickle=False) as artifact:
                 manifest = json.loads(artifact["manifest"].tobytes())
-                if manifest.get("schema") != self.schema:
-                    raise CodecError(f"unsupported {self.id} artifact schema")
+                _validate_manifest(manifest, schema=self.schema, codec=self.id)
                 reference, faces = artifact["reference"], artifact["triangles"]
+                reference_mesh = TriangleMesh(reference, faces)
+                count, vertices = len(manifest["frames"]), len(reference_mesh.positions)
+                if not count or not vertices:
+                    raise CodecError("temporal artifacts require frames and a reference mesh")
+                scale = artifact["scale"]
+                if scale.shape != () or scale.dtype.kind not in "fiu" or not np.isfinite(scale) or scale <= 0:
+                    raise CodecError("temporal quantization scale must be finite and positive")
+                bits = manifest.get("quantization_bits")
+                if type(bits) is not int or not 2 <= bits <= 16:
+                    raise CodecError("invalid temporal quantization_bits")
+                dtype = np.dtype(np.int8 if bits <= 8 else np.int16)
                 if self.id == "temporal-delta":
-                    positions = reference[None] + artifact["displacement"] * artifact["scale"]
+                    displacement = artifact["displacement"]
+                    if displacement.shape != (count, vertices, 3) or displacement.dtype != dtype:
+                        raise CodecError("invalid temporal displacement shape or dtype")
+                    positions = reference[None] + displacement * scale
                 else:
-                    trajectories = (
-                        artifact["coefficients"] * artifact["scale"]
-                    ) @ artifact["basis"] + artifact["mean"]
+                    coefficients, basis, mean = artifact["coefficients"], artifact["basis"], artifact["mean"]
+                    if (coefficients.ndim != 2 or coefficients.shape[0] != vertices
+                            or not 1 <= coefficients.shape[1] <= min(vertices, count * 3)
+                            or coefficients.dtype != dtype):
+                        raise CodecError("invalid temporal coefficient shape or dtype")
+                    if (basis.shape != (coefficients.shape[1], count * 3)
+                            or mean.shape != (1, count * 3)
+                            or basis.dtype.kind != "f" or mean.dtype.kind != "f"
+                            or not np.isfinite(basis).all() or not np.isfinite(mean).all()):
+                        raise CodecError("invalid temporal basis or mean")
+                    trajectories = (coefficients * scale) @ basis + mean
                     positions = reference[None] + trajectories.reshape(
                         len(reference), len(manifest["frames"]), 3
                     ).transpose(1, 0, 2)
@@ -180,7 +201,7 @@ class TemporalMeshCodec:
                     record["frame_index"], record["timestamp"],
                     TriangleMesh(position, faces), record.get("metadata", {}),
                 ) for position, record in zip(positions, manifest["frames"], strict=True)]
-        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
             if isinstance(error, CodecError):
                 raise
             raise CodecError(f"invalid {self.id} artifact {source}: {error}") from error

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from open4d.core import Sequence
+
+if TYPE_CHECKING:
+    from open4d.gaussians import GaussianSplats, NeuralGaussianFrame
 
 
 class CodecError(RuntimeError):
@@ -14,13 +18,13 @@ class CodecError(RuntimeError):
 
 @runtime_checkable
 class Codec(Protocol):
-    """A replaceable triangle-mesh sequence encoder and decoder."""
+    """A mesh or Gaussian sequence encoder and decoder."""
 
     id: str
     suffixes: tuple[str, ...]
 
-    def encode(self, sequence: Sequence, destination: Path, **options) -> Path:
+    def encode(self, sequence: Sequence | Iterable[GaussianSplats], destination: Path, **options) -> Path:
         """Encode *sequence* into *destination*."""
 
-    def decode(self, source: Path, **options) -> Sequence:
+    def decode(self, source: Path, **options) -> Sequence | tuple[NeuralGaussianFrame, ...]:
         """Open a decoded sequence backed by *source*."""

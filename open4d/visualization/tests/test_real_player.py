@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import warnings
 
+import numpy as np
 import pytest
 
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
-from open4d.codec import decode_sequence, encode_sequence
-from open4d.io import open_sequence
+from open4d.demo import mesh_sequence
 from open4d.visualization import render_gif, visualize
 
 pytestmark = [pytest.mark.player, pytest.mark.slow]
@@ -35,24 +34,48 @@ def test_two_sequential_viewers_use_valid_opengl_programs():
     assert not failures
 
 
-def test_real_rafa_codec_round_trip_renders_a_gif(tmp_path):
-    if os.environ.get("OPEN4D_TEST_GUI") != "1":
-        pytest.skip("set OPEN4D_TEST_GUI=1 in a desktop session")
-    pytest.importorskip("PyQt6")
-    image_module = pytest.importorskip("PIL.Image")
-    root = Path(__file__).resolve().parents[3]
-    dataset = root / "4d_files/Rafa_Approves_hd_4k"
-    if not dataset.is_dir():
-        pytest.skip("Rafa_Approves_hd_4k is not available")
+def test_synthetic_sequence_renders_a_gif(tmp_path):
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    from PIL import Image
 
-    source = open_sequence(dataset, fps=30)[:2]
-    artifact = encode_sequence(source, tmp_path / "rafa.o4d", codec="deflate")
-    decoded = decode_sequence(artifact)
-    output = render_gif(
-        decoded, tmp_path / "rafa.gif", up="y", width=320, height=320
-    )
+    with mesh_sequence(side=16, frames=6, fps=10) as decoded:
+        output = render_gif(
+            decoded, tmp_path / "wave.gif", up="z", width=320, height=240,
+            distance=1.8, elevation=30, no_metrics=True,
+        )
 
-    with image_module.open(output) as image:
-        assert image.size == (320, 320)
+    with Image.open(output) as image:
+        assert image.size == (320, 240)
+        assert image.n_frames == 6
+        assert image.info["loop"] == 0
+        previous = None
+        for index in range(image.n_frames):
+            image.seek(index)
+            assert image.info["duration"] == 100
+            pixels = np.asarray(image.convert("RGB"))
+            foreground = np.any(pixels < 240, axis=2)
+            assert 0.01 < foreground.mean() < 0.8, "geometry is missing or fills the frame"
+            if previous is not None:
+                changed = np.any(np.abs(pixels.astype(int) - previous) > 8, axis=2)
+                assert changed.mean() > 0.005, "the rendered geometry did not move"
+            previous = pixels.astype(int)
+
+
+def test_sequence_with_empty_first_frame_renders(tmp_path):
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    from PIL import Image
+
+    empty = TriangleMesh(np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint32))
+    visible = mesh_sequence(side=8, frames=1)[0].geometry
+    frames = Sequence(MemoryFrameProvider([Frame(0, 0, empty), Frame(1, 0.1, visible)]))
+    output = render_gif(frames, tmp_path / "empty-first.gif", width=321, height=241,
+                        no_metrics=True)
+
+    with Image.open(output) as image:
+        assert image.size == (321, 241)
         assert image.n_frames == 2
-    decoded.close()
+        assert not np.any(np.asarray(image.convert("RGB")) < 240)
+        image.seek(1)
+        assert np.any(np.asarray(image.convert("RGB")) < 240)

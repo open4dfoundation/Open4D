@@ -27,9 +27,8 @@ which matters because Open3D publishes no wheels for Python 3.13. The window and
 from __future__ import annotations
 
 import argparse
-import time
+import math
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -218,8 +217,8 @@ def main() -> None:
         raise SystemExit(2)
     if args.stride < 1:
         parser.error("--stride must be at least 1")
-    if args.fps is not None and args.fps <= 0:
-        parser.error("--fps must be greater than zero")
+    if args.fps is not None and (not math.isfinite(args.fps) or args.fps <= 0):
+        parser.error("--fps must be finite and greater than zero")
 
     path = existing_source(args.path)
 
@@ -230,8 +229,8 @@ def main() -> None:
             # One rate, resolved once, used for reporting, playback, GIF timing
             # and any container we write.
             fps = resolve_fps(sequence, args.fps)
-            args.fps = fps
-            report(sequence, path, fps)
+            playback_fps = fps if args.fps is not None else fps / args.stride
+            report(sequence, path, playback_fps)
             if not len(sequence):
                 raise SystemExit(f"{path} contains no frames")
 
@@ -257,11 +256,19 @@ def main() -> None:
             report_geometry(frames[0], len(frames), args.stride)
 
             from open4d.visualization import _qt as viewer_qt
+            from open4d.visualization._api import _options
+
+            options = _options(playback_fps, {
+                name: getattr(args, name) for name in (
+                    "width", "height", "point_size", "color", "ambient", "background",
+                    "wireframe", "no_metrics", "distance", "elevation", "azimuth",
+                )
+            })
 
             if args.save:
-                viewer_qt.record(frames, args, args.save)
+                viewer_qt.record(frames, options, args.save)
             else:
-                viewer_qt.play(frames, args)
+                viewer_qt.play(frames, options)
     except (Open4DError, CodecError, ValueError, TypeError, OSError) as error:
         raise SystemExit(f"\nfailed to read the sequence:\n  {error}") from None
 
