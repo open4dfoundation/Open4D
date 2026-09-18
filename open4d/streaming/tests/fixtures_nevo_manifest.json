@@ -1,0 +1,83 @@
+{
+ "name": "g_dancer",
+ "representation": "ReRF (NeRF feature voxels)",
+ "frames": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "view": 7,
+ "view_in_training_set": true,
+ "training_views": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "width": 1280,
+ "height": 960,
+ "intrinsics": {
+  "fx": 1256.7028145567003,
+  "fy": 1256.7028145567003,
+  "cx": 642.5113479103238,
+  "cy": 453.32784389703846
+ },
+ "c2w": [
+  [
+   -0.7071067811865476,
+   -0.0,
+   -0.7071067811865475,
+   1.4142135623730947
+  ],
+  [
+   0.0,
+   -1.0,
+   0.0,
+   0.0
+  ],
+  [
+   -0.7071067811865475,
+   0.0,
+   0.7071067811865476,
+   -1.414213562373095
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "background": "white (corpus composites rgb*alpha + (1-alpha))",
+ "block_size": 8,
+ "conditions": [
+  {
+   "name": "rerf",
+   "prefix": "frame",
+   "label": "ReRF (all feature voxels)",
+   "threshold": null,
+   "kept_fraction": 1.0
+  },
+  {
+   "name": "nevo0.025",
+   "prefix": "nevo0.025",
+   "label": "NeVo (visibility-filtered, t=0.025)",
+   "threshold": 0.025,
+   "kept_fraction": 0.7046602416507958
+  }
+ ],
+ "corpus": "/home/ryan/nevo_data_g/dancer",
+ "run_dir": "/home/ryan/nevo_runs/g_dancer",
+ "seconds": 7.107229709625244
+}
