@@ -1,9 +1,5 @@
 # Requirements and installation
 
-One baseline covers the repository itself — the shared data model and
-`examples/visualization`. Individual codecs, reconstruction modules, and
-integrations add to it; those additions are listed further down.
-
 ## Baseline
 
 | | |
