@@ -1,0 +1,11 @@
+# Where this directory came from, so drift is detectable.
+# Check with: VS4D_REPO=/path/to/4DVideoStreaming scripts/check-sync.sh
+vendored-from: c3df4f9b2ef4ce04af8a0ea08dce94441c9bafde
+source-repo: github.com/frozzzen3/4DVideoStreaming
+source-paths:
+  system/ClientCore              -> system/ClientCore
+  system/WebClient               -> system/WebClient
+  system/Server                  -> system/Server
+  baselines/ViVo/orbitvivo/tile_ladder.py -> tile_ladder.py
+  tests/                         -> tests/
+  scripts/{run_web_demo,serve_pointcloud_baseline,shape_web_demo}.sh -> scripts/
