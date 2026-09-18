@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4DVideoStreaming — NeVo viewer</title>
+<style>
+  :root { color-scheme: dark; --bg:#0d0d11; --panel:#16161c; --line:#26262f;
+          --text:#e6e6ea; --muted:#8b8b98; --warn:#e0a33e; --err:#e05c5c; }
+  * { box-sizing: border-box; }
+  /* grid-template-rows is REQUIRED, not decorative. With an implicit auto row
+     the row grows to the tallest item, so an accumulating log pane pushed the
+     row past the viewport and #view's height:100% stretched with it -- while
+     the WebGL drawing buffer stayed at its original size. The result was a
+     vertically stretched render that got worse the longer the run went on. */
+  html, body { height:100%; }
+  body { margin:0; display:grid; grid-template-columns: 1fr 420px;
+         grid-template-rows: 100%; overflow:hidden;
+         background:var(--bg); color:var(--text);
+         font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* The canvas must not participate in sizing its own grid area, or it and the
+     area feed back on each other. min-width/height:0 lets the area shrink. */
+  #view { width:100%; height:100%; display:block; background:#101014;
+          min-width:0; min-height:0; }
+  aside { border-left:1px solid var(--line); display:flex; flex-direction:column;
+          min-width:0; min-height:0; overflow:hidden; background:var(--panel); }
+  header { padding:12px 14px; border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 6px; font-size:13px; font-weight:600; letter-spacing:.04em;
+       text-transform:uppercase; color:var(--muted); }
+  #status { color:var(--text); word-break:break-word; }
+  .controls { padding:10px 14px; border-bottom:1px solid var(--line);
+              display:flex; gap:8px; align-items:center; }
+  button { font:inherit; padding:5px 12px; border-radius:5px;
+           border:1px solid var(--line); background:#20202a; color:var(--text);
+           cursor:pointer; }
+  button:hover:not(:disabled) { background:#2a2a36; }
+  button:disabled { opacity:.45; cursor:default; }
+  #artifacts { padding:8px 14px; border-bottom:1px solid var(--line);
+               display:flex; flex-wrap:wrap; gap:10px; min-height:34px; }
+  #artifacts a { color:#7ab6f0; }
+  /* flex:1 alone is not enough: a flex item's automatic minimum size is its
+     content, so the log refused to shrink and grew the whole column instead of
+     scrolling. min-height:0 is what makes overflow:auto actually apply. */
+  #log { flex:1 1 0; min-height:0; overflow:auto; padding:8px 14px;
+         font-size:11.5px; }
+  .log-line { white-space:pre-wrap; word-break:break-word; color:var(--muted); }
+  .log-info { color:var(--text); }
+  .log-warn { color:var(--warn); }
+  .log-error { color:var(--err); }
+  .hint { padding:8px 14px; color:var(--muted); border-top:1px solid var(--line);
+          font-size:11.5px; }
+
+  #stats { padding:8px 14px; border-bottom:1px solid var(--line); color:var(--muted);
+           white-space:pre; font-size:11.5px; }
+  /* Every page is one system; the chooser is how you get to the
+     others, so the link is on all of them rather than only on a
+     landing page you may not have come through. */
+  h1 a.switch { float:right; color:#7ab6f0; text-decoration:none;
+                text-transform:none; letter-spacing:0;
+                font-weight:400; }
+  h1 a.switch:hover { text-decoration:underline; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<aside>
+  <header>
+    <h1>NeVo · ReRF neural volumetric <a class="switch" href="compare.html">switch</a></h1>
+    <div id="status">loading …</div>
+  </header>
+  <div class="controls">
+    <button id="play">Pause</button>
+  </div>
+  <div id="stats"></div>
+  <div id="log"></div>
+  <div class="hint">
+    Pre-rendered frames, so no camera control. Panels: plain ReRF, NeVo's visibility-filtered reconstruction, and the captured camera.
+  </div>
+</aside>
+<script src="./nevo.js"></script>
+</body>
+</html>
