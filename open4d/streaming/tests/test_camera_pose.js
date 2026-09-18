@@ -26,8 +26,13 @@ const {
     projectToCameraSpace
 } = require('../system/WebClient/src/camera-pose');
 
-const CAPTURED = path.join(
-    __dirname, '..', 'system/Client/viewpoints/view_00.json');
+// A real Open3D capture, not a value derived from the code under test. It
+// lives beside the tests where this is vendored and under the client's
+// viewpoint directory in the research repo, so look in both.
+const CAPTURED = [
+    path.join(__dirname, 'fixtures', 'view_00.json'),
+    path.join(__dirname, '..', 'system/Client/viewpoints/view_00.json')
+].find(candidate => fs.existsSync(candidate));
 
 function identityView() {
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];

@@ -1,72 +1,71 @@
 # streaming
 
-Browser clients for volumetric adaptive streaming, and the platform-free
-streaming logic they share with the desktop client. Copied from the
-`4DVideoStreaming` research repo; a sibling of [`../reconstruction`](../reconstruction),
-which vendors the *reconstruction* methods (`vega`, `rerf`, `queen`, …) that
-some of these clients play.
+Browser clients for volumetric adaptive streaming. A sibling of
+[`../reconstruction`](../reconstruction): that holds the methods, this holds the
+clients that deliver and play them. Five systems on one page, side by side:
 
-## What is here
+| system | representation | adapts? |
+|---|---|---|
+| Ours | textured meshes, viewpoint-aware ladder | yes, **in the browser** |
+| ViVo | point clouds, 4×4×4 tiles | server-side, per tile |
+| NAVA | point clouds | server-side, per object per segment |
+| Vega | 3D Gaussian splats | no — fixed quality |
+| NeVo | ReRF neural volumetric | no — pre-rendered |
 
-| Path | Role |
-|---|---|
-| `system/ClientCore/` | Platform-free streaming logic: segment loop, MCKP ABR, bandwidth estimator, metrics, behind a `ClientPlatform` contract |
-| `system/WebClient/` | Five browser pages — our adaptive mesh system, ViVo/NAVA point clouds, Vega splats, NeVo — plus a WebSocket↔TCP bridge |
-| `system/Server/` | Express server: publishes the per-segment ladder, serves media, logs viewpoints and selections |
-| `tile_ladder.py` | Catalogue-backed ladder letting ViVo and NAVA serve prepared tiles without the RGB-D source |
-| `tests/` | 294 tests, including decoders cross-checked against the authoritative Python implementations |
-| `scripts/` | Demo launcher, baseline supervisor, trace-based bandwidth shaping |
+## Quick start
 
-The `system/` layout is preserved deliberately: every relative `require()`
-(`tests/` → `../system/ClientCore/…`, `WebClient/src` → `../../ClientCore/…`)
-keeps working, so nothing needed import rewriting.
+```bash
+cd system/WebClient && npm install && node build.js
+cd ../.. && PYTHON_BIN=<env-python> scripts/run_web_demo.sh
+```
 
-Read [`system/WebClient/README.md`](system/WebClient/README.md) for how the
-pages work and the pitfalls that cost real debugging time, and
-[`system/ClientCore/README.md`](system/ClientCore/README.md) for the platform
-contract.
+Open the URL it prints (`…:3000/web/compare.html`) and pick a system. Ctrl-C
+stops everything. To *see* adaptation rather than just run it, replay a trace in
+another shell — without it every adaptive system settles on one operating point
+and looks static:
 
-## What this does NOT include
+```bash
+sudo scripts/shape_web_demo.sh cascade-20      # 12.5 → 175 Mbps staircase
+```
 
-This is the **web demo scope**. Three things it depends on live in the research
-repo and were deliberately not copied, so the demo is **not runnable from here
-as-is**:
+**Needs the research repo.** The ladder solver (`vstream/`), the baseline
+servers (`baselines/`) and the corpora live in `4DVideoStreaming`, so
+`run_web_demo.sh` expects a checkout of it. Without one you can still build the
+clients and run the tests.
 
-1. **`vstream/`** — the Python package that solves the bitrate ladder. The
-   server spawns `python -m vstream.ladder.ladder_service`, so without it no
-   manifest is published and the mesh client has nothing to select from.
-2. **`baselines/`** — the ViVo/NAVA/DeltaStream servers. `tile_ladder.py` is
-   here for reference but imports `baselines.ViVo.orbitvivo.ladder`, and the
-   point-cloud pages need one of those servers running behind the bridge.
-3. **The corpora** — encoded media, the prepared ViVo tiles, the Vega export.
-   All gitignored; they are hundreds of GB.
+## Adding a method
 
-`scripts/run_web_demo.sh` and `scripts/shape_web_demo.sh` came across for
-reference but expect the full repo (the latter also needs
-`system/Client/traces/*.csv`). Point them at a checkout of the research repo,
-or treat this directory as the client-side source of truth that gets vendored
-back.
+Write a page, then add one line to `DESCRIPTION` in `src/chooser.js`, one entry
+to `build.js`, and one `public/<page>.html`. The chooser lists whatever
+`/api/systems` reports, one row each, so it stays readable as methods pile up.
+
+If your client **adapts in the browser**, implement the `ClientPlatform`
+contract in [`system/ClientCore/platform.js`](system/ClientCore/platform.js)
+and hand it to `StreamingClient` — you inherit the segment loop, MCKP selector,
+bandwidth estimation and metrics. `src/browser-platform.js` is the reference.
+
+If it **adapts server-side or not at all**, write a plain page and do *not* wrap
+it in `ClientCore`: that models an HTTP segment loop over a published ladder,
+and forcing a push-based or fixed-quality method into it measures the wrapper
+rather than the method. `src/vega-main.js` is the smallest example.
 
 ## Tests
 
 ```bash
-cd system/WebClient && npm install && node build.js   # bundles; some tests load dist/
-cd ../.. && node --test tests/*.js
+node --test tests/*.js      # 292 of 294
 ```
 
-292 of 294 pass standalone. The two that do not are cross-repo **by design** —
-they exist to prove the JavaScript decoders match the Python ones byte for
-byte, which is exactly the check you lose if you let them drift:
+The other two cross-check the JS decoders against the Python ones byte for
+byte, so they need `PYTHONPATH=/path/to/4DVideoStreaming` and
+`VS4D_TEST_PYTHON=<env-python>`.
 
-```bash
-PYTHONPATH=/path/to/4DVideoStreaming \
-VS4D_TEST_PYTHON=/path/to/env/bin/python \
-  node --test tests/*.js
-```
+## Layout
 
-That fixes the V4DS protocol round-trip. The last one,
-`test_vgs_format.js`'s "golden fixture and its source asset are present",
-wants the real 1.1 MB `results/vega-web/dancer/frame_0000.vgs` export — run
-from a repo checkout that has it, or re-export with
-`orbitvega.export_quest`. The rest of that file's assertions run against the
-committed golden JSON and pass without the asset.
+`system/ClientCore` is the platform-free logic; `system/WebClient` the pages,
+chooser and WebSocket↔TCP bridge; `system/Server` publishes the ladder and
+serves media; `tile_ladder.py` lets ViVo/NAVA serve prepared tiles without the
+RGB-D source. The `system/` level is kept so relative imports resolve unchanged
+against the research repo — load-bearing, not a leftover.
+
+Pitfalls worth reading before changing a client are in
+[`system/WebClient/README.md`](system/WebClient/README.md); most fail silently.
