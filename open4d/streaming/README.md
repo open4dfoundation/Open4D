@@ -69,3 +69,11 @@ against the research repo — load-bearing, not a leftover.
 
 Pitfalls worth reading before changing a client are in
 [`system/WebClient/README.md`](system/WebClient/README.md); most fail silently.
+
+This directory is vendored from the research repo, the same way
+`../reconstruction` holds its methods. `PROVENANCE` records the commit it came
+from, and `scripts/check-sync.sh` reports whether the two have drifted:
+
+```bash
+VS4D_REPO=/path/to/4DVideoStreaming scripts/check-sync.sh
+```
