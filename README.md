@@ -34,6 +34,8 @@ twins, graphics, vision, and spatial computing.
   It runs on macOS, Linux, and Windows and does not need a GPU.
 - A comparison tool that measures a decoded sequence against its reference and
   displays both under one camera.
+- Browser clients for adaptive volumetric streaming, with five systems side by
+  side under one bandwidth condition.
 - Research codecs for mesh compression, Gaussian-splatting reconstruction and
   streaming, and Open3D and Unity integrations. These larger components still
   have their own setup and dependencies.
@@ -96,6 +98,24 @@ with open4d.load("capture.usdc") as sequence:
 | [Components](docs/components.md) | Every codec, reconstruction module, and integration, with links to their own READMEs |
 | [Artifacts policy](docs/artifacts.md) | What not to commit, and what a published result must record |
 
+## Adaptive streaming
+
+[`open4d/streaming`](open4d/streaming) plays volumetric sequences in a browser
+and compares delivery methods against each other. Five systems — an adaptive
+textured-mesh ladder, ViVo and NAVA point clouds, Vega splats, NeVo neural
+volumetric — pick one from the list, or replay a bandwidth trace and watch them
+respond to it. Three of the five adapt; the list says which, because on a fast
+link a fixed-quality player and an adaptive one look the same.
+
+<p align="center">
+  <img src="docs/assets/streaming-demo.png" width="100%" alt="The system chooser listing five streaming methods with per-object selection, beside a 3D Gaussian splat frame decoded and rendered in the browser">
+</p>
+
+The clients share one platform-free core, so the browser and desktop clients
+run the same segment loop and the same adaptation logic. See
+[`open4d/streaming/README.md`](open4d/streaming/README.md) for a quick start and
+for how to add your own method.
+
 ## Repository layout
 
 ```text
@@ -106,7 +126,8 @@ open4d/
 ├── visualization/   public viewer and GIF renderer
 ├── torch_ops/       optional Torch geometry helpers
 ├── codecs/          draco, faster_vdmc, klt, n4mc, qndf, qndf_int8, tsmc, tvmc, vdmc
-└── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools, streamer
+├── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools, streamer
+└── streaming/       browser clients and the adaptive-streaming logic they share
 integrations/        open3d, unity
 examples/            runnable sequence loading, visualization, and comparison
 scripts/             repository-level setup utilities
