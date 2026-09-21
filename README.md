@@ -17,12 +17,17 @@ the extras you use:
 
 ```bash
 python -m pip install -e '.[player]'    # interactive mesh viewer and GIF export
-python -m pip install -e '.[open3d]'    # RGB-D reconstruction
+python -m pip install -e '.[open3d]'    # RGB-D reconstruction (Open3D 0.19.x)
 python -m pip install -e '.[gaussians]' # read Gaussian PLY files
 ```
 
 Research methods have additional setup below. Their source, native programs
 and model weights are not bundled in the Python wheel.
+
+RGB-D reconstruction requires Open3D 0.19.x. The legacy TSDF integrator in
+Open3D 0.20 rescales already-metric float depth and can return empty meshes;
+the extra selects the supported version and reconstruction rejects an
+incompatible manually installed runtime before processing frames.
 
 ## Try a sequence
 
@@ -151,10 +156,10 @@ with receive() as frames:
 Then send from another:
 
 ```python
-from open4d import stream
+from open4d import send
 from open4d.demo import mesh_sequence
 
-stream(mesh_sequence(frames=30))
+send(mesh_sequence(frames=30))
 ```
 
 This sends decoded mesh arrays over TCP, at their recorded frame timing. It is

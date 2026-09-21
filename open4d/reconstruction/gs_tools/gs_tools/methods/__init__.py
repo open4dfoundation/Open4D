@@ -11,6 +11,16 @@ what those produced. See their module docstrings for why one exports Gaussians
 and the other cannot.
 """
 
-from . import base, gstream, queen, rerf, vega
+from importlib import import_module
 
 __all__ = ["base", "gstream", "queen", "rerf", "vega"]
+
+
+def __getattr__(name):
+    # Building a QUEEN/3DGStream command must not import the optional browser
+    # bundle exporters, which depend on the separately installed streamer.
+    if name not in __all__:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(f".{name}", __name__)
+    globals()[name] = module
+    return module

@@ -23,15 +23,17 @@ open4d = "open4d._cli:main"
 tools  = ["trimesh"]
 metrics = ["scipy"]
 player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
-open3d = ["open3d>=0.19", "pillow>=9"]
+# 0.20 applies depth_scale to float depth, but its legacy TSDF integrator
+# still passes 1000 for images already in metres and silently extracts no mesh.
+open3d = ["open3d>=0.19,<0.20", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
 torch  = ["torch"]
 klt    = ["torch", "trimesh", "zstd", "tqdm", "point-cloud-utils"]
 n4mc   = ["torch", "trimesh", "scikit-image", "point-cloud-utils"]
-qndf   = ["torch", "open3d>=0.19", "trimesh", "tqdm"]
+qndf   = ["torch", "open3d>=0.19,<0.20", "trimesh", "tqdm"]
 gaussians = ["plyfile"]
 dev    = ["build>=1.2", "pytest>=8", "scipy", "tomli>=2; python_version < '3.11'"]
-all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
+all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19,<0.20", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
 
 [tool.setuptools]
 include-package-data = false
