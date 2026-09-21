@@ -163,3 +163,22 @@ def reconstruct(source, output=None, *, method="rgbd", **options):
 
         return reconstruct_gaussians(source, output, method=method, **options)
     raise ValueError("method must be 'rgbd', 'queen' or '3dgstream'")
+
+
+def stream(source, *address, **options):
+    """Send mesh frames over TCP or export a sequence for browser playback.
+
+    A path, or browser options such as out_dir/name/rungs, selects the optional
+    browser streamer. A frame iterable without browser options retains the
+    original TCP behavior, including positional or keyword host/port arguments.
+    Use send() to select TCP explicitly.
+    """
+    browser_options = {"out_dir", "name", "title", "rungs", "fps", "open_browser", "block"}
+    if address or (not isinstance(source, (str, os.PathLike))
+                   and not browser_options.intersection(options)):
+        from .streaming import send
+
+        return send(source, *address, **options)
+    from ._streamer import stream as stream_to_browser
+
+    return stream_to_browser(source, **options)

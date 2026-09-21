@@ -171,6 +171,7 @@ def test_reconstruction_refuses_existing_output_before_launch(tmp_path, cli_runt
 
 
 def test_native_render_commands_do_not_call_destructive_extractor(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "streamer", None)
     root = Path(__file__).resolve().parents[2] / "reconstruction" / "gs_tools"
     monkeypatch.syspath_prepend(str(root))
     try:
