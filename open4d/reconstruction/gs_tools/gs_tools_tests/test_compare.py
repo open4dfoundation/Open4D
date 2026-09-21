@@ -183,5 +183,3 @@ def _rerf_bitstream(root: Path, frames: int = 4) -> Path:
 def test_scene_name_strips_the_corpus_prefix():
     assert rerf.scene_name("g_basketball") == "basketball"
     assert rerf.scene_name("basketball") == "basketball"
-
-
