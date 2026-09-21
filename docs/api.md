@@ -79,6 +79,11 @@ list is a fixed-quality stream and says so. A spec is a frame format —
 quantisation, as in `draco@11`. Sizes are measured off disk rather than
 predicted; quality is left unscored until something scores it.
 
+[`examples/streaming_demo.py`](../examples/streaming_demo.py) runs the whole
+of it on the ten basketball frames the TVMC codec vendors: three rungs
+built and scored, served over HTTP with the counters read back, then thirty
+seconds simulated over a link that collapses mid-run.
+
 The implementation is the separate `open4d-streamer` package, imported on the
 call rather than at load: it depends on `open4d`, so `open4d` must not depend
 on it. Without it installed the call raises `open4d.StreamerDependencyError`
