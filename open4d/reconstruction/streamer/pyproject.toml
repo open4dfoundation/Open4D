@@ -18,4 +18,8 @@ where = ["."]
 include = ["streamer*"]
 
 [tool.setuptools.package-data]
-"streamer.client" = ["*.html"]
+# The page alone is not the client. It starts `client/worker.js`, which is
+# where every codec lives, and the worker `importScripts` the vendored Draco
+# pair beside it. The server reads all three off disk next to `viewer.html`,
+# so a wheel carrying only the page 404s the worker and decodes nothing.
+"streamer.client" = ["*.html", "*.js", "vendor/draco/*"]
