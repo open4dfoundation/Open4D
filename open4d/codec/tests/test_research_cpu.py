@@ -124,6 +124,26 @@ def test_research_codec_cpu_encode_and_fresh_decode(
 
 
 @pytest.mark.gpu
+def test_n4mc_auto_encode_and_decode_on_apple_mps_runtime(tmp_path):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("trimesh")
+    pytest.importorskip("point_cloud_utils")
+    pytest.importorskip("skimage")
+    if not torch.backends.mps.is_available():
+        pytest.skip("Apple Metal/MPS is unavailable")
+    source = moving_cube()
+    artifact = encode_sequence(source, tmp_path/'automatic.n4d', codec="n4mc",
+                               resolution=7, epochs=30, hidden_channels=(4, 8),
+                               latent_channels=4, learning_rate=3e-3)
+    with decode_sequence(artifact) as first, decode_sequence(artifact) as second:
+        assert len(first) == len(second) == len(source)
+        for ordinal, (expected, left, right) in enumerate(zip(source, first, second, strict=True)):
+            np.testing.assert_array_equal(left.geometry.positions, right.geometry.positions)
+            assert component_count(left.geometry) == 1
+            assert surface_rms_fraction(expected.geometry, left.geometry, 500 + ordinal * 2) < .15
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("codec,suffix,options", (
     ("n4mc", ".n4d", {
         "resolution": 7, "epochs": 30, "hidden_channels": (4, 8),
@@ -146,6 +166,19 @@ def test_neural_codec_mps_encode_and_fresh_decode(tmp_path, codec, suffix, optio
     if not torch.backends.mps.is_available():
         pytest.skip("Apple Metal/MPS is unavailable")
     source = moving_cube()
+    if codec == "n4mc":
+        # Explicit device requests must diagnose a missing backend operator;
+        # the separate auto-device test verifies the usable CPU fallback.
+        try:
+            value = torch.zeros((1, 1, 1, 1, 1), device="mps")
+            torch.nn.functional.conv_transpose3d(value, torch.ones_like(value))
+        except RuntimeError as exc:
+            if "ConvTranspose 3D is not supported on MPS" not in str(exc):
+                raise
+            from open4d.codec import CodecError
+            with pytest.raises(CodecError, match="ConvTranspose3D.*device='cpu'"):
+                encode_sequence(source, tmp_path/f"cube{suffix}", codec=codec, device="mps", **options)
+            return
     artifact = encode_sequence(
         source, tmp_path / f"cube{suffix}", codec=codec, device="mps", **options
     )

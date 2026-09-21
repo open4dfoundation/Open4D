@@ -6,10 +6,30 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
+import numpy as np
 
 pytestmark = pytest.mark.cpu
+
+
+@pytest.mark.parametrize("frames,group", [(2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (2, 2)])
+def test_reference_centers_accept_short_sequences(tmp_path, frames, group):
+    pytest.importorskip("open3d")
+    pytest.importorskip("sklearn")
+    repository = Path(__file__).resolve().parents[2]
+    script = repository / "open4d/codecs/tsmc/tsmc/get_reference_center.py"
+    points = np.array([[0., 0, 0], [1., 0, 0], [0., 1, 0], [0., 0, 1]])
+    for index in range(frames * group):
+        np.savetxt(tmp_path/f"centers_{index:03d}.xyz", points + index)
+    result = subprocess.run([sys.executable, str(script), "--dataset", "short",
+                             "--num_frames", str(frames), "--num_centers", "4",
+                             "--centers_dir", str(tmp_path), "--group_idx", str(group)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    selected = (group - 1) * frames + min(4, frames - 1)
+    np.testing.assert_allclose(np.loadtxt(tmp_path/'reference/reference_centers_aligned.xyz'), points + selected)
 
 
 def test_no_static_reaches_the_evaluation_stage(tmp_path: Path):

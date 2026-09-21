@@ -19,6 +19,7 @@ from typing import Callable
 import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d._files import publish_directory, publish_file
 
 from . import _mesh, _usd
 from ._errors import (
@@ -603,9 +604,7 @@ def write_sequence(
         if file_output:
             generated = temporary / destination.name
             _write_frame(generated, sequence[0], suffix, allow_lossy=allow_lossy)
-            if destination.exists():
-                destination.unlink()
-            shutil.move(generated, destination)
+            publish_file(generated, destination, overwrite=overwrite)
         else:
             manifest = {
                 "schema": _MANIFEST_SCHEMA,
@@ -632,9 +631,28 @@ def write_sequence(
             (temporary / _MANIFEST_NAME).write_text(
                 json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
+            backup = None
             if destination.exists():
-                shutil.rmtree(destination)
-            temporary.replace(destination)
+                if not overwrite:
+                    raise FileExistsError(f"destination already exists: {destination}")
+                backup = Path(tempfile.mkdtemp(prefix=f".{destination.name}.backup.",
+                                               dir=destination.parent))
+                backup.rmdir()
+                destination.rename(backup)
+            try:
+                if overwrite:
+                    temporary.replace(destination)
+                else:
+                    publish_directory(temporary, destination)
+            except BaseException:
+                if backup is not None:
+                    backup.rename(destination)
+                raise
+            if backup is not None:
+                if backup.is_dir() and not backup.is_symlink():
+                    shutil.rmtree(backup)
+                else:
+                    backup.unlink()
             temporary = None
     finally:
         if temporary is not None:

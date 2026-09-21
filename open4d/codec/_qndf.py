@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib import import_module
 from io import BytesIO
 import json
+import math
+from numbers import Real
 from pathlib import Path
 import tempfile
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
@@ -13,8 +16,9 @@ import numpy as np
 
 from open4d.core import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
 
-from ._npz import _json_value
+from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
+from ._research import research_module
 from ._torch import torch_device
 
 
@@ -22,8 +26,8 @@ def _backend():
     try:
         return (
             import_module("torch"),
-            import_module("open4d.codecs.qndf.compress"),
-            import_module("open4d.codecs.qndf.build_dataset_open3d"),
+            research_module("qndf.compress"),
+            research_module("qndf.build_dataset_open3d"),
         )
     except ImportError as error:
         raise CodecError("QNDF dependencies are missing; install open4d[qndf]") from error
@@ -72,6 +76,56 @@ def _inputs(torch, models, coarse, pe_dim, input_scale):
     return encoded, normalized, mean, std
 
 
+def _validate_model_options(pe_dim, hidden_dim, num_layers, input_scale, output_scale):
+    for name, value in (("pe_dim", pe_dim), ("hidden_dim", hidden_dim), ("num_layers", num_layers)):
+        if type(value) is not int or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if pe_dim % 2:
+        raise ValueError("pe_dim must be even")
+    for name, value in (("input_scale", input_scale), ("output_scale", output_scale)):
+        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number")
+    if output_scale == 0:
+        raise ValueError("output_scale must be nonzero")
+
+
+def _validate_context(torch, context, schema):
+    try:
+        if not isinstance(context, Mapping) or context.get("schema") != schema:
+            raise ValueError("unsupported schema or context is not an object")
+        _validate_model_options(*(context[name] for name in (
+            "pe_dim", "hidden_dim", "num_layers", "input_scale", "output_scale",
+        )))
+        for name in ("coarse_vertices", "input_mean", "input_std"):
+            value = context[name]
+            if (not isinstance(value, torch.Tensor) or value.layout != torch.strided
+                    or value.dtype != torch.float32 or not torch.isfinite(value).all()):
+                raise ValueError(f"{name} must be a finite float32 tensor")
+            shape = value.shape
+            if ((name == "coarse_vertices" and (len(shape) != 2 or shape[1] != 3 or shape[0] == 0))
+                    or (name != "coarse_vertices" and shape != (1, 3))):
+                raise ValueError(f"invalid {name} dimensions")
+        if torch.any(context["input_std"] <= 0):
+            raise ValueError("input_std must be positive")
+        faces = context["coarse_faces"]
+        if (not isinstance(faces, torch.Tensor) or faces.layout != torch.strided
+                or faces.dtype != torch.int64 or faces.ndim != 2 or faces.shape[1] != 3
+                or torch.any(faces < 0) or torch.any(faces >= len(context["coarse_vertices"]))):
+            raise ValueError("coarse_faces must contain valid int64 triangle indices")
+        normalization = context["normalization"]
+        if not isinstance(normalization, Mapping):
+            raise ValueError("normalization must be an object")
+        scale, lower = normalization["scale"], np.asarray(normalization["bbox_min"])
+        if (isinstance(scale, bool) or not isinstance(scale, Real) or not math.isfinite(scale)
+                or scale <= 0 or lower.shape != (3,) or lower.dtype.kind not in "fiu"
+                or not np.isfinite(lower).all()):
+            raise ValueError("normalization requires finite XYZ bounds and a positive scale")
+        if not isinstance(context["model_state_dict"], Mapping):
+            raise ValueError("model_state_dict must be an object")
+    except (KeyError, TypeError, ValueError) as error:
+        raise CodecError(f"invalid QNDF frame context: {error}") from error
+
+
 class QNDFCodec:
     backend = "python-in-process"
     lossless = False
@@ -81,13 +135,15 @@ class QNDFCodec:
         self.int8 = int8
         self.id = "qndf-int8" if int8 else "qndf"
         self.suffixes = (".qi4d",) if int8 else (".q4d",)
-        self.schema = f"open4d.{self.id}-sequence/v1"
+        self.version = 2 if int8 else 1
+        self.schema = f"open4d.{self.id}-sequence/v{self.version}"
 
     def can_decode(self, source: Path) -> bool:
         try:
             with ZipFile(source) as archive:
-                return json.loads(archive.read("manifest.json")).get("schema") == self.schema
-        except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
+                manifest = json.loads(archive.read("manifest.json"))
+                return isinstance(manifest, dict) and manifest.get("schema") == self.schema
+        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
             return False
 
     def encode(
@@ -100,10 +156,12 @@ class QNDFCodec:
     ) -> Path:
         if not len(sequence):
             raise CodecError("QNDF cannot encode an empty sequence")
-        if min(coarse_size, pe_dim, hidden_dim, num_layers, epochs, batch_size) < 1:
-            raise ValueError("QNDF size and training options must be positive")
-        if pe_dim % 2:
-            raise ValueError("pe_dim must be even")
+        _validate_model_options(pe_dim, hidden_dim, num_layers, input_scale, output_scale)
+        for name, value in (("coarse_size", coarse_size), ("epochs", epochs), ("batch_size", batch_size)):
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        if type(num_subdiv) is not int or num_subdiv < 0:
+            raise ValueError("num_subdiv must be a nonnegative integer")
         destination = Path(destination).absolute()
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
@@ -119,6 +177,7 @@ class QNDFCodec:
             torch.cuda.manual_seed_all(seed)
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest = _manifest(sequence, self.id)
+        manifest["schema"] = self.schema
         with tempfile.NamedTemporaryFile(
             prefix=f".{destination.name}.", suffix=".tmp",
             dir=destination.parent, delete=False,
@@ -156,7 +215,7 @@ class QNDFCodec:
                             loss.backward()
                             optimizer.step()
                     context = {
-                        "schema": f"open4d.{self.id}/v1",
+                        "schema": f"open4d.{self.id}/v{self.version}",
                         "coarse_vertices": coarse.cpu(), "coarse_faces": triangles.cpu(),
                         "input_mean": mean.cpu(), "input_std": std.cpu(),
                         "pe_dim": pe_dim, "hidden_dim": hidden_dim,
@@ -168,18 +227,15 @@ class QNDFCodec:
                         cpu_model = torch.ao.quantization.quantize_dynamic(
                             model.cpu().eval(), {torch.nn.Linear}, dtype=torch.qint8
                         )
-                        example = (encoded.cpu(), graph.neighbors.cpu(), graph.edge_wts.cpu())
-                        traced = torch.jit.trace(cpu_model, example, strict=False)
-                        model_stream = BytesIO()
-                        torch.jit.save(traced, model_stream)
-                        archive.writestr(f"frames/{ordinal:06d}/model.pt", model_stream.getvalue())
+                        context["model_state_dict"] = cpu_model.state_dict()
                     else:
                         context["model_state_dict"] = model.state_dict()
+                    _validate_context(torch, context, f"open4d.{self.id}/v{self.version}")
                     archive.writestr(
                         f"frames/{ordinal:06d}/context.pt", _torch_bytes(torch, context)
                     )
                 archive.writestr("manifest.json", json.dumps(manifest))
-            temporary.replace(destination)
+            _publish_file(temporary, destination, overwrite=overwrite)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -188,21 +244,21 @@ class QNDFCodec:
     def decode(
         self, source: Path, *, device: str | None = None, verbose: bool = False
     ) -> Sequence:
-        torch, models, _ = _backend()
-        target = torch.device("cpu") if self.int8 else torch_device(torch, device)
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
-                if manifest.get("schema") != self.schema:
-                    raise CodecError(f"unsupported {self.id} artifact schema")
+                if self.int8 and isinstance(manifest, dict) and manifest.get("schema") == "open4d.qndf-int8-sequence/v1":
+                    raise CodecError("QNDF-int8 v1 contains executable models; re-encode with the current version")
+                _validate_manifest(manifest, schema=self.schema, codec=self.id)
+                torch, models, _ = _backend()
+                target = torch.device("cpu") if self.int8 else torch_device(torch, device)
                 frames = []
                 for ordinal, record in enumerate(manifest["frames"]):
                     context = torch.load(
                         BytesIO(archive.read(f"frames/{ordinal:06d}/context.pt")),
                         map_location=target, weights_only=True,
                     )
-                    if context.get("schema") != f"open4d.{self.id}/v1":
-                        raise CodecError(f"invalid {self.id} frame context")
+                    _validate_context(torch, context, f"open4d.{self.id}/v{self.version}")
                     coarse, faces = context["coarse_vertices"].to(target), context["coarse_faces"].to(target)
                     inputs = (coarse * context["input_scale"] - context["input_mean"].to(target))
                     inputs /= context["input_std"].to(target)
@@ -212,10 +268,12 @@ class QNDFCodec:
                     )
                     if self.int8:
                         _quantized_engine(torch, context.get("quantized_engine"))
-                        model = torch.jit.load(
-                            BytesIO(archive.read(f"frames/{ordinal:06d}/model.pt")),
-                            map_location="cpu",
-                        ).eval()
+                        model = models.MLP(3 * context["pe_dim"], context["hidden_dim"], 3,
+                                           context["num_layers"]).eval()
+                        model = torch.ao.quantization.quantize_dynamic(
+                            model, {torch.nn.Linear}, dtype=torch.qint8,
+                        )
+                        model.load_state_dict(context["model_state_dict"])
                     else:
                         model = models.MLP(
                             3 * context["pe_dim"], context["hidden_dim"], 3,

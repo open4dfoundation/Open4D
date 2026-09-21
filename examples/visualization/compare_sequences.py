@@ -322,6 +322,8 @@ def run(args) -> int:
         with open_sequence(reference_path, fps=args.fps) as reference, \
                 open_sequence(decoded_path, fps=args.fps) as decoded:
             fps = resolve_fps(reference, args.fps)
+            if args.fps is None:
+                fps /= args.stride
             args.fps = fps
             report_sources(reference, decoded, reference_path, decoded_path, fps)
             if not len(reference) or not len(decoded):

@@ -7,6 +7,7 @@ import json
 from numbers import Integral
 from pathlib import Path
 import tempfile
+import warnings
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 import numpy as np
@@ -14,29 +15,55 @@ import numpy as np
 from open4d.core import Sequence
 from open4d.io import open_sequence
 
-from ._klt import _KLTProvider
-from ._npz import _json_value
+from ._klt import _KLTProvider, _normalization
+from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
+from ._research import research_module
 from ._torch import torch_device
 from ._tsdf import write_tsdf_sequence
 
 _SCHEMA = "open4d.n4mc-sequence/v1"
 
 
+def _device(torch, requested):
+    target = torch_device(torch, requested)
+    if target.type != "mps":
+        return target
+    # Availability of Metal does not imply availability of the decoder's 3D
+    # transposed convolution. Probe before constructing volumes or training.
+    try:
+        with torch.no_grad():
+            value = torch.zeros((1, 1, 1, 1, 1), device=target)
+            torch.nn.functional.conv_transpose3d(value, torch.ones_like(value))
+    except (RuntimeError, NotImplementedError) as exc:
+        if "ConvTranspose 3D is not supported on MPS" not in str(exc):
+            raise
+        if requested in (None, "auto"):
+            warnings.warn("N4MC requires ConvTranspose3D, unsupported by this MPS runtime; using CPU",
+                          RuntimeWarning, stacklevel=3)
+            return torch.device("cpu")
+        raise CodecError(
+            "N4MC requires ConvTranspose3D, which this Apple Metal/MPS runtime does not support; "
+            "use device='cpu', device='cuda', or device='auto'"
+        ) from exc
+    return target
+
+
 def _backend():
     try:
         return (
             import_module("torch"),
-            import_module("open4d.codecs.n4mc.models"),
-            import_module("open4d.codecs.n4mc.losses"),
-            import_module("open4d.codecs.n4mc.evaluation.metrics"),
+            research_module("n4mc.models"),
+            research_module("n4mc.losses"),
+            research_module("n4mc.evaluation.metrics"),
         )
     except ImportError as error:
         raise CodecError("N4MC dependencies are missing; install open4d[n4mc]") from error
 
 
 def _volume(torch, path: Path, device):
-    values = np.load(path, allow_pickle=False)["sdf"]
+    with np.load(path, allow_pickle=False) as archive:
+        values = archive["sdf"]
     if values.ndim == 4:
         values = np.moveaxis(values, -1, 0)
     return torch.from_numpy(np.ascontiguousarray(values)).float().to(device)
@@ -72,8 +99,9 @@ class N4MCCodec:
     def can_decode(self, source: Path) -> bool:
         try:
             with ZipFile(source) as archive:
-                return json.loads(archive.read("manifest.json")).get("schema") == _SCHEMA
-        except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
+                manifest = json.loads(archive.read("manifest.json"))
+                return isinstance(manifest, dict) and manifest.get("schema") == _SCHEMA
+        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
             return False
 
     def encode(
@@ -91,7 +119,7 @@ class N4MCCodec:
                     mesh.texture_coordinates is not None, bool(mesh.attributes))):
                 raise CodecError("N4MC's TSDF profile cannot preserve mesh attributes")
         torch, models, losses, _ = _backend()
-        target_device = torch_device(torch, device)
+        target_device = _device(torch, device)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -151,14 +179,18 @@ class N4MCCodec:
                         bottleneck_shape=encoded["bottleneck_shape"].cpu().numpy(),
                     )
                     packs.append(pack)
-            temporary = destination.with_name(f".{destination.name}.tmp")
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{destination.name}.", suffix=".tmp",
+                dir=destination.parent, delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
             try:
                 with ZipFile(temporary, "w", compression=ZIP_DEFLATED) as archive:
                     archive.write(checkpoint, checkpoint.name)
                     for pack in packs:
                         archive.write(pack, pack.name)
                     archive.writestr("manifest.json", json.dumps(manifest))
-                temporary.replace(destination)
+                _publish_file(temporary, destination, overwrite=overwrite)
             except Exception:
                 temporary.unlink(missing_ok=True)
                 raise
@@ -169,14 +201,15 @@ class N4MCCodec:
         min_component_faces: int | None = None,
     ) -> Sequence:
         torch, models, _, metrics = _backend()
-        target_device = torch_device(torch, device)
+        target_device = _device(torch, device)
         temporary = tempfile.TemporaryDirectory(prefix="open4d-n4mc-decode-")
         work = Path(temporary.name)
+        decoded = None
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
-                if manifest.get("schema") != _SCHEMA:
-                    raise CodecError("unsupported N4MC artifact schema")
+                _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
+                _normalization(manifest)
                 archive.extract("checkpoint.pt", work)
                 for ordinal in range(len(manifest["frames"])):
                     archive.extract(f"frame_{ordinal:06d}.npz", work)
@@ -192,11 +225,11 @@ class N4MCCodec:
             output.mkdir()
             with torch.inference_mode():
                 for ordinal in range(len(manifest["frames"])):
-                    pack = np.load(work / f"frame_{ordinal:06d}.npz", allow_pickle=False)
-                    latent = torch.from_numpy(pack["quantized_latent"]).unsqueeze(0).to(target_device)
-                    volume = model.decode_quantized_latent(
-                        latent, pack["bottleneck_shape"], pack["original_shape"]
-                    )[0]
+                    with np.load(work / f"frame_{ordinal:06d}.npz", allow_pickle=False) as pack:
+                        latent = torch.from_numpy(pack["quantized_latent"]).unsqueeze(0).to(target_device)
+                        volume = model.decode_quantized_latent(
+                            latent, pack["bottleneck_shape"], pack["original_shape"]
+                        )[0]
                     mesh = metrics.reconstruct_mesh_from_tsdf(volume)
                     if mesh is None:
                         raise CodecError(f"N4MC frame {ordinal} has no decoded surface")
@@ -204,8 +237,12 @@ class N4MCCodec:
                     mesh.export(output / f"frame_{ordinal:06d}.obj")
             decoded = open_sequence(output)
             return Sequence(_KLTProvider(temporary, decoded, manifest))
-        except Exception:
-            temporary.cleanup()
+        except BaseException:
+            try:
+                if decoded is not None:
+                    decoded.close()
+            finally:
+                temporary.cleanup()
             raise
 
 

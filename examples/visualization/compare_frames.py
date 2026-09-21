@@ -1,23 +1,8 @@
-"""Pair two sequences frame by frame and measure the error between them.
+"""Prepare frame comparisons and error colours without importing Qt.
 
-Renderer-neutral, like `render_frames`: this module decides *what* the error is
-and leaves drawing to the viewer, so `--info` and `--csv` need no Qt and no
-display.
-
-    comparison = compare_sequences(reference, decoded, stride=1, order=[0, 1, 2])
-    print(comparison.summary())
-    frame = comparison.frames[0]
-    frame.decoded_distances        # one distance per decoded vertex
-
-Pairing is by ordinal position — frame *i* of the decoded sequence against frame
-*i* of the reference — because a decoded sequence carries no reliable identifier
-tying it back to a source frame. Unequal lengths pair up to the shorter one and
-say so, since a codec that dropped the tail should not silently look complete.
-
-The error scale is fixed once for the whole comparison rather than per frame.
-Rescaling every frame would make a still frame prettier and the animation a lie:
-colours would no longer be comparable between frames, so a frame that got worse
-could look identical.
+The viewer pairs frames by position, reports unequal lengths, and uses one
+colour scale for the sequence. The public API in open4d.metrics requires
+matching lengths and timestamps.
 """
 
 from __future__ import annotations
@@ -30,13 +15,11 @@ import numpy as np
 import _common  # noqa: F401
 
 import colormaps
-import mesh_metrics
+from open4d import TriangleMesh, metrics as mesh_metrics
 from open4d.visualization import _frames as render_frames
 from open4d.visualization._frames import RenderFrame
 
-# Fraction of all measured distances kept below the top of the colour scale. The
-# largest distance in a sequence is usually one stray vertex, and scaling to it
-# compresses everything real into the bottom of the ramp.
+# Limit the influence of outliers on the colour scale.
 DEFAULT_PERCENTILE = 99.0
 
 
@@ -50,12 +33,10 @@ class FrameComparison:
 
     @property
     def decoded_distances(self) -> np.ndarray:
-        """Distance from each decoded vertex to the reference surface."""
         return self.error.decoded_distances
 
     @property
     def reference_distances(self) -> np.ndarray:
-        """Distance from each reference vertex to the decoded surface."""
         return self.error.reference_distances
 
     def distances_for(self, which: str) -> np.ndarray:
@@ -126,11 +107,7 @@ def pair_frames(
     stride: int = 1,
     order: list[int] | None = None,
 ) -> tuple[list[tuple[RenderFrame, RenderFrame]], tuple[int, int] | None]:
-    """Decode both sequences into aligned render frames.
-
-    Returns the pairs and, when the two sources disagreed on length, the two
-    original counts so the caller can report the truncation.
-    """
+    """Pair frames by position; return original counts if lengths differ."""
     order = order or [0, 1, 2]
     if stride < 1:
         raise ValueError("stride must be at least 1")
@@ -167,16 +144,14 @@ def compare_sequences(
     `percentile` of every measured distance. Pass `percentile=None` with no
     `max_error` to scale to the true maximum.
 
-    `progress` is called with (done, total) after each frame, so a CLI can print
-    a counter without this module knowing about one.
+    `progress` receives (done, total) after each frame.
     """
     if metric not in ("point", "plane"):
         raise ValueError(f"metric must be 'point' or 'plane'; got {metric!r}")
 
     pairs, truncated = pair_frames(reference, decoded, stride, order)
 
-    # One peak for the whole sequence, so PSNR is comparable frame to frame. Per
-    # frame it would drift with the subject's own bounding box.
+    # Use the same PSNR scale for every frame.
     peak = max(
         mesh_metrics.bounding_box_diagonal(reference_frame.positions)
         for reference_frame, _ in pairs
@@ -185,10 +160,8 @@ def compare_sequences(
     frames: list[FrameComparison] = []
     for done, (reference_frame, decoded_frame) in enumerate(pairs, start=1):
         error = mesh_metrics.compare_meshes(
-            reference_frame.positions,
-            reference_frame.triangles,
-            decoded_frame.positions,
-            decoded_frame.triangles,
+            TriangleMesh(reference_frame.positions, reference_frame.triangles),
+            TriangleMesh(decoded_frame.positions, decoded_frame.triangles),
             metric=metric,
             peak=peak,
         )
@@ -216,12 +189,7 @@ def resolve_clamp(
     max_error: float | None,
     percentile: float | None,
 ) -> float:
-    """Decide the top of the colour scale.
-
-    Zero is returned when the sequences match exactly; `colormaps.normalize`
-    treats a zero span as "all at the bottom of the ramp", which is the honest
-    rendering of no error.
-    """
+    """Return the colour scale's upper limit, or zero for an exact match."""
     if max_error is not None:
         if max_error <= 0.0:
             raise ValueError("max_error must be greater than zero")
@@ -239,12 +207,7 @@ def resolve_clamp(
 
 
 def diffuse_intensity(frame: RenderFrame) -> np.ndarray:
-    """Per-vertex diffuse term for the shared fixed light, in 0..1.
-
-    Reuses `mesh_metrics.vertex_normals`, so an error pane and the metrics agree
-    on which way the surface faces. A point cloud has no normals and comes back
-    fully lit, which leaves its colours untouched by shading.
-    """
+    """Diffuse light in [0, 1]; vertices without normals are fully lit."""
     normals = mesh_metrics.vertex_normals(frame.positions, frame.triangles)
     lengths = np.linalg.norm(normals, axis=1)
     if not np.any(lengths > 0):
@@ -252,8 +215,7 @@ def diffuse_intensity(frame: RenderFrame) -> np.ndarray:
 
     direction = np.asarray(render_frames.LIGHT, dtype=np.float64)
     direction = direction / np.linalg.norm(direction)
-    # abs, like render_frames.shade: reconstructed meshes are not consistently
-    # wound, and a back-facing triangle should not read as zero error.
+    # Shade both sides because reconstructed triangle winding can vary.
     intensity = np.abs(normals @ direction)
     return np.where(lengths > 0, intensity, 1.0)
 
@@ -266,9 +228,8 @@ def error_vertex_colors(
 ) -> np.ndarray:
     """RGBA per vertex, colouring one side of a pair by its distance.
 
-    `shading` is how far the fixed light is allowed to modulate the result, 0 to
-    1. It defaults low because lightness is already carrying the magnitude: at 1
-    a dark patch is ambiguous between deep shadow and large error.
+    `shading` controls the light contribution, from 0 to 1. A low default keeps
+    shadows from obscuring the error colours.
     """
     distances = frame.distances_for(which)
     render_frame = frame.frame_for(which)

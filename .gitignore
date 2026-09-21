@@ -17,6 +17,7 @@ venv/
 env/
 
 # Editor / OS
+.idea/
 .DS_Store
 *.swp
 *.swo
@@ -34,6 +35,7 @@ htmlcov/
 *.pid
 
 # Renders and containers written by the example scripts
+/open4d-demo/
 examples/out/
 examples/**/out/
 
@@ -44,8 +46,7 @@ benchmark_app/runs/
 benchmark_app/archives/
 
 # Codec datasets, training runs, and generated reconstructions
-# Existing tracked paper fixtures remain tracked; these rules prevent new local
-# runs from silently expanding the source repository.
+# Existing tracked fixtures are unaffected.
 4d_files/
 open4d/codecs/*/datasets/
 open4d/codecs/*/outputs/
@@ -56,23 +57,16 @@ open4d/codecs/*/data/bench_*/
 open4d/codecs/tvmc/arap-volume-tracking/data/*/
 open4d/codecs/tsmc/arap-volume-tracking/data/*/
 
-# Reconstruction datasets, training runs, and generated representations. Same
-# reasoning as the codec rules above: the Gaussian-splatting methods write tens of
-# gigabytes per scene beside their own code, and none of it belongs in git.
+# Reconstruction datasets and outputs
 open4d/reconstruction/*/data/
 open4d/reconstruction/*/datasets/
 open4d/reconstruction/*/output/
 open4d/reconstruction/*/outputs/
 open4d/reconstruction/*/logs/
 open4d/reconstruction/*/checkpoints/
-# Nothing here can cover gs_tools/upstream/*: those are submodules, and a parent
-# .gitignore does not reach inside one. Fetched weights and build products land
-# there and are governed by each upstream's own ignore rules, which is also why
-# `git status` reports a patched checkout as modified content.
+# Submodules use their own ignore rules.
 
-# Voxel-grid and point caches the ARAP volume tracker writes beside its input
-# meshes on every run, which would otherwise show up as untracked additions
-# inside a tracked dataset directory. Fixtures already committed are unaffected.
+# ARAP volume tracker caches
 open4d/codecs/*/data/*/meshes/*vg_*.bin
 open4d/codecs/*/data/*/meshes/*pc_*.bin
 
@@ -82,8 +76,7 @@ open4d/codecs/*/data/*/meshes/*pc_*.bin
 *.pt
 *.pth
 *.safetensors
-# Shipped by 3DGStream, not generated: the pre-warmed neural transformation
-# cache its flame_steak config loads. Without it that scene cannot be trained.
+# 3DGStream's flame_steak scene requires these shipped weights.
 !open4d/reconstruction/3dgstream/ntc/*.pth
 
 # Basketball comparison app generated render assets (frames/videos/heatmaps)
@@ -93,12 +86,3 @@ basketball_comparison_app/outputs/
 # QNDF-INT8 local setup symlinks (point into the sibling QNDF codec on this host)
 open4d/codecs/qndf_int8/experiments
 open4d/codecs/qndf_int8/objs_original
-
-# Generated packaging metadata
-*.egg-info/
-
-# Local artifact trees: a dead virtualenv and two vendored checkouts that
-# `git add -A` swept into a commit once.
-open4d/codecs/cags/
-open4d/codecs/tvmc/.venv*/
-open4d/reconstruction/3dgstream/submodules/

@@ -20,13 +20,17 @@ def test_folder_loader_rejects_an_explicit_zero_fps(tmp_path):
         frame_sources.open_sequence(tmp_path, fps=0)
 
 
-def test_example_helpers_treat_codec_artifacts_as_whole_sequences(tmp_path):
+def test_example_helpers_treat_codec_artifacts_as_whole_sequences(tmp_path, monkeypatch):
+    from open4d.codec import _api
+    from open4d.codec._npz import NumPyZipCodec
+
+    monkeypatch.setitem(_api._CODECS, "fixture", NumPyZipCodec())
     mesh = TriangleMesh(
         [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]
     )
     artifact = open4d.save(
         Sequence(MemoryFrameProvider([Frame(0, 0.0, mesh)])),
-        tmp_path / "capture.o4d",
+        tmp_path / "capture.o4d", codec="fixture",
     )
 
     assert frame_sources.source_kind(artifact) == "sequence-file"
@@ -66,3 +70,31 @@ def test_raw_vmesh_fps_is_forwarded_to_the_public_loader(tmp_path, monkeypatch):
     frame_sources.open_sequence(bitstream, fps=24)
 
     assert received == {"path": bitstream, "fps": 24}
+
+
+def test_native_directory_uses_artifact_timing(tmp_path, monkeypatch):
+    source = tmp_path / "capture.tvmc"
+    source.mkdir()
+    received = {}
+    monkeypatch.setattr(frame_sources, "_open_sequence",
+                        lambda path, **options: received.update(path=path, **options))
+    assert frame_sources.source_kind(source) == "sequence-file"
+    frame_sources.open_sequence(source, fps=24)
+    assert received == {"path": source, "fps": None}
+
+
+def test_viewer_example_supplies_complete_options(tmp_path, monkeypatch):
+    import sys
+    import visualize_sequence as example
+    from open4d.visualization import _qt
+
+    (tmp_path / "frame.obj").write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+    seen = []
+
+    def play(frames, options):
+        seen.append((options.title, options.x, options.y, options.fps))
+
+    monkeypatch.setattr(_qt, "play", play)
+    monkeypatch.setattr(sys, "argv", ["visualize_sequence.py", str(tmp_path), "--stride", "3"])
+    example.main()
+    assert seen == [("Open4D", None, None, 10)]

@@ -225,6 +225,7 @@ def prepare_output_and_logger(args):
 
 def training_report(tb_writer, iteration, Ll1, Lds, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     last_test_psnr=0.0
+    last_test_image = None
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/ds_loss', Lds.item(), iteration)
@@ -275,6 +276,8 @@ def training_report(tb_writer, iteration, Ll1, Lds, loss, l1_loss, elapsed, test
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
         
+        if last_test_image is None:
+            return None
         return {'last_test_psnr':last_test_psnr.cpu().numpy()
                 , 'last_test_image':last_test_image.cpu()
                 , 'last_points_num':scene.gaussians.get_xyz.shape[0]
@@ -317,7 +320,10 @@ def train_frames(lp, op, pp, args):
     video_path=args.video_path
     output_path=args.output_path
     model_path=args.model_path
-    load_iteration = args.load_iteration
+    # A missing value (including older JSON configurations) means the latest
+    # saved model, never reinitialization from each frame's input point cloud.
+    load_iteration = -1 if args.load_iteration is None else args.load_iteration
+    args.load_iteration = load_iteration
     sub_paths = os.listdir(video_path)
     pattern = re.compile(r'frame(\d+)')
     frames = sorted(
@@ -349,7 +355,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--frame_start', type=int, default=1)
     parser.add_argument('--frame_end', type=int, default=150)
-    parser.add_argument('--load_iteration', type=int, default=None)
+    parser.add_argument('--load_iteration', type=int, default=-1)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 50, 100])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -22,11 +23,208 @@ from open4d.io import (
 pytestmark = pytest.mark.cpu
 
 
+@pytest.mark.parametrize("demo", [False, True])
+def test_empty_directory_created_at_publication_is_preserved(tmp_path, monkeypatch, demo):
+    from open4d.demo import mesh_sequence, write_demo
+    from open4d.io import _api
+
+    destination = tmp_path / "sequence"
+    write_frame = _api._write_frame
+    exists = Path.exists
+    ready = False
+    competing_inode = None
+
+    def finish_frame(*args, **kwargs):
+        nonlocal ready
+        result = write_frame(*args, **kwargs)
+        ready = True
+        return result
+
+    def create_after_check(path):
+        nonlocal competing_inode
+        found = exists(path)
+        if path == destination and ready and not found:
+            path.mkdir()
+            competing_inode = path.stat().st_ino
+        return found
+
+    monkeypatch.setattr(_api, "_write_frame", finish_frame)
+    monkeypatch.setattr(Path, "exists", create_after_check)
+    with pytest.raises(FileExistsError):
+        if demo:
+            write_demo(destination, side=2, frames=1)
+        else:
+            write_sequence(mesh_sequence(side=2, frames=1), destination)
+    assert competing_inode is not None
+    assert destination.stat().st_ino == competing_inode
+    assert list(destination.iterdir()) == []
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_directory_overwrite_rolls_back_after_publication_failure(tmp_path, monkeypatch):
+    from open4d.demo import mesh_sequence
+
+    destination = tmp_path / "sequence"
+    destination.mkdir()
+    (destination / "keep.txt").write_text("old data")
+    original = Path.replace
+
+    def fail_final_rename(source, target):
+        if Path(target) == destination:
+            raise OSError("publication failed")
+        return original(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_final_rename)
+    with pytest.raises(OSError, match="publication failed"):
+        write_sequence(mesh_sequence(side=2, frames=1), destination, overwrite=True)
+    assert (destination / "keep.txt").read_text() == "old data"
+
+
+@pytest.mark.parametrize("concurrent_content", [False, True])
+def test_failed_directory_publication_cleans_only_empty_reservation(
+    tmp_path, monkeypatch, concurrent_content,
+):
+    from open4d.demo import mesh_sequence
+
+    destination = tmp_path / "sequence"
+    rename = Path.rename
+
+    def fail_final_rename(source, target):
+        if Path(target) == destination:
+            if concurrent_content:
+                destination.mkdir(exist_ok=True)
+                (destination / "keep.txt").write_text("other writer")
+            raise OSError("publication failed")
+        return rename(source, target)
+
+    monkeypatch.setattr(Path, "rename", fail_final_rename)
+    with pytest.raises(OSError, match="publication failed"):
+        write_sequence(mesh_sequence(side=2, frames=1), destination)
+    if concurrent_content:
+        assert (destination / "keep.txt").read_text() == "other writer"
+        assert list(tmp_path.iterdir()) == [destination]
+    else:
+        assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("file_output", [False, True])
+def test_output_created_during_export_is_not_overwritten(tmp_path, monkeypatch, file_output):
+    from open4d.demo import mesh_sequence
+    from open4d.io import _api
+
+    destination = tmp_path / ("sequence.ply" if file_output else "sequence")
+    original = _api._write_frame
+
+    def create_competing_output(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if file_output:
+            destination.write_bytes(b"other writer")
+        else:
+            destination.mkdir()
+            (destination / "keep.txt").write_text("other writer")
+        return result
+
+    monkeypatch.setattr(_api, "_write_frame", create_competing_output)
+    with pytest.raises(FileExistsError):
+        write_sequence(mesh_sequence(side=2, frames=1), destination, allow_lossy=file_output)
+    if file_output:
+        assert destination.read_bytes() == b"other writer"
+    else:
+        assert (destination / "keep.txt").read_text() == "other writer"
+
+
+def test_obj_directory_preserves_float32_positions(tmp_path):
+    positions = np.array([[1.2345678, -0.12345678, 3.402823e20]], dtype=np.float32)
+    mesh = TriangleMesh(positions, np.empty((0, 3), dtype=np.uint32))
+    sequence = Sequence(MemoryFrameProvider([Frame(0, 0, mesh)]))
+
+    output = write_sequence(sequence, tmp_path / "obj", format="obj")
+
+    with open_sequence(output) as decoded:
+        np.testing.assert_array_equal(decoded[0].geometry.positions, positions)
+
+
+def test_obj_writer_accepts_array_like_inputs(tmp_path):
+    from open4d.io import _mesh
+
+    path = _mesh.write_obj(tmp_path / "lists.obj", [[0., 0, 0], [1., 0, 0], [0., 1, 0]], [[0, 1, 2]])
+    np.testing.assert_array_equal(open_sequence(path)[0].geometry.triangles, [[0, 1, 2]])
+
+
+def test_ply_directory_preserves_frames_with_no_surface(tmp_path):
+    empty = TriangleMesh(np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint32))
+    visible = TriangleMesh(np.ones((1, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint32))
+    sequence = Sequence(MemoryFrameProvider([Frame(0, 0, empty), Frame(1, 0.1, visible)]))
+
+    output = write_sequence(sequence, tmp_path / "ply", format="ply")
+
+    with open_sequence(output) as decoded:
+        assert decoded.timestamps == (0, 0.1)
+        assert decoded[0].geometry.positions.shape == (0, 3)
+        np.testing.assert_array_equal(decoded[1].geometry.positions, visible.positions)
+
+
+def test_ascii_ply_accepts_explicit_zero_vertex_count(tmp_path):
+    path = tmp_path / "empty.ply"
+    path.write_text("ply\nformat ascii 1.0\nelement vertex 0\nproperty float x\n"
+                    "property float y\nproperty float z\nend_header\n", encoding="ascii")
+
+    with open_sequence(path) as decoded:
+        assert decoded[0].geometry.positions.shape == (0, 3)
+
+
+@pytest.mark.parametrize("count,match", [(3, "truncated"), (-1, "negative")])
+def test_ply_missing_vertex_bytes_are_not_an_empty_frame(tmp_path, count, match):
+    path = tmp_path / "broken.ply"
+    path.write_bytes(f"ply\nformat binary_little_endian 1.0\nelement vertex {count}\n"
+                     "property float x\nproperty float y\nproperty float z\nend_header\n".encode())
+
+    with pytest.raises(DecodeError, match=match):
+        open_sequence(path)[0]
+
+
 def write_obj(path, x=0.0):
     path.write_text(
         f"v {x} 0 0\nv {x + 1} 0 0\nv {x} 1 0\nf 1 2 3\n",
         encoding="utf-8",
     )
+
+
+def test_obj_handles_indentation_tabs_comments_and_relative_indices(tmp_path):
+    path = tmp_path / "mesh.obj"
+    path.write_text("  v\t0 0 0\nv 1 0 0\nv 0 1 0\n f\t-3 -2 -1 # triangle\n")
+    mesh = open_sequence(path)[0].geometry
+    np.testing.assert_array_equal(mesh.triangles, [[0, 1, 2]])
+
+
+@pytest.mark.parametrize("face", ["0 1 2", "-3 1 2", "1 2", "1 2 4"])
+def test_obj_rejects_invalid_indices_even_if_more_vertices_follow(tmp_path, face):
+    path = tmp_path / "broken.obj"
+    path.write_text(f"v 0 0 0\nv 1 0 0\nf {face}\nv 0 1 0\n")
+    with pytest.raises(DecodeError):
+        open_sequence(path)[0]
+
+
+def test_ply_face_indices_are_not_confused_with_texture_coordinate_lists(tmp_path):
+    path = tmp_path / "textured.ply"
+    path.write_text("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\n"
+                    "property float y\nproperty float z\nelement face 1\n"
+                    "property list uchar float texcoord\nproperty list uchar int vertex_indices\n"
+                    "end_header\n0 0 0\n1 0 0\n0 1 0\n6 0 0 1 0 0 1 3 0 1 2\n")
+    np.testing.assert_array_equal(open_sequence(path)[0].geometry.triangles, [[0, 1, 2]])
+
+
+@pytest.mark.parametrize("declaration,match", [
+    ("format gibberish 1.0", "format"),
+    ("format ascii 1.1", "format"),
+    ("format ascii 1.0\nelement face 0\nproperty list float int vertex_indices", "integer"),
+])
+def test_invalid_ply_header_is_rejected(tmp_path, declaration, match):
+    path = tmp_path / "invalid.ply"
+    path.write_text(f"ply\n{declaration}\nelement vertex 0\nproperty float x\n"
+                    "property float y\nproperty float z\nend_header\n")
+    with pytest.raises(DecodeError, match=match):
+        open_sequence(path)[0]
 
 
 def test_single_file_is_a_lazy_one_frame_sequence(tmp_path, monkeypatch):

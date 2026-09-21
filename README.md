@@ -1,157 +1,218 @@
-# Open4D: tools for 4D spatial data
+# Open4D
 
-<h4>
-    <a href="#quick-start">Quick start</a> |
-    <a href="docs/requirements.md">Install</a> |
-    <a href="examples/visualization/README.md">Viewer &amp; comparison</a> |
-    <a href="docs/api.md">Python API</a> |
-    <a href="docs/components.md">Components</a> |
-    <a href="CONTRIBUTING.md">Contribute</a> |
-    <a href="https://github.com/open4dfoundation/Open4D/issues">Issues</a>
-</h4>
+A Python library for research codecs, reconstruction and streaming of 4D geometry.
+Mesh sequences contain one 3D mesh per timestamp. Gaussian splats have their own
+representation and research backends.
 
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?logo=python&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+## Install
 
-Open4D aims to provide reusable, high-performance libraries and tools for
-modern spatial representations, including point clouds, triangle meshes,
-Gaussian splats, and future spatial data formats. Our goal is to create a
-common open-source infrastructure that accelerates research and development
-across applications in XR, robotics, physical AI, autonomous systems, digital
-twins, graphics, vision, and spatial computing.
-
-<p align="center">
-  <img src="docs/assets/basketball_comparison_demo.gif" width="100%" alt="A reference mesh beside decoded results from N4MC, QNDF, TVMC, and TSMC, coloured by distance from the reference">
-</p>
-
-<p align="center"><em>A reference sequence beside results from four research codecs. Colour shows distance from the reference.</em></p>
-
-## Core features
-
-- A small Python model for frames and finite sequences, over geometry that
-  may be a triangle mesh, a point cloud, or a Gaussian cloud.
-- One-file OpenUSD and Open4D codec containers, plus `.obj`/`.ply` import paths.
-- A viewer for inspecting, playing, scrubbing, and exporting mesh sequences.
-  It runs on macOS, Linux, and Windows and does not need a GPU.
-- A comparison tool that measures a decoded sequence against its reference and
-  displays both under one camera.
-- Browser clients for adaptive volumetric streaming, with five systems side by
-  side under one bandwidth condition.
-- Research codecs for mesh compression, Gaussian-splatting reconstruction and
-  streaming, and Open3D and Unity integrations. These larger components still
-  have their own setup and dependencies.
-
-## Quick start
-
-The viewer's normal input is one 4D sequence file:
+From this checkout:
 
 ```bash
-git clone https://github.com/open4dfoundation/Open4D.git
-cd Open4D
-python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
-python -m pip install -e '.[player,usd]'
-
-# does it load?
-python examples/visualization/visualize_sequence.py capture.usdc --info
-# play it
-python examples/visualization/visualize_sequence.py capture.usdc
+python -m pip install -e .
 ```
 
-Try it on the 10 basketball frames the TVMC codec vendors, if you have no
-sequence of your own to hand:
+The base package needs NumPy and supports Python 3.10 through 3.13. Install only
+the extras you use:
 
 ```bash
-python examples/visualization/visualize_sequence.py \
-    open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player \
-    --up y --fps 10 --azimuth 180
+python -m pip install -e '.[player]'    # interactive mesh viewer and GIF export
+python -m pip install -e '.[open3d]'    # RGB-D reconstruction
+python -m pip install -e '.[gaussians]' # read Gaussian PLY files
 ```
 
-<p align="center">
-  <img src="docs/assets/viewer_demo.gif" width="55%" alt="The Open4D sequence viewer playing a ten-frame mesh sequence">
-</p>
+Research methods have additional setup below. Their source, native programs
+and model weights are not bundled in the Python wheel.
 
-In Python:
+## Try a sequence
+
+No dataset is needed for this example:
 
 ```python
 import open4d
+from open4d.demo import mesh_sequence
 
-with open4d.load("capture.usdc") as sequence:
-    print(len(sequence), sequence.duration, sequence.fps)
-    open4d.visualize(sequence)
+sequence = mesh_sequence(frames=30)
+open4d.visualize(sequence)
 ```
 
-> **Project status:** Open4D is early research software. The core data model,
-> viewer, comparison tool, and individual research components work today, but
-> the shared API and complete cross-codec workflows are still being built.
+For your own OBJ or PLY frames, replace the second line with:
 
-> **Release safety:** redistribution is currently blocked while the
-> third-party provenance and license audit is incomplete. See
-> [`THIRD_PARTY.md`](THIRD_PARTY.md).
-
-## Documentation
-
-| | |
-|---|---|
-| [Requirements and installation](docs/requirements.md) | The baseline, the one codec dependency set, GPU extras, and what each module adds |
-| [Viewer and comparison guide](examples/visualization/README.md) | Supported inputs, flags, controls, reading the error numbers, and OpenUSD packing |
-| [Python API](docs/api.md) | Loading, saving, the codec registry, and device selection |
-| [Components](docs/components.md) | Every codec, reconstruction module, and integration, with links to their own READMEs |
-| [Artifacts policy](docs/artifacts.md) | What not to commit, and what a published result must record |
-
-## Adaptive streaming
-
-[`open4d/webclients`](open4d/webclients) plays volumetric sequences in a
-browser and compares delivery methods against each other. Within this
-adaptive streaming platform, pick one from the list, or replay a bandwidth
-trace and watch them respond to it.
-
-<p align="center">
-  <img src="docs/assets/streaming-demo.png" width="100%" alt="The system chooser listing five streaming methods with per-object selection, beside a 3D Gaussian splat frame decoded and rendered in the browser">
-</p>
-
-The clients share one platform-free core, so the browser and desktop clients
-run the same segment loop and the same adaptation logic. See
-[`open4d/webclients/README.md`](open4d/webclients/README.md) for a quick start and
-for how to add your own method.
-
-## Repository layout
-
-```text
-open4d/
-├── core/            shared temporal geometry and sequence abstractions
-├── io/              public mesh-file and manifested-directory I/O
-├── codec/           shared sequence codec API and adapters
-├── visualization/   public viewer and GIF renderer
-├── torch_ops/       optional Torch geometry helpers
-├── codecs/          draco, faster_vdmc, klt, n4mc, qndf, qndf_int8, tsmc, tvmc, vdmc
-├── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools
-├── streamer/        serving and playing a reconstruction, whatever it is made of
-└── webclients/      browser clients and the adaptive-streaming logic they share
-integrations/        open3d, unity
-examples/            runnable sequence loading, visualization, and comparison
-scripts/             repository-level setup utilities
-docs/                requirements, API, components, and repository policies
+```python
+sequence = open4d.load("my_frames", fps=30)
 ```
 
-<p align="center">
-  <img src="docs/assets/open4d-ecosystem.png" width="90%" alt="How the Open4D repository's data, codec, evaluation, and playback components fit together">
-</p>
+Frames are sorted by filename. Use zero-padded names such as `frame_0001.obj`.
+Each frame has `frame_index`, `timestamp` in seconds, and `geometry`.
+Mesh geometry contains `positions`, `triangles`, and optional colors, normals,
+texture coordinates and custom attributes.
 
-## Contributing
+## Encode and decode
 
-Contributions are welcome, especially around shared data abstractions, common
-metrics, codec adapters, documentation, and performance. Keep codec
-dependencies isolated and document any new binary fixture or external artifact
-alongside the code that consumes it. Please contact the maintainers before
-adding a large dataset, checkpoint, or third-party source tree. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Choose a research codec explicitly. For example, after setting up V-DMC:
 
-## License and citation
+```python
+encoded = open4d.encode(sequence, "wave.v4d", codec="vdmc")
+decoded = open4d.decode(encoded)
+open4d.visualize(decoded)
+decoded.close()
+```
 
-Open4D is distributed under the [MIT License](LICENSE) and is intended to be
-useful in academic, educational, and commercial projects. Bundled third-party
-components and submodules remain subject to their respective license terms.
+`encode` also accepts an input folder. `decode` reads the codec from its
+artifact. Close a decoded mesh sequence when finished, or use `with`:
 
-If Open4D contributes to published research, please acknowledge the project
-using the repository's [citation metadata](CITATION.cff), and cite the original
-papers for any individual codecs, datasets, or algorithms used in your work.
+```python
+with open4d.decode("wave.v4d") as decoded:
+    print(len(decoded), "frames")
+```
+
+The [notebook](examples/open4d_sequence_codec.ipynb) walks through these calls,
+reconstruction and streaming in separate short cells.
+
+| Codec | Input | Output | Backend setup |
+| --- | --- | --- | --- |
+| `vdmc` | Mesh sequence | `.v4d` | Build the V-DMC submodule and configure its encoder and decoder |
+| `faster_vdmc` | Mesh sequence | `.v4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
+| `tvmc` | Mesh sequence | `.tvmc` directory | [TVMC setup](open4d/codecs/tvmc/README.md) |
+| `tsmc` | Mesh sequence | `.tsmc` directory | [TSMC setup](open4d/codecs/tsmc/README.md) |
+| `klt` | Mesh sequence converted to TSDF volumes | `.k4d` | Research source and `.[klt]` |
+| `n4mc` | Mesh sequence converted to TSDF volumes | `.n4d` | Research source and `.[n4mc]` |
+| `qndf`, `qndf-int8` | Mesh frames | `.q4d`, `.qi4d` | Research source and `.[qndf]` |
+| `vega` | Gaussian splat frames | `.vega` directory | [Vega CUDA environment](open4d/reconstruction/vega/README.md) |
+
+QNDF-int8 now writes version 2 artifacts. Version 1 artifacts must be encoded again.
+
+KLT, N4MC and QNDF run in Python. TVMC, TSMC, V-DMC and Gaussian methods use
+separate research runtimes. N4MC and QNDF currently process frames independently;
+they remain available as research methods. Mesh codecs currently encode geometry
+only and reject attributes they cannot preserve.
+
+N4MC's automatic device selection uses CPU when the installed Apple Metal/MPS
+runtime lacks `ConvTranspose3D`. An explicit unsupported `device="mps"` request
+raises a diagnostic before training; use `device="cpu"` or `device="auto"`.
+
+`open4d.available_codecs()` lists adapters, including those whose optional
+backend is not installed. Draco and generic array compressors remain in the
+research/benchmark code, outside the public codec choices.
+
+For an installed wheel, point KLT, N4MC and QNDF at a source checkout:
+
+```bash
+export OPEN4D_RESEARCH_ROOT=/path/to/Open4D
+```
+
+V-DMC needs the paths to its built programs:
+
+```bash
+export OPEN4D_VDMC_ENCODER=/path/to/vmeshEncoder
+export OPEN4D_VDMC_DECODER=/path/to/vmeshDecoder
+```
+
+Use `OPEN4D_FASTER_VDMC_ENCODER` and `OPEN4D_FASTER_VDMC_DECODER` for the faster
+fork. Encoder and decoder configurations can be supplied with
+`encoder_config=` and `decoder_config=`. TVMC and TSMC accept `backend=` for
+the method's source directory and `python=` for its environment. Codec options
+are ordinary keyword arguments to `encode` or `decode`.
+
+## Reconstruct from depth images
+
+```python
+import numpy as np
+import open4d
+
+# A small synthetic camera looking at a flat surface one metre away.
+depth = np.full((3, 48, 64), 1000, dtype=np.uint16)
+sequence = open4d.reconstruct(depth, intrinsics=(60, 60, 31.5, 23.5))
+open4d.visualize(sequence)
+```
+
+For real captures, `depth` has shape `(frames, height, width)` and is in
+millimetres by default. Zero means missing depth. Pass `color=rgb` for aligned
+RGB images with shape `(frames, height, width, 3)` and dtype `uint8`.
+`intrinsics=(fx, fy, cx, cy)` must come from your camera calibration; the values
+above belong only to the synthetic example. Use `depth_scale=1` for metres.
+
+Moving cameras need `camera_poses=`: camera-to-world 4 by 4 matrices with
+translation in metres. Several cameras can contribute to each frame. Each
+timestamp is reconstructed separately so motion is preserved.
+
+## Stream mesh frames
+
+Run the receiver first in one Python process:
+
+```python
+from open4d import receive
+
+with receive() as frames:
+    for frame in frames:
+        print(frame.frame_index, len(frame.geometry.positions), "vertices")
+```
+
+Then send from another:
+
+```python
+from open4d import stream
+from open4d.demo import mesh_sequence
+
+stream(mesh_sequence(frames=30))
+```
+
+This sends decoded mesh arrays over TCP, at their recorded frame timing. It is
+not a compression method. Both calls default to this computer on port 7000.
+Pass `host=` and `port=` for another address. Remote transport needs a trusted
+network or SSH tunnel; this protocol has no authentication or encryption.
+Use `realtime=False` to transfer a recorded sequence as fast as possible.
+
+The camera capture and native reconstruction programs are in
+[open4d/streaming](open4d/streaming/README.md), formerly `reconstruction/rgbd`.
+
+## Gaussian splats
+
+Read splat frames, then encode them with the local Vega adaptation:
+
+```python
+from open4d import load_gaussians, encode, decode
+
+frames = [load_gaussians("frame_0000.ply"), load_gaussians("frame_0001.ply")]
+encoded = encode(frames, "capture.vega", codec="vega")
+decoded = decode(encoded)
+```
+
+A `GaussianSplats` frame contains `positions` `(N, 3)`, positive `scales`
+`(N, 3)`, normalized `rotations` `(N, 4)` in wxyz order, `opacities` `(N,)`
+between 0 and 1, and `spherical_harmonics` `(N, K, 3)`. The PLY reader converts
+stored log scales and opacity logits to these values.
+
+Vega uses a learned color model. Its decoded `NeuralGaussianFrame` retains
+that model in `appearance`; call `frame.appearance.colors(directions)` to get
+RGB values for camera-to-splat directions. The current adapter supports one
+native group per run and rejects output requiring several color models.
+It does not replace the learned colors with invented SH coefficients.
+
+QUEEN and 3DGStream reconstruct splats from calibrated camera images. After
+[setting up their runtime](open4d/reconstruction/gs_tools/README.md):
+
+```python
+run = open4d.reconstruct("my_scene", "queen_output", method="queen")
+video = run.render()
+```
+
+`method="3dgstream"` selects 3DGStream. Each method requires its own input
+layout and CUDA environment. `runtime=` selects the `gs_tools` directory and
+`python=` its Python interpreter. Vega uses its own source directory through
+`runtime=` or `OPEN4D_VEGA_ROOT`. `run.load_frame(0)` reads a saved dense PLY;
+it does not decode a compressed temporal residual. 3DGStream rendering still
+requires its native viewer. The Qt viewer and TCP stream currently take meshes.
+
+## Other tools
+
+- `open4d demo`, `open4d inspect` and `open4d view` provide command-line access.
+- `open4d.io.write_sequence` exports mesh folders; `open4d.save` writes OpenUSD
+  or explicitly selected codec artifacts. There is no default `.o4d` encoder.
+- `open4d.compare_sequences` measures mesh error with the `.[metrics]` extra.
+- [Viewer examples](examples/visualization/README.md) include GIF export and comparisons.
+- [Contributor setup and tests](CONTRIBUTING.md) cover optional dependencies and packaging.
+
+The general `.o4d` format is separate work. Existing codec-specific formats
+remain in use. Publication is still blocked by the unresolved component rights
+in [THIRD_PARTY.md](THIRD_PARTY.md); preparing the package does not resolve them.

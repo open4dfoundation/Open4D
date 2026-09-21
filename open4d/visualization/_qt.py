@@ -19,8 +19,11 @@ exact size and no chrome; a widget that has never been shown reports its default
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
 import numpy as np
+
+from open4d._files import publish_file
 
 from ._deps import require
 from . import _frames as render_frames
@@ -59,17 +62,22 @@ def check_available(*, gif: bool = False) -> None:
         require("PIL.Image", "player")
 
 
+def _mesh_shader():
+    from copy import copy
+    from pyqtgraph.opengl import shaders
+
+    # Compiled programs belong to one GL context, not every open viewer.
+    shader = copy(shaders.getShaderProgram(None))
+    shader.prog = None
+    return shader
+
+
 class Scene:
     """A GL view holding one sequence, with the frame it shows swappable."""
 
     def __init__(self, frames, args) -> None:
         QtWidgets, _QtCore, gl = _qt()
         from pyqtgraph import Vector
-        from pyqtgraph.opengl import shaders
-
-        # PyQtGraph caches program IDs globally, but they belong to the GL
-        # context destroyed with the previous viewer window.
-        shaders.initShaders()
 
         # Qt refuses to build widgets before an application exists.
         self.application = (
@@ -85,10 +93,10 @@ class Scene:
             tuple(int(255 * channel) for channel in args.background)
         )
 
-        # Framing from the first displayed frame keeps opening lazy. A complete
-        # sequence-wide bounds scan would decode every frame before playback.
+        # Stop at the first nonempty frame rather than decoding the whole sequence.
         first = frames[0]
-        lower, upper = render_frames.bounds([first])
+        framing_frame = next((frame for frame in frames if len(frame.positions)), first)
+        lower, upper = render_frames.bounds([framing_frame])
         center = (lower + upper) / 2.0
         span = float(np.max(upper - lower)) or 1.0
         # pyqtgraph keeps the orbit centre in opts and measures distance in world
@@ -104,6 +112,7 @@ class Scene:
         # frame, so a folder mixing meshes and point clouds still draws.
         self.mesh_item = gl.GLMeshItem(
             meshdata=self._mesh_data(first) if first.is_mesh else gl.MeshData(),
+            shader=_mesh_shader(),
             smooth=False,
             drawFaces=True,
             drawEdges=args.wireframe,
@@ -171,8 +180,8 @@ class Scene:
         raw = image.constBits().asstring(height * image.bytesPerLine())
         # Rows are padded to a stride; crop the padding before reshaping.
         pixels = np.frombuffer(raw, dtype=np.uint8).reshape(
-            height, image.bytesPerLine() // 3, 3
-        )[:, :width]
+            height, image.bytesPerLine()
+        )[:, :width * 3].reshape(height, width, 3)
         picture = image_module.fromarray(pixels.copy())
         target = (self.args.width, self.args.height)
         if picture.size != target:
@@ -207,6 +216,8 @@ def play(frames, args) -> None:
     """Open the window and run until it is closed."""
     QtWidgets, QtCore, _gl = _qt()
     scene = Scene(frames, args)
+    event_loop = QtCore.QEventLoop()
+    errors = []
 
     class Window(QtWidgets.QMainWindow):
         def __init__(self) -> None:
@@ -216,6 +227,7 @@ def play(frames, args) -> None:
             if args.x is not None and args.y is not None:
                 self.move(args.x, args.y)
             self.playing = True
+            self.closed = False
 
             self.play_button = QtWidgets.QPushButton("Pause")
             self.play_button.setFixedWidth(80)
@@ -261,10 +273,20 @@ def play(frames, args) -> None:
             self.timer = QtCore.QTimer(self)
             self.timer.timeout.connect(self.advance)
             self.timer.start(max(int(1000.0 / args.fps), 1))
+            self.prefetch_timer = QtCore.QTimer(self)
+            self.prefetch_timer.setSingleShot(True)
+            self.prefetch_timer.timeout.connect(self.prefetch)
             self.refresh(0)
 
         def refresh(self, index: int) -> None:
-            frame = scene.show_frame(index)
+            if self.closed:
+                return
+            try:
+                frame = scene.show_frame(index)
+            except Exception as error:
+                errors.append(error)
+                self.close()
+                return
             self.readout.setText(f"{scene.index + 1}/{len(frames)}")
             self.metrics.setText(
                 "\n".join(
@@ -276,10 +298,23 @@ def play(frames, args) -> None:
                 self.slider.blockSignals(True)
                 self.slider.setValue(scene.index)
                 self.slider.blockSignals(False)
+            self.prefetch_timer.start(0)
+
+        def prefetch(self) -> None:
             prefetch = getattr(frames, "prefetch", None)
-            if callable(prefetch):
-                target = (scene.index + 1) % len(frames)
-                QtCore.QTimer.singleShot(0, lambda: prefetch(target))
+            if not self.closed and callable(prefetch):
+                try:
+                    prefetch((scene.index + 1) % len(frames))
+                except Exception as error:
+                    errors.append(error)
+                    self.close()
+
+        def closeEvent(self, event) -> None:
+            self.closed = True
+            self.timer.stop()
+            self.prefetch_timer.stop()
+            event_loop.quit()
+            super().closeEvent(event)
 
         def advance(self) -> None:
             if self.playing:
@@ -314,8 +349,42 @@ def play(frames, args) -> None:
     window = Window()
     print(f"\nplaying {len(frames)} frames at {args.fps:g} fps — drag to orbit, "
           "scroll to zoom, space pauses, left/right step, q quits")
-    window.show()
-    scene.application.exec()
+    try:
+        if not window.closed:
+            window.show()
+            event_loop.exec()
+    finally:
+        window.close()
+        scene.view.close()
+    if errors:
+        raise errors[0]
+
+
+def _gif_durations(count: int, fps: float) -> list[int]:
+    if not 1 / 655.35 <= fps <= 100:
+        raise ValueError("GIF frame durations must be between 0.01 and 655.35 seconds")
+    # GIF stores whole centiseconds. Round frame boundaries to avoid clock drift.
+    ticks = np.rint(np.arange(count + 1) * (100.0 / fps)).astype(np.int64)
+    durations = (np.diff(ticks) * 10).tolist()
+    return durations
+
+
+def _save_gif(captured, output: Path, durations: list[int]) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=output.parent, suffix=".gif", delete=False) as file:
+        temporary = Path(file.name)
+    try:
+        captured[0].save(
+            temporary,
+            save_all=True,
+            append_images=captured[1:],
+            duration=durations,
+            loop=0,
+            optimize=True,
+        )
+        publish_file(temporary, output, overwrite=True)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def record(frames, args, output: Path) -> None:
@@ -326,26 +395,19 @@ def record(frames, args, output: Path) -> None:
             f"--save writes an animated .gif; got {output.suffix or 'no suffix'}"
         )
 
+    durations = _gif_durations(len(frames), args.fps)
     scene = Scene(frames, args)
-    # An unshown widget keeps its default 640x480 and renders at that aspect, so
-    # size it explicitly rather than having to show the window.
-    scene.view.resize(args.width, args.height)
-    scene.application.processEvents()
+    try:
+        scene.view.resize(args.width, args.height)
+        scene.application.processEvents()
+        captured = []
+        for index in range(len(frames)):
+            scene.show_frame(index)
+            captured.append(scene.grab(image_module))
+            print(f"\r  rendered {index + 1}/{len(frames)}", end="", flush=True)
+        print()
 
-    captured = []
-    for index in range(len(frames)):
-        scene.show_frame(index)
-        captured.append(scene.grab(image_module))
-        print(f"\r  rendered {index + 1}/{len(frames)}", end="", flush=True)
-    print()
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    captured[0].save(
-        output,
-        save_all=True,
-        append_images=captured[1:],
-        duration=max(int(1000.0 / args.fps), 20),
-        loop=0,
-        optimize=True,
-    )
+        _save_gif(captured, output, durations)
+    finally:
+        scene.view.close()
     print(f"wrote {output} ({output.stat().st_size / 1e6:.2f} MB)")

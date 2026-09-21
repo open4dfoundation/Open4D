@@ -7,6 +7,7 @@ import pytest
 pytestmark = pytest.mark.open3d
 
 from integrations.open3d import frame_to_open3d
+from open4d.core import Frame, TriangleMesh
 
 
 VERTICES = np.array(
@@ -14,6 +15,23 @@ VERTICES = np.array(
     dtype=np.float32,
 )
 TRIANGLES = np.array([[0, 1, 2]], dtype=np.uint32)
+
+
+def test_core_frame_conversion() -> None:
+    frame = Frame(7, 0.25, TriangleMesh(VERTICES, TRIANGLES))
+
+    mesh = frame_to_open3d(frame)
+
+    assert isinstance(mesh, o3d.geometry.TriangleMesh)
+    np.testing.assert_array_equal(np.asarray(mesh.vertices), VERTICES)
+    np.testing.assert_array_equal(np.asarray(mesh.triangles), TRIANGLES)
+
+
+@pytest.mark.parametrize("field", ["positions", "colors", "normals"])
+def test_complex_geometry_is_rejected_instead_of_truncated(field):
+    values = {"positions": np.zeros((1, 3)), field: np.array([[1 + 4j, 0, 0]])}
+    with pytest.raises(TypeError, match="real numbers"):
+        frame_to_open3d(values)
 
 
 def test_triangle_mesh_conversion_with_colors_and_normals() -> None:
