@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import configparser
 import re
 import sys
 from pathlib import Path
@@ -39,6 +40,36 @@ def markdown_files() -> list[Path]:
     return sorted(set(files))
 
 
+def uninitialized_submodules(root: Path) -> list[Path]:
+    """Registered submodule paths that this checkout has not populated.
+
+    `.gitmodules` is parsed here rather than imported from
+    `check_provenance.py`, which already does it: this checker has no
+    dependency beyond the standard library, and that module reaches for
+    `tomli` on interpreters without `tomllib`.
+
+    A link into one of these is not a broken link. CI checks out without
+    submodules, so the target is absent for a reason the document cannot
+    know about, and asserting on it only says the workflow did not clone
+    a tree the repository deliberately does not vendor.
+    """
+    gitmodules = root / ".gitmodules"
+    if not gitmodules.is_file():
+        return []
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string(gitmodules.read_text(encoding="utf-8"))
+    absent = []
+    for section in parser.sections():
+        if not section.startswith("submodule ") or not parser.has_option(
+            section, "path"
+        ):
+            continue
+        path = root / parser.get(section, "path").strip()
+        if not path.is_dir() or not any(path.iterdir()):
+            absent.append(path.resolve())
+    return absent
+
+
 def extract_heading_anchors(text: str) -> set[str]:
     """Extract valid heading anchors from markdown text.
 
@@ -64,6 +95,8 @@ def extract_heading_anchors(text: str) -> set[str]:
 
 def main() -> int:
     errors: list[str] = []
+    unpopulated = uninitialized_submodules(ROOT)
+    skipped = 0
     for document in markdown_files():
         text = document.read_text(encoding="utf-8")
         for match in LINK.finditer(text):
@@ -102,6 +135,12 @@ def main() -> int:
                 )
                 continue
             if not resolved.exists():
+                if any(
+                    resolved == module or module in resolved.parents
+                    for module in unpopulated
+                ):
+                    skipped += 1
+                    continue
                 errors.append(
                     f"{document.relative_to(ROOT)}:{line}: missing local target: {raw}"
                 )
@@ -122,7 +161,12 @@ def main() -> int:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    print(f"Local Markdown links verified in {len(markdown_files())} files.")
+    note = (
+        f" ({skipped} skipped in {len(unpopulated)} uninitialized submodules)"
+        if skipped
+        else ""
+    )
+    print(f"Local Markdown links verified in {len(markdown_files())} files{note}.")
     return 0
 
 
