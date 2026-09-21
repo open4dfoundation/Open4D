@@ -1,8 +1,10 @@
-# streaming
+# webclients
 
 Browser clients for volumetric adaptive streaming. A sibling of
 [`../reconstruction`](../reconstruction): that holds the methods, this holds the
-clients that deliver and play them. Five systems on one page, side by side:
+clients that deliver and play them. Named for what it is rather than for what
+it does, so that `streamer` -- the Python module in `../reconstruction` that
+serves bundles -- and this are not two things both called streaming. Five systems on one page, side by side:
 
 | system | representation |
 |---|---|
