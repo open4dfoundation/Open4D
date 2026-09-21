@@ -101,6 +101,7 @@ from . import (
     playback,
     representations,
     server,
+    session,
     transfer,
 )
 from .bundle import Clip, Variant
@@ -111,6 +112,7 @@ from .codecs import CodecSpec
 from .representations import RepresentationSpec
 from .link import Link, Trace
 from .server import DEFAULT_PORT, serve
+from .session import Bundle, Rung
 from .transfer import fetch
 
 #: Imported on first access rather than eagerly. Both are ``python -m`` entry
@@ -136,12 +138,14 @@ def __dir__():
 
 
 __all__ = [
+    "Bundle",
     "Clip",
     "CodecSpec",
     "DEFAULT_PORT",
     "Link",
     "Monitor",
     "RepresentationSpec",
+    "Rung",
     "Trace",
     "Transfer",
     "Variant",
@@ -162,6 +166,7 @@ __all__ = [
     "representations",
     "server",
     "serve",
+    "session",
     "transfer",
     "viewer_path",
 ]

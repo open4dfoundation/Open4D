@@ -14,10 +14,53 @@ streamer/
   bundle.py            the view.json contract, shared by both sides
   monitor.py           what actually went over the wire
   export.py            any open4d.Sequence as a bundle
+  session.py           several clips, a rung ladder, one index
   live.py              clips rendered as they are watched
   server/              sending
   client/              playback, the scheduler, and the decode worker
 ```
+
+## Building one
+
+`export.from_sequence` writes one clip and hands it back; `bundle.write` turns
+a list of clips into the `view.json` that makes them playable. `session.Bundle`
+holds the list so the two cannot come apart:
+
+```python
+import open4d
+from streamer import Bundle, serve
+
+with open4d.load("capture.usdc") as sequence:
+    with Bundle("out/", title="Capture") as clips:
+        clips.add(sequence, name="capture", rungs=["draco", "draco@11"])
+
+serve("out/")
+```
+
+The index is written when the block ends, and **not** written if it raises:
+frames with no manifest is a half-export you can finish, a manifest listing
+frames that were never written is one a client reports as missing frames.
+
+Rungs are how a clip becomes adaptable. The first is the rendition a reader
+that knows nothing about variants plays; the rest become `bundle.Variant`
+entries with their sizes measured off disk, and their `quality` left empty
+because this knows what a rung cost and `metrics` is what says what it was
+worth. On the ten-frame basketball sequence the three rungs measure 7.6 MB
+(`ply`), 591 kB (`draco`, 14-bit) and 471 kB (`draco@11`) — the middle one
+12.9x smaller than interchange, matching what `export.DRACO_FORMAT` records,
+and the bottom one a further 20% for eight times the position error.
+
+Open4D's public API wraps the whole of the above in one verb, for the common
+case of one sequence:
+
+```python
+open4d.stream("capture.usdc")
+```
+
+It imports this package on the call rather than at load, because the
+dependency runs one way -- this imports `open4d`, and `open4d` must not import
+it back. Without this package installed, `open4d.stream` raises
+`StreamerDependencyError` saying how to install it.
 
 Decoding happens in a worker (`client/worker.js`), not on the page's thread.
 Parsing is the one expensive synchronous step in playback — 16.5 ms for a 3DGS
