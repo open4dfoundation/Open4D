@@ -4,13 +4,13 @@ Browser clients for volumetric adaptive streaming. A sibling of
 [`../reconstruction`](../reconstruction): that holds the methods, this holds the
 clients that deliver and play them. Five systems on one page, side by side:
 
-| system | representation | adapts? |
-|---|---|---|
-| Ours | textured meshes, viewpoint-aware ladder | yes, **in the browser** |
-| ViVo | point clouds, 4×4×4 tiles | server-side, per tile |
-| NAVA | point clouds | server-side, per object per segment |
-| Vega | 3D Gaussian splats | no — fixed quality |
-| NeVo | ReRF neural volumetric | no — pre-rendered |
+| system | representation |
+|---|---|
+| Ours | textured meshes, viewpoint-aware ladder |
+| ViVo | point clouds, 4×4×4 tiles |
+| NAVA | point clouds |
+| Vega | 3D Gaussian splats |
+| NeVo | ReRF neural volumetric |
 
 ## Quick start
 

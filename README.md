@@ -101,11 +101,7 @@ with open4d.load("capture.usdc") as sequence:
 ## Adaptive streaming
 
 [`open4d/streaming`](open4d/streaming) plays volumetric sequences in a browser
-and compares delivery methods against each other. Five systems — an adaptive
-textured-mesh ladder, ViVo and NAVA point clouds, Vega splats, NeVo neural
-volumetric — pick one from the list, or replay a bandwidth trace and watch them
-respond to it. Three of the five adapt; the list says which, because on a fast
-link a fixed-quality player and an adaptive one look the same.
+and compares delivery methods against each other. Within this adaptive streaming platform, pick one from the list, or replay a bandwidth trace and watch them respond to it. 
 
 <p align="center">
   <img src="docs/assets/streaming-demo.png" width="100%" alt="The system chooser listing five streaming methods with per-object selection, beside a 3D Gaussian splat frame decoded and rendered in the browser">
