@@ -128,7 +128,7 @@ def reconstruct(depth, color=None, *, intrinsics, camera_poses=None, fps=30.0,
             or not np.allclose(np.linalg.det(rotation), 1, atol=1e-5)):
         raise ValueError("camera_poses must be rigid camera-to-world transforms")
     try:
-        importlib.import_module("open3d")
+        o3d = importlib.import_module("open3d")
     except ModuleNotFoundError as error:
         if error.name != "open3d":
             raise
@@ -136,5 +136,12 @@ def reconstruct(depth, color=None, *, intrinsics, camera_poses=None, fps=30.0,
             "RGB-D reconstruction needs Open3D. Install open4d[open3d].",
             name="open3d",
         ) from error
+    if o3d.__version__.split(".")[:2] != ["0", "19"]:
+        raise RuntimeError(
+            f"RGB-D reconstruction requires Open3D 0.19.x; found {o3d.__version__}. "
+            "Open3D 0.20's legacy TSDF integration rescales floating-point depth "
+            "and can silently return empty meshes. "
+            "Install a supported runtime with: python -m pip install 'open3d>=0.19,<0.20'"
+        )
     return Sequence(_RGBDProvider(depth, color, intrinsics, camera_poses, fps,
                                  depth_scale, depth_max, voxel_size, truncation))
