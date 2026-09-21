@@ -61,18 +61,29 @@ From the repo root, in an environment with torch+CUDA, tinycudann,
 `open4d-gs` conda env already present on the GPU machine):
 
 ```bash
-pip install -e .   # registers baselines.Vega.vega as an importable package
+pip install -e .
+export PYTHONPATH="$PWD/open4d/reconstruction/vega${PYTHONPATH:+:$PYTHONPATH}"
+
+# Rebuild after updating native source. Old binaries can still have the
+# incorrect four-unit near cutoff and render calibrated ORBIT views black.
+python -m pip install --no-build-isolation --no-deps --force-reinstall \
+  open4d/reconstruction/gs_tools/rasterizers/diff-gaussian-rasterization
 
 # Offline: encode one or more ORBIT objects into a Vega bitstream
-python -m baselines.Vega.orbitvega.prepare \
-  --output-dir results/vega-run/prepared \
+python -m orbitvega.prepare \
+  --dataset-root /path/to/ORBIT_datasets_gaussian \
+  --output-dir ../vega-run/prepared \
   --objects basketball
 
 # Live: encode + stream to a browser on another machine
-python -m baselines.Vega.orbitvega.live_demo \
+python -m orbitvega.live_demo \
+  --dataset-root /path/to/ORBIT_datasets_gaussian \
   --scene basketball --n-frames 30 --mjpeg-port 8767
 # then open http://<this-machine-ip>:8767/ in a browser
 ```
+
+For the corpus-dependent tests, set `OPEN4D_ORBIT_GAUSSIAN_ROOT` to the
+accessible dataset root and run `pytest open4d/reconstruction/vega/vega_tests`.
 
 ## Input corpus
 

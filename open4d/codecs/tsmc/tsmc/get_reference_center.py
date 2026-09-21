@@ -60,28 +60,12 @@ if random_state is None:
     random_state = np.random.randint(0, 100000)
 print(f"Feed Distance Matrix to multi-dimensional scaling to get reference centers, random_state = {random_state}")
 
-reference_centers = np.loadtxt(os.path.join(centers_dir, selected_xyz_files[4]))
-
-center_datas = []
-for xyz_file in xyz_files:
-    center_filename = os.path.join(centers_dir, xyz_file)
-    center_data = np.loadtxt(center_filename)
-    center_datas.append(center_data)
-
-centers = center_datas[5]
-
-print("Singular Value Decomposition...")
-centers_mean = np.mean(centers, axis=0)
-reference_centers_mean = np.mean(reference_centers, axis=0)
-centers_centered = centers - centers_mean
-reference_centers_centered = reference_centers - reference_centers_mean
-
-cov_matrix = np.dot(centers_centered.T, reference_centers_centered)
-U, _, Vt = np.linalg.svd(cov_matrix)
-R = np.dot(U, Vt)
-
-reference_centers_aligned = np.dot(reference_centers_centered, R.T)
-reference_centers_aligned = reference_centers_aligned + centers_mean
+if not selected_xyz_files:
+    raise ValueError(f"No center frames available for group {group_idx}")
+# Preserve the fifth-frame reference for existing runs; shorter sequences use
+# their final frame. The old sixth-frame alignment was unused in the output.
+reference_index = min(4, len(selected_xyz_files) - 1)
+reference_centers = np.loadtxt(os.path.join(centers_dir, selected_xyz_files[reference_index]))
 
 output_path = f"{centers_dir}/reference"
 if not os.path.exists(output_path):

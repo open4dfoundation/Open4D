@@ -7,6 +7,7 @@ import json
 from numbers import Integral
 from pathlib import Path
 import tempfile
+import warnings
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 import numpy as np
@@ -22,6 +23,30 @@ from ._torch import torch_device
 from ._tsdf import write_tsdf_sequence
 
 _SCHEMA = "open4d.n4mc-sequence/v1"
+
+
+def _device(torch, requested):
+    target = torch_device(torch, requested)
+    if target.type != "mps":
+        return target
+    # Availability of Metal does not imply availability of the decoder's 3D
+    # transposed convolution. Probe before constructing volumes or training.
+    try:
+        with torch.no_grad():
+            value = torch.zeros((1, 1, 1, 1, 1), device=target)
+            torch.nn.functional.conv_transpose3d(value, torch.ones_like(value))
+    except (RuntimeError, NotImplementedError) as exc:
+        if "ConvTranspose 3D is not supported on MPS" not in str(exc):
+            raise
+        if requested in (None, "auto"):
+            warnings.warn("N4MC requires ConvTranspose3D, unsupported by this MPS runtime; using CPU",
+                          RuntimeWarning, stacklevel=3)
+            return torch.device("cpu")
+        raise CodecError(
+            "N4MC requires ConvTranspose3D, which this Apple Metal/MPS runtime does not support; "
+            "use device='cpu', device='cuda', or device='auto'"
+        ) from exc
+    return target
 
 
 def _backend():
@@ -94,7 +119,7 @@ class N4MCCodec:
                     mesh.texture_coordinates is not None, bool(mesh.attributes))):
                 raise CodecError("N4MC's TSDF profile cannot preserve mesh attributes")
         torch, models, losses, _ = _backend()
-        target_device = torch_device(torch, device)
+        target_device = _device(torch, device)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -176,7 +201,7 @@ class N4MCCodec:
         min_component_faces: int | None = None,
     ) -> Sequence:
         torch, models, _, metrics = _backend()
-        target_device = torch_device(torch, device)
+        target_device = _device(torch, device)
         temporary = tempfile.TemporaryDirectory(prefix="open4d-n4mc-decode-")
         work = Path(temporary.name)
         decoded = None

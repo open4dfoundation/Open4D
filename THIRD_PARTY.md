@@ -58,6 +58,30 @@ distribution and still needs separate review before any redistribution.
 | `open4d/codecs/n4mc/outputs` | Historical checkpoints, configs, metrics, and reconstructions | Training inputs, authorship, and checkpoint rights absent | `BLOCK`; moved outside the checkout to `../open4d-local-artifacts` without redistribution. SHA-256 inventory: `cleanup-manifest.json`, digest `5b85cf3bfbf02d352542362fa3265359c0b937e68f21b89436de039a9dfca627`. Data/model rights remain unresolved |
 | Tracked papers and large media | TVMC/TSMC papers and demonstration media are committed | Publication copyright and redistribution basis not recorded centrally | `BLOCK`; record publisher/author permission or link externally instead of redistributing |
 
+## Local runtime repairs (2026-09-21)
+
+The following changes preserve the existing component licenses and exclusion
+boundaries; they do not resolve any release block above:
+
+- `open4d/reconstruction/queen`: preserve valid tensor index types during
+  compressed residual I/O, support empty residuals and disabled gates, and
+  remove an unused mapping access from ungated decoding. Native round-trip
+  regressions are under `queen/tests/test_compressed_residuals.py`.
+- `open4d/reconstruction/3dgstream`: retain temporal model loading by default,
+  omit evaluation results when no test cameras exist, and adapt a warmed
+  cache's disjoint world bounds to the input scene while retaining its weights.
+  Regression tests are under `3dgstream/tests/test_training_regressions.py`.
+- `open4d/reconstruction/gs_tools/rasterizers/diff-gaussian-rasterization`:
+  restore the 0.2-unit near guard used by the other bundled rasterizers; the
+  prior 4-unit guard incorrectly discarded nearby visible geometry. This
+  source change requires rebuilding the native extension.
+- `open4d/reconstruction/vega`: use the corrected near guard for ORBIT
+  refinement, test nearby-splat rendering/gradients, and allow the ORBIT test
+  corpus path to be configured without failing collection on denied paths.
+- `open4d/codecs/tsmc/tsmc/get_reference_center.py`: retain the fifth reference
+  frame on longer clips, use the last available frame on short clips, and
+  remove unused alignment work that also accessed an unavailable sixth frame.
+
 ## Required record for new material
 
 Any copied source, submodule, binary, model, dataset, paper, image, archive, or

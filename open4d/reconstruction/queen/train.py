@@ -880,9 +880,15 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
             if frame_idx == 1:
                 scene.save(frame_idx, save_point_cloud=True)
             else:
-                gaussians.gate_atts.eval()
-                scene.save_compressed(-1, qp)
-                gaussians.gate_atts.train()
+                gate = gaussians.gate_atts
+                was_training = gate.training if gate is not None else False
+                if gate is not None:
+                    gate.eval()
+                try:
+                    scene.save_compressed(-1, qp)
+                finally:
+                    if gate is not None:
+                        gate.train(was_training)
 
 
         # Update previous frame's attributes and latents for next frame's residual encoding

@@ -1130,16 +1130,16 @@ class GaussianModel:
                     # Get ungated indices and their residual values
                     ungated_xyz_indices = self.gate_atts.sample_gate(stochastic=False).nonzero(as_tuple=True)[0]
                     # compute the number of bits needed to store the max value in ungated_xyz_indices
-                    max_value = ungated_xyz_indices.max()
-                    num_bits = max_value.item().bit_length()
+                    max_value = ungated_xyz_indices.max().item() if ungated_xyz_indices.numel() else 0
+                    num_bits = max_value.bit_length()
                     if num_bits < 8:
-                        ungated_xyz_indices = ungated_xyz_indices.type(torch.int8)
+                        storage_dtype = torch.int8
                     elif num_bits < 16:
-                        ungated_xyz_indices = ungated_xyz_indices.type(torch.short)
+                        storage_dtype = torch.short
                     elif num_bits < 32:
-                        ungated_xyz_indices = ungated_xyz_indices.type(torch.int)
+                        storage_dtype = torch.int
                     else:
-                        ungated_xyz_indices = ungated_xyz_indices.type(torch.long)
+                        storage_dtype = torch.long
                     # Store the gated residuals, not raw residuals
                     ungated_residuals = self.gate_atts(residual_xyz)[ungated_xyz_indices]
                     compressed_residuals = CompressedLatents()
@@ -1148,7 +1148,9 @@ class GaussianModel:
                     # Store minimal data needed for reconstruction
                     latents[attribute] = {
                         'mapping': self.mapping,
-                        'ungated_indices': ungated_xyz_indices,
+                        # Compact only the serialized copy; PyTorch indexing
+                        # requires int64/int32, not int8/int16.
+                        'ungated_indices': ungated_xyz_indices.to(device="cpu", dtype=storage_dtype),
                         'ungated_residuals_compressed': compressed_residuals
                         # '_xyz_debug': self._xyz,
                         # 'xyz_before_debug': self.xyz_before,
@@ -1233,7 +1235,8 @@ class GaussianModel:
                 prev_att_mapping = latents[attribute]["mapping"].cuda()
 
                 reconstructed = prev_att[prev_att_mapping].clone() 
-                ungated_xyz_indices = latents[attribute]['ungated_indices']
+                ungated_xyz_indices = latents[attribute]['ungated_indices'].to(
+                    device=reconstructed.device, dtype=torch.long)
                 ungated_residuals = latents[attribute]['ungated_residuals_compressed'].uncompress(scale=10000.0).cuda()
                 reconstructed[ungated_xyz_indices] += ungated_residuals
                 
@@ -1245,12 +1248,6 @@ class GaussianModel:
                 
                 self._latents[attribute] = nn.Parameter(reconstructed.requires_grad_(False))
             else:
-                if self.prev_atts[attribute] is not None:
-                    prev_att = self.prev_atts[attribute]
-                else:
-                    prev_att = torch.zeros(latents[attribute]["shape"], device="cuda")
-                remapped_prev_att = prev_att[prev_att_mapping]  
-
                 # then we define it based on the decoder type
                 if latent_decoders_dict[attribute] == "LatentDecoder":
                     self.latent_decoders[attribute] = LatentDecoder(**decoder_args[attribute]).cuda()

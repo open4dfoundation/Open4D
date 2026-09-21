@@ -32,6 +32,13 @@ class CompressedLatents(object):
         assert latent.dim() == 2, "Latent should be 2D"
         self.num_latents, self.latent_dim = latent.shape
         flattened = latent.flatten()
+        if not flattened.numel():
+            # A fully closed gate has no residual symbols to entropy-code.
+            self.tail_locs = {}
+            self.mapping = {}
+            self.byte_stream = b""
+            self.cdf = np.array([0., 1.], dtype=np.float32)
+            return
 
         # Scale the values to a larger range before rounding
         scaled = flattened * scale
@@ -61,6 +68,8 @@ class CompressedLatents(object):
         self.byte_stream, self.mapping, self.cdf = byte_stream, mapping, cdf[0].detach().cpu().numpy()
 
     def uncompress(self, scale=1.0):
+        if not self.num_latents or not self.latent_dim:
+            return torch.empty((self.num_latents, self.latent_dim), dtype=torch.float32)
         import torchac
         cdf = torch.tensor(self.cdf).unsqueeze(0).repeat(self.num_latents*self.latent_dim,1)
         weight = torchac.decode_float_cdf(cdf, self.byte_stream)
