@@ -1,4 +1,5 @@
 import torch
+import warnings
 class NeuralTransformationCache(torch.nn.Module):
     def __init__(self, model, xyz_bound_min, xyz_bound_max):
         super(NeuralTransformationCache, self).__init__()
@@ -8,6 +9,29 @@ class NeuralTransformationCache(torch.nn.Module):
         
     def dump(self, path):
         torch.save(self.state_dict(),path)
+
+    @torch.no_grad()
+    def ensure_scene_coverage(self, xyz):
+        """Reuse warmed identity weights with valid bounds for a disjoint scene.
+
+        Warm-up trains the normalized unit cube, but its checkpoint also stores
+        the warm-up scene's world-space bounds. Keep those bounds when they
+        cover any input points (outside points may intentionally be static).
+        """
+        if xyz.ndim != 2 or xyz.shape[1] != 3 or not len(xyz) or not torch.isfinite(xyz).all():
+            raise ValueError("NTC initialization needs nonempty finite (N, 3) positions")
+        extent = self.xyz_bound_max - self.xyz_bound_min
+        if not torch.isfinite(extent).all() or not (extent > 0).all():
+            raise ValueError("NTC checkpoint bounds must have finite positive extents")
+        normalized = self.get_contracted_xyz(xyz)
+        if ((normalized >= 0) & (normalized <= 1)).all(dim=1).any():
+            return
+        lower, upper = xyz.amin(dim=0), xyz.amax(dim=0)
+        padding = (upper - lower).clamp_min(1e-3) * .05
+        self.xyz_bound_min.copy_(lower - padding)
+        self.xyz_bound_max.copy_(upper + padding)
+        warnings.warn("NTC checkpoint bounds cover no scene points; using scene bounds with the warmed weights",
+                      RuntimeWarning, stacklevel=2)
         
     def get_contracted_xyz(self, xyz):
         with torch.no_grad():
@@ -19,6 +43,8 @@ class NeuralTransformationCache(torch.nn.Module):
         
         mask = (contracted_xyz >= 0) & (contracted_xyz <= 1)
         mask = mask.all(dim=1)
+        if not mask.any():
+            raise ValueError("NTC bounds cover no input points; initialize the cache for this scene")
         
         ntc_inputs=torch.cat([contracted_xyz[mask]],dim=-1)
         resi=self.model(ntc_inputs)

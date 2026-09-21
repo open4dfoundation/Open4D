@@ -151,7 +151,9 @@ __forceinline__ __device__ bool in_frustum(int idx,
 	float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
 	p_view = transformPoint4x3(p_orig, viewmatrix);
 
-	if ((p_view.z <= 4.0f) || ((p_proj.x < -1.3 || p_proj.x > 1.3 || p_proj.y < -1.3 || p_proj.y > 1.3)))
+	// Match the 0.2-unit near guard used by the other bundled rasterizers.
+	// A 4-unit cutoff culls calibrated capture rigs and nearby visible splats.
+	if ((p_view.z <= 0.2f) || ((p_proj.x < -1.3 || p_proj.x > 1.3 || p_proj.y < -1.3 || p_proj.y > 1.3)))
 	{
 		if (prefiltered)
 		{

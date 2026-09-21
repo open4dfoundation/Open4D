@@ -38,7 +38,7 @@ python -m pytest open4d/streaming/tests integrations/open3d/tests
 
 ```bash
 python -m pytest
-python -m compileall -q open4d integrations examples/visualization scripts
+python -m compileall -q open4d/*.py open4d/streaming/*.py open4d/codec open4d/core open4d/io open4d/torch_ops open4d/visualization integrations/__init__.py integrations/open3d examples/visualization scripts
 python scripts/check_markdown_links.py
 python scripts/check_provenance.py
 python scripts/check_release_gate.py --expect-blocked
@@ -48,6 +48,8 @@ python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
 ```
 
 The package checks enforce an explicit file list for wheels and source archives.
+The compile check matches CI's supported Python paths; vendored tools such as
+Eigen's historical Python 2 maintenance scripts are outside that check.
 CI also installs the wheel outside the checkout and tests the installed API.
 A pull request should describe the behavior changed, relevant tests, and known
 limitations.

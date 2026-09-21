@@ -87,6 +87,10 @@ separate research runtimes. N4MC and QNDF currently process frames independently
 they remain available as research methods. Mesh codecs currently encode geometry
 only and reject attributes they cannot preserve.
 
+N4MC's automatic device selection uses CPU when the installed Apple Metal/MPS
+runtime lacks `ConvTranspose3D`. An explicit unsupported `device="mps"` request
+raises a diagnostic before training; use `device="cpu"` or `device="auto"`.
+
 `open4d.available_codecs()` lists adapters, including those whose optional
 backend is not installed. Draco and generic array compressors remain in the
 research/benchmark code, outside the public codec choices.
