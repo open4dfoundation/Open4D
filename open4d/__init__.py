@@ -24,6 +24,7 @@ from .core import (
     dtypes,
 )
 from ._api import load, save, unload
+from ._streamer import StreamerDependencyError, stream
 from .visualization import visualize
 
 __all__ = [
@@ -44,12 +45,14 @@ __all__ = [
     "Representation",
     "Sequence",
     "SequenceView",
+    "StreamerDependencyError",
     "TopologyMode",
     "TriangleMesh",
     "UV_DTYPE",
     "dtypes",
     "load",
     "save",
+    "stream",
     "unload",
     "visualize",
 ]

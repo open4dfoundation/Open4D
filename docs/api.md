@@ -61,6 +61,35 @@ source into one compressed `.usdc` file carrying the frame rate, the key-frame
 index, and per-frame streams alongside the geometry — see the
 [visualization guide](../examples/visualization/README.md#the-openusd-container).
 
+## Streaming
+
+`open4d.stream` exports a sequence as a bundle and serves it to a browser:
+
+```python
+import open4d
+
+open4d.stream("capture.usdc")
+open4d.stream("capture.usdc", rungs=["draco", "draco@11"], out_dir="bundle/")
+```
+
+`rungs` is the quality ladder. The first is the rendition a client plays by
+default and the rest are what it can switch to mid-playback, so a one-entry
+list is a fixed-quality stream and says so. A spec is a frame format —
+`ply` for interchange, `draco` for delivery — optionally with a position
+quantisation, as in `draco@11`. Sizes are measured off disk rather than
+predicted; quality is left unscored until something scores it.
+
+The implementation is the separate `open4d-streamer` package, imported on the
+call rather than at load: it depends on `open4d`, so `open4d` must not depend
+on it. Without it installed the call raises `open4d.StreamerDependencyError`
+saying how to install it. For several clips in one bundle, a constrained link,
+or the delivered-quality metrics, use that package directly —
+`streamer.Bundle`, `streamer.Link`, `streamer.serve`.
+
+Separately, [`open4d/webclients`](../open4d/webclients) is the vendored
+browser-client research tree that compares five delivery systems against each
+other. It is not this API and shares no code with it.
+
 ## Codecs
 
 Five lossless, in-process reference codecs are included: `raw`, `deflate`,
