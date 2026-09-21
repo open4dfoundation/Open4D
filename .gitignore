@@ -96,3 +96,9 @@ open4d/codecs/qndf_int8/objs_original
 
 # Generated packaging metadata
 *.egg-info/
+
+# Local artifact trees: a dead virtualenv and two vendored checkouts that
+# `git add -A` swept into a commit once.
+open4d/codecs/cags/
+open4d/codecs/tvmc/.venv*/
+open4d/reconstruction/3dgstream/submodules/
