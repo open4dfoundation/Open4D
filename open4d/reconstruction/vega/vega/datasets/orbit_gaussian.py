@@ -63,14 +63,13 @@ from vega.gaussians import GaussianSet
 from vega.metrics import vega_loss
 from vega.rasterize import render
 
-MIN_RENDER_DISTANCE = 6.0
-"""World units. This workstation's `diff_gaussian_rasterization` build culls
-every Gaussian once the camera is nearer than ~3.5-4 units, whatever the
-scene's scale (measurements in `orbitvega.eval_camera`). The
-corpus's own rig sits only ~3.2 m from the subject, i.e. inside that dead
-zone, so anything that renders from the rig cameras — `refine_gaussians`
-below — has to work around it. Kept here rather than imported from
-`orbitvega` so the engine does not depend on the harness adapter."""
+MIN_RENDER_DISTANCE = 0.2
+"""World units, matching the bundled rasterizer's near-plane guard.
+
+Older builds incorrectly used a 4-unit guard. Rebuild the extension after
+updating; callers using an old binary can still request a larger
+``min_render_distance`` to enable projection-preserving scaling.
+"""
 
 DEFAULT_VOXEL_SIZE = 0.006          # 6 mm; ~67k shell points for a standing adult
 

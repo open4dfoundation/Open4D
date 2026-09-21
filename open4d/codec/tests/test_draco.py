@@ -8,15 +8,15 @@ import pytest
 pytest.importorskip("DracoPy")
 
 from open4d import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
-from open4d.codec import decode_sequence, encode_sequence
+from open4d.codec._draco import DRACO_CODEC
 
 pytestmark = pytest.mark.cpu
 
 
 def _round_trip(mesh: TriangleMesh, tmp_path) -> TriangleMesh:
     source = Sequence(MemoryFrameProvider([Frame(7, 1.25, mesh)]))
-    decoded = decode_sequence(
-        encode_sequence(source, tmp_path / "attributes.d4d", codec="draco")
+    decoded = DRACO_CODEC.decode(
+        DRACO_CODEC.encode(source, tmp_path / "attributes.d4d")
     )
     assert decoded[0].frame_index == 7
     assert decoded[0].timestamp == 1.25
@@ -92,8 +92,8 @@ def test_draco_recomputes_declarations_after_uv_corner_splitting(tmp_path):
         has_vertex_correspondence=True,
     ))
 
-    decoded = decode_sequence(encode_sequence(
-        source, tmp_path / "mixed-layout.d4d", codec="draco"
+    decoded = DRACO_CODEC.decode(DRACO_CODEC.encode(
+        source, tmp_path / "mixed-layout.d4d"
     ))
 
     assert [len(frame.geometry.positions) for frame in decoded] == [4, 6]

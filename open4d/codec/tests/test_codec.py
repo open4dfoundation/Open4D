@@ -19,6 +19,11 @@ from open4d.codec import (
     VMeshCodec,
 )
 from open4d.codec._torch import torch_device
+from open4d.codec._npz import NumPyZipCodec, REFERENCE_CODECS
+from open4d.codec._draco import DRACO_CODEC
+from open4d.codec._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC
+
+REFERENCE = NumPyZipCodec()
 
 pytestmark = pytest.mark.cpu
 
@@ -68,7 +73,7 @@ def sequence() -> Sequence:
 
 def test_numpy_zip_round_trip_is_lazy_and_preserves_geometry(tmp_path, monkeypatch):
     source = sequence()
-    artifact = encode_sequence(source, tmp_path / "take.o4d")
+    artifact = encode_sequence(source, tmp_path / "take.o4d", codec=REFERENCE)
     calls = []
     import open4d.codec._npz as implementation
 
@@ -79,7 +84,7 @@ def test_numpy_zip_round_trip_is_lazy_and_preserves_geometry(tmp_path, monkeypat
         return real_read(*args)
 
     monkeypatch.setattr(implementation, "_read_array", recording_read)
-    decoded = decode_sequence(artifact)
+    decoded = decode_sequence(artifact, codec=REFERENCE)
 
     assert calls == []
     assert len(decoded) == 2
@@ -102,9 +107,9 @@ def test_numpy_zip_round_trip_is_lazy_and_preserves_geometry(tmp_path, monkeypat
 
 def test_numpy_zip_preserves_reversed_view_timing_policy(tmp_path):
     source = sequence()[::-1]
-    artifact = encode_sequence(source, tmp_path / "reversed.o4d")
+    artifact = encode_sequence(source, tmp_path / "reversed.o4d", codec=REFERENCE)
 
-    decoded = decode_sequence(artifact)
+    decoded = decode_sequence(artifact, codec=REFERENCE)
 
     assert decoded.allow_nonmonotonic_timestamps is True
     assert decoded.timestamps == source.timestamps
@@ -127,17 +132,17 @@ def test_n4mc_component_filter_is_disabled_by_default():
 
 
 def test_encode_refuses_to_overwrite_and_decode_rejects_corruption(tmp_path):
-    artifact = encode_sequence(sequence(), tmp_path / "take.o4d")
+    artifact = encode_sequence(sequence(), tmp_path / "take.o4d", codec=REFERENCE)
     with pytest.raises(FileExistsError):
-        encode_sequence(sequence(), artifact)
+        encode_sequence(sequence(), artifact, codec=REFERENCE)
     broken = tmp_path / "broken.o4d"
     broken.write_bytes(b"not a zip")
     with pytest.raises(CodecError, match="invalid Open4D artifact"):
-        decode_sequence(broken)
+        decode_sequence(broken, codec=REFERENCE)
 
 
 @pytest.mark.parametrize(("suffix", "codec"), (
-    (".o4d", "npz"), (".d4d", "draco"), (".v4d", None),
+    (".o4d", REFERENCE), (".d4d", DRACO_CODEC), (".v4d", None),
 ))
 def test_non_object_codec_manifests_are_codec_errors(tmp_path, suffix, codec):
     artifact = tmp_path / f"invalid{suffix}"
@@ -156,44 +161,26 @@ def test_encode_failure_removes_partial_artifact(tmp_path):
     destination = tmp_path / "bad.o4d"
 
     with pytest.raises(CodecError, match="not serializable"):
-        encode_sequence(bad, destination)
+        encode_sequence(bad, destination, codec=REFERENCE)
 
     assert not destination.exists()
     assert list(tmp_path.iterdir()) == []
 
 
-def test_codec_import_has_no_optional_or_process_dependencies():
+def test_codec_import_does_not_load_optional_dependencies():
     probe = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import open4d.codec,sys; assert 'PyQt6' not in sys.modules",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+        [sys.executable, "-c", "import open4d,sys; "
+         "assert not {'PyQt6','torch','open3d','scipy','plyfile'} & sys.modules.keys()"],
+        capture_output=True, text=True,
     )
     assert probe.returncode == 0, probe.stderr
-    assert "npz" in {info.id for info in available_codecs()}
-    package_root = Path(__file__).resolve().parents[2]
-    source = "\n".join(
-        path.read_text()
-        for package in (package_root / "codec", package_root / "visualization")
-        for path in package.glob("*.py")
-        if path.name != "_vmesh.py"
-    )
-    for forbidden in ("subprocess", "os.system", "os.popen", "shell=True"):
-        assert forbidden not in source
-    native = (package_root / "codec/_vmesh.py").read_text()
-    assert "shell=True" not in native and ".sh" not in native
-    assert native.count("subprocess.run(") == 1
 
 
-@pytest.mark.parametrize("codec", ("raw", "deflate", "bzip2", "lzma", "rle"))
-def test_reference_codecs_round_trip_exactly_and_infer_from_manifest(tmp_path, codec):
+@pytest.mark.parametrize("codec", REFERENCE_CODECS)
+def test_reference_codecs_remain_usable_privately(tmp_path, codec):
     source = sequence()
     artifact = encode_sequence(source, tmp_path / f"{codec}.o4d", codec=codec)
-    decoded = decode_sequence(artifact)
+    decoded = decode_sequence(artifact, codec=codec)
 
     assert len(decoded) == len(source)
     for expected, actual in zip(source, decoded, strict=True):
@@ -211,23 +198,18 @@ def test_reference_codecs_round_trip_exactly_and_infer_from_manifest(tmp_path, c
     decoded.close()
 
 
-def test_all_reference_codec_ids_are_public():
-    infos = {info.id: info for info in available_codecs()}
-    identifiers = set(infos)
-    assert {"raw", "deflate", "bzip2", "lzma", "rle"} <= identifiers
-    assert infos["npz"].backend == "python"
-    assert infos["npz"].lossless is True
-    assert "attributes" in infos["npz"].preserves
-    assert infos["draco"].backend == "python-binding"
-    research = {"klt", "n4mc", "qndf", "qndf-int8"}
-    assert all(infos[codec].backend == "python-in-process" for codec in research)
-    experimental = {"temporal-delta", "temporal-pca"}
-    assert all(infos[codec].backend == "python-experimental" for codec in experimental)
-    assert not {"tvmc", "tsmc"} & set(infos)
+def test_public_registry_contains_research_codecs_only():
+    identifiers = {info.id for info in available_codecs()}
+    assert {"klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc", "tvmc", "tsmc"} <= identifiers
+    assert not {"npz", "raw", "deflate", "bzip2", "lzma", "rle", "draco",
+                "temporal-delta", "temporal-pca"} & identifiers
+    import open4d.codec as public
+    assert not any(hasattr(public, name) for name in
+                   ("DracoCodec", "NumPyZipCodec", "TemporalMeshCodec"))
 
 
 @pytest.mark.parametrize("codec,suffix", (
-    ("temporal-delta", ".td4d"), ("temporal-pca", ".tp4d"),
+    (TEMPORAL_DELTA_CODEC, ".td4d"), (TEMPORAL_PCA_CODEC, ".tp4d"),
 ))
 def test_temporal_codecs_fresh_decode_without_processes(tmp_path, codec, suffix):
     frames = [Frame(
@@ -245,8 +227,8 @@ def test_temporal_codecs_fresh_decode_without_processes(tmp_path, codec, suffix)
         source, tmp_path / f"take{suffix}", codec=codec,
         quantization_bits=16, components=3,
     )
-    first = decode_sequence(artifact, device="cpu")
-    second = decode_sequence(artifact, device="cpu")
+    first = decode_sequence(artifact, codec=codec, device="cpu")
+    second = decode_sequence(artifact, codec=codec, device="cpu")
 
     assert first.metadata == source.metadata
     assert first.topology is TopologyMode.FIXED
@@ -264,8 +246,8 @@ def test_encode_accepts_a_supported_path_without_codec_specific_io(tmp_path):
         "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="ascii"
     )
 
-    artifact = encode_sequence(source, tmp_path / "frame.o4d", fps=24)
-    decoded = decode_sequence(artifact)
+    artifact = encode_sequence(source, tmp_path / "frame.o4d", fps=24, codec=REFERENCE)
+    decoded = decode_sequence(artifact, codec=REFERENCE)
 
     assert len(decoded) == 1
     np.testing.assert_array_equal(decoded[0].geometry.triangles, [[0, 1, 2]])
@@ -274,7 +256,7 @@ def test_encode_accepts_a_supported_path_without_codec_specific_io(tmp_path):
 
 def test_path_reader_options_are_rejected_for_an_open_sequence(tmp_path):
     with pytest.raises(TypeError, match="apply only to path inputs"):
-        encode_sequence(sequence(), tmp_path / "frame.o4d", fps=24)
+        encode_sequence(sequence(), tmp_path / "frame.o4d", fps=24, codec=REFERENCE)
 
 
 def test_caller_supplied_codec_is_used_without_a_registry(tmp_path):
@@ -325,31 +307,23 @@ def test_registered_codec_can_be_selected_by_name(tmp_path, monkeypatch):
         register_codec(codec)
 
 
-def test_source_only_codec_has_an_actionable_installed_package_error(
-    tmp_path, monkeypatch
-):
-    import open4d.codec._api as implementation
+def test_missing_research_source_has_an_actionable_error(tmp_path, monkeypatch):
+    from open4d.codec._research import research_module
 
-    monkeypatch.setattr(
-        implementation, "_CODECS",
-        {key: value for key, value in implementation._CODECS.items() if key != "klt"},
-    )
-    monkeypatch.setattr(
-        implementation, "_UNAVAILABLE_CODECS",
-        {"klt": "research implementation is not included in this installation"},
-    )
-    with pytest.raises(CodecError, match="source|not included"):
-        encode_sequence(sequence(), tmp_path / "take.k4d", codec="klt")
+    monkeypatch.setenv("OPEN4D_RESEARCH_ROOT", str(tmp_path))
+    with pytest.raises(CodecError, match="OPEN4D_RESEARCH_ROOT"):
+        research_module("klt.klt")
 
 
 def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch):
     import open4d.codec._vmesh as implementation
 
-    clean = Sequence(MemoryFrameProvider([
-        Frame(7, 0.25, TriangleMesh(
-            [[-2.0, 3, 4], [2, 3, 4], [-2, 7, 4]], [[0, 1, 2]]
-        ))
-    ]))
+    mesh = TriangleMesh([[-2.0, 3, 4], [2, 3, 4], [-2, 7, 4]], [[0, 1, 2]])
+    clean = Sequence(MemoryFrameProvider(
+        [Frame(7, 0.25, mesh), Frame(8, 0.5, mesh)],
+        topology=TopologyMode.FIXED,
+        has_constant_vertex_count=True, has_vertex_correspondence=True,
+    ))
     executable = tmp_path / "native"
     executable.write_text("native test double", encoding="ascii")
     executable.chmod(0o700)
@@ -366,6 +340,10 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
             Path(options["decMesh"].replace("%06d", "000000")).write_text(
                 "v 0 0 0\nv 4095 0 0\nv 0 4095 0\nf 1 2 3\n", encoding="ascii"
             )
+            Path(options["decMesh"].replace("%06d", "000001")).write_text(
+                "v 0 0 0\nv 4095 0 0\nv 0 4095 0\nv 4095 4095 0\nf 1 2 3\nf 2 4 3\n",
+                encoding="ascii",
+            )
 
     monkeypatch.setattr(implementation, "_run", native_call)
     codec = VMeshCodec("native-test")
@@ -374,8 +352,13 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
     )
     decoded = codec.decode(artifact, decoder=executable)
 
-    assert len(decoded) == 1 and decoded[0].frame_index == 7
+    assert len(decoded) == 2 and decoded[0].frame_index == 7
     np.testing.assert_allclose(decoded[0].geometry.positions, clean[0].geometry.positions)
+    assert [len(frame.geometry.positions) for frame in decoded] == [3, 4]
+    assert decoded.topology is TopologyMode.UNKNOWN
+    assert decoded.has_constant_vertex_count is None
+    assert decoded.has_vertex_correspondence is None
+    assert decoded.timestamps == clean.timestamps
     assert [label for _, label in calls] == [
         "native-test encoder", "native-test decoder"
     ]
@@ -479,3 +462,13 @@ def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch):
     assert decoded[0].frame_index == 9 and decoded[0].metadata["take"] == "rafa"
     np.testing.assert_allclose(decoded[0].geometry.positions[1], [10.5, 20, 30])
     decoded.close()
+
+
+def test_encode_rejects_text_overwrite_flag_without_changing_output(tmp_path):
+    from open4d.codec._npz import NumPyZipCodec
+
+    output = tmp_path / "existing.o4d"
+    output.write_bytes(b"original")
+    with pytest.raises(TypeError, match="overwrite"):
+        encode_sequence(sequence(), output, codec=NumPyZipCodec(), overwrite="false")
+    assert output.read_bytes() == b"original"

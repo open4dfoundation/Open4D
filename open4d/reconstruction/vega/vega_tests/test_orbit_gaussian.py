@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,12 @@ import pytest
 from vega.cameras import look_at_RT
 from vega.datasets import orbit_gaussian as og
 
-DATASET_ROOT = Path("/media/frozzzen/DataDrive/ORBIT_datasets_gaussian")
+DATASET_ROOT = Path(os.environ.get("OPEN4D_ORBIT_GAUSSIAN_ROOT",
+                                  "/media/frozzzen/DataDrive/ORBIT_datasets_gaussian"))
+try:
+    DATASET_AVAILABLE = DATASET_ROOT.is_dir()
+except OSError:
+    DATASET_AVAILABLE = False
 
 torch = pytest.importorskip("torch")
 
@@ -120,20 +126,20 @@ def test_projection_agrees_with_the_camera_matrices():
 
 
 def test_load_scene_rejects_out_of_range_frames():
-    if not DATASET_ROOT.is_dir():
+    if not DATASET_AVAILABLE:
         pytest.skip(f"{DATASET_ROOT} not present")
     with pytest.raises(IndexError):
         og.load_scene(DATASET_ROOT, "basketball", [10_000], device="cpu")
 
 
 def test_unknown_scene_lists_the_available_ones():
-    if not DATASET_ROOT.is_dir():
+    if not DATASET_AVAILABLE:
         pytest.skip(f"{DATASET_ROOT} not present")
     with pytest.raises(KeyError, match="basketball"):
         og.load_object_transforms(DATASET_ROOT, "no_such_object")
 
 
-@pytest.mark.skipif(not DATASET_ROOT.is_dir(), reason=f"{DATASET_ROOT} not present")
+@pytest.mark.skipif(not DATASET_AVAILABLE, reason=f"{DATASET_ROOT} unavailable")
 def test_carved_hull_projects_inside_the_real_silhouettes():
     """The carved hull is only useful if it lands where the subject actually is:
     every hull point must project inside the foreground of every view (that is
@@ -232,7 +238,7 @@ def test_refine_iters_zero_is_a_no_op():
     assert out is gs
 
 
-@pytest.mark.skipif(not DATASET_ROOT.is_dir(), reason=f"{DATASET_ROOT} not present")
+@pytest.mark.skipif(not DATASET_AVAILABLE, reason=f"{DATASET_ROOT} unavailable")
 def test_refinement_improves_agreement_with_the_real_views():
     """Guards the failure mode this feature actually had: the rig cameras sit
     inside the rasterizer's dead zone, so a refinement that renders from them

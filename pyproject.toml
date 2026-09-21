@@ -5,33 +5,33 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open4d"
 version = "0.1.0"
-# This is the core package -- NumPy only, plus the optional extras below -- and
-# it is deliberately wider than the codecs. open4d.core and the [player] extra
-# both work on 3.13; it is Open3D that publishes no cp313 wheel, which caps the
-# [open3d] extra and every codec at 3.12. That 3.12 ceiling is enforced where it
-# actually applies, in environment.yml, not here: pinning the core package to
-# 3.12 would stop `pip install open4d` on a 3.13 interpreter that can run it.
+description = "Research codecs, reconstruction and streaming for 4D geometry"
+readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = ["numpy"]
 
+[project.urls]
+Repository = "https://github.com/open4dfoundation/Open4D"
+Issues = "https://github.com/open4dfoundation/Open4D/issues"
+
+[project.scripts]
+open4d = "open4d._cli:main"
+
 [project.optional-dependencies]
 tools  = ["trimesh"]
+metrics = ["scipy"]
 player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
-draco  = ["DracoPy>=2,<3"]
-# 0.19 is the floor, not 0.17: 0.18 publishes no cp312 wheel, and resolving to it
-# is what held the codecs on older Pythons. It is also the last version with no
-# cp313 wheel at all, so this extra is 3.12-and-below in practice.
 open3d = ["open3d>=0.19", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
 torch  = ["torch"]
 klt    = ["torch", "trimesh", "zstd", "tqdm", "point-cloud-utils"]
 n4mc   = ["torch", "trimesh", "scikit-image", "point-cloud-utils"]
 qndf   = ["torch", "open3d>=0.19", "trimesh", "tqdm"]
-temporal = ["open3d>=0.19", "trimesh", "point-cloud-utils"]
+gaussians = ["plyfile"]
 dev    = ["build>=1.2", "pytest>=8", "scipy", "tomli>=2; python_version < '3.11'"]
-all    = ["trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "DracoPy>=2,<3", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
+all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
 
 [tool.setuptools]
 include-package-data = false
@@ -40,6 +40,7 @@ packages = [
     "open4d.codec",
     "open4d.core",
     "open4d.io",
+    "open4d.streaming",
     "open4d.torch_ops",
     "open4d.visualization",
     "integrations",
@@ -52,6 +53,7 @@ testpaths = [
     "open4d/core/tests",
     "open4d/codec/tests",
     "open4d/io/tests",
+    "open4d/streaming/tests",
     "open4d/torch_ops/tests",
     "open4d/visualization/tests",
     "examples/visualization/tests",

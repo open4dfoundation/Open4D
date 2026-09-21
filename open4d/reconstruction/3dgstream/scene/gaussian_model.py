@@ -748,6 +748,7 @@ class GaussianModel:
             model=tcnn.NetworkWithInputEncoding(n_input_dims=3, n_output_dims=8, encoding_config=ntc_conf["encoding"], network_config=ntc_conf["network"]).to(torch.device("cuda"))
         self.ntc=NeuralTransformationCache(model,self.get_xyz_bound()[0],self.get_xyz_bound()[1])
         self.ntc.load_state_dict(torch.load(training_args.ntc_path))
+        self.ntc.ensure_scene_coverage(self._xyz)
         self._xyz_bound_min = self.ntc.xyz_bound_min
         self._xyz_bound_max = self.ntc.xyz_bound_max
         if training_args.ntc_lr is not None:
@@ -788,4 +789,4 @@ class GaussianModel:
                 repeated_quat = self.rotation_activation(self._d_rot[mask]).repeat(3, 1)
                 rotated_reshaped_feature = rotate_sh_by_quaternion(sh=reshaped_feature[...,1:],l=1,q=repeated_quat) # [3N, SHs(l=1)]
                 rotated_permuted_feature = rotated_reshaped_feature.reshape(-1,3,3) # [N, RGB, SHs(l=1)]
-                self._new_feature[mask][:,1:4]=rotated_permuted_feature.permute(0,2,1)  
+                self._new_feature[mask][:,1:4]=rotated_permuted_feature.permute(0,2,1)

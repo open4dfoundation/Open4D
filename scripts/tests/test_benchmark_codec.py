@@ -105,3 +105,59 @@ def test_decode_peak_memory_excludes_surface_validation(tmp_path, monkeypatch):
     )
 
     assert result["decode_all_peak_bytes"] > 0
+
+
+def test_benchmark_does_not_compare_unrelated_vertex_indices(tmp_path, monkeypatch):
+    from open4d import Frame, MemoryFrameProvider, Sequence
+    from open4d.codec._npz import NumPyZipCodec
+
+    source = benchmark_codec.synthetic(3, 2)
+    codec = NumPyZipCodec()
+    codec.lossless = False
+    monkeypatch.setitem(benchmark_codec._BASELINES, "reordered", codec)
+
+    def decode(*args, **kwargs):
+        frames = []
+        for frame in source:
+            mesh = frame.geometry
+            frames.append(Frame(frame.frame_index, frame.timestamp, TriangleMesh(
+                mesh.positions[::-1], len(mesh.positions) - 1 - mesh.triangles,
+            ), metadata=frame.metadata))
+        return Sequence(MemoryFrameProvider(frames, metadata=source.metadata,
+                                            has_vertex_correspondence=False))
+
+    monkeypatch.setattr(benchmark_codec, "decode_sequence", decode)
+    result = benchmark_codec.run(source, tmp_path / "test.o4d", codec="reordered")
+    assert result["position_rms_error"] is None
+    assert result["position_max_error"] is None
+    assert result["surface_rms_error"] == 0
+
+
+def test_benchmark_closes_decoders_after_validation_failure(tmp_path, monkeypatch):
+    from open4d import MemoryFrameProvider, Sequence
+
+    opened = []
+    source = benchmark_codec.synthetic(3, 2)
+
+    def decode(*args, **kwargs):
+        value = Sequence(MemoryFrameProvider(tuple(source), metadata={"bad": True}))
+        opened.append(value)
+        return value
+
+    monkeypatch.setattr(benchmark_codec, "decode_sequence", decode)
+    with pytest.raises(AssertionError):
+        benchmark_codec.run(source, tmp_path / "test.o4d")
+    assert all(value.closed for value in opened)
+    assert not source.closed
+
+
+def test_benchmark_cli_closes_the_imported_source(tmp_path, monkeypatch, capsys):
+    import sys
+
+    source = benchmark_codec.synthetic(3, 2)
+    monkeypatch.setattr(benchmark_codec, "open_sequence", lambda *a, **kw: source)
+    monkeypatch.setattr(sys, "argv", ["benchmark_codec.py", "--source", str(tmp_path),
+                                      "--frames", "1", "--json"])
+    benchmark_codec.main()
+    assert source.closed
+    assert json.loads(capsys.readouterr().out)["results"][0]["frames"] == 1

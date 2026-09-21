@@ -1,17 +1,4 @@
-"""Tests for the comparison viewer's measurement, colouring, and CLI.
-
-Everything here runs headless. The GL viewer itself is exercised by
-`compare_sequences.py --save`, which needs a graphical session; what is tested
-here is every decision that determines what that window shows — the distances,
-the scale, the colours, and the reported numbers.
-
-Three things are checked against something other than themselves, because a
-metric that only agrees with itself is not evidence:
-
-- the nearest-neighbour search against brute force, written out longhand;
-- the error of a known quantizer against its closed-form RMS and bound;
-- the colour ramp's monotonicity against computed Rec. 709 luminance.
-"""
+"""Headless tests for comparison colours, frame pairing, and CLI output."""
 
 from __future__ import annotations
 
@@ -21,7 +8,6 @@ import pytest
 import colormaps
 import compare_frames
 import compare_sequences as cli
-import mesh_metrics
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from open4d.io import _mesh as formats_mesh
 from open4d.visualization._frames import UP_TO_Z
@@ -29,17 +15,7 @@ from open4d.visualization._frames import UP_TO_Z
 pytestmark = pytest.mark.cpu
 
 
-# ----------------------------
 # Fixtures and helpers
-# ----------------------------
-def brute_force(queries: np.ndarray, reference: np.ndarray) -> np.ndarray:
-    """The definition of nearest-neighbour distance, written out."""
-    if len(queries) == 0:
-        return np.empty(0)
-    delta = queries[:, None, :] - reference[None, :, :]
-    return np.min(np.linalg.norm(delta, axis=2), axis=1)
-
-
 def grid_mesh(side: int = 6, height: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """A triangulated square in the z = `height` plane, so normals are known."""
     axis = np.linspace(0.0, 1.0, side)
@@ -81,11 +57,7 @@ def reference_sequence() -> Sequence:
 
 @pytest.fixture
 def shifted_sequence() -> Sequence:
-    """The reference lifted along the plane normal, by a different amount each frame.
-
-    Frame *i* is offset by (i + 1) / 100, so the frames are genuinely unequal and
-    a per-frame colour rescale would be visible as all three looking the same.
-    """
+    """Raise frame i by (i + 1) / 100 along the plane normal."""
     positions, triangles = grid_mesh()
     return sequence_of(
         [(positions + [0.0, 0.0, (index + 1) / 100.0], triangles) for index in range(3)]
@@ -100,251 +72,14 @@ def obj_folder(path, meshes) -> object:
     return path
 
 
-# ----------------------------
-# Nearest neighbours
-# ----------------------------
-POINT_SETS = {
-    "uniform": (lambda r: r.random((120, 3)), lambda r: r.random((200, 3))),
-    "clustered": (
-        lambda r: r.normal(0.0, 0.01, (80, 3)),
-        lambda r: r.normal(0.0, 0.01, (90, 3)),
-    ),
-    "disjoint": (lambda r: r.random((40, 3)) + 50.0, lambda r: r.random((40, 3))),
-    "flat sheet": (
-        lambda r: np.column_stack([r.random((60, 2)), np.zeros(60)]),
-        lambda r: np.column_stack([r.random((70, 2)), np.zeros(70)]),
-    ),
-    "collinear": (
-        lambda r: np.column_stack([r.random(50), np.zeros((50, 2))]),
-        lambda r: np.column_stack([r.random(60), np.zeros((60, 2))]),
-    ),
-    "single reference": (lambda r: r.random((30, 3)), lambda r: np.zeros((1, 3))),
-    "duplicate references": (
-        lambda r: r.random((40, 3)),
-        lambda r: np.repeat(r.random((4, 3)), 10, axis=0),
-    ),
-    "mixed scale": (
-        lambda r: r.random((60, 3)) * 1000.0,
-        lambda r: r.random((60, 3)) * 0.001,
-    ),
-}
-
-
-@pytest.mark.parametrize("name", sorted(POINT_SETS))
-def test_nearest_neighbors_matches_brute_force(name):
-    rng = np.random.default_rng(0)
-    make_queries, make_reference = POINT_SETS[name]
-    queries, reference = make_queries(rng), make_reference(rng)
-
-    result = mesh_metrics.nearest_neighbors(queries, reference)
-    assert result.distances == pytest.approx(brute_force(queries, reference))
-
-
-@pytest.mark.parametrize("name", sorted(POINT_SETS))
-def test_reported_index_is_the_point_that_was_measured(name):
-    """The distance and the index have to describe the same reference point."""
-    rng = np.random.default_rng(1)
-    make_queries, make_reference = POINT_SETS[name]
-    queries, reference = make_queries(rng), make_reference(rng)
-
-    result = mesh_metrics.nearest_neighbors(queries, reference)
-    measured = np.linalg.norm(queries - reference[result.indices], axis=1)
-    assert measured == pytest.approx(result.distances)
-
-
-def test_duplicate_reference_vertices_report_a_real_index():
-    reference = np.zeros((5, 3))
-    result = mesh_metrics.nearest_neighbors(np.ones((1, 3)), reference)
-    assert result.distances[0] == pytest.approx(np.sqrt(3.0))
-    assert 0 <= result.indices[0] < len(reference)
-
-
-def test_empty_queries_return_empty_arrays():
-    result = mesh_metrics.nearest_neighbors(np.empty((0, 3)), np.zeros((3, 3)))
-    assert len(result.distances) == 0
-    assert len(result.indices) == 0
-
-
-@pytest.mark.parametrize(
-    "queries, reference, message",
-    [
-        (np.zeros((2, 2)), np.zeros((3, 3)), "queries must have shape"),
-        (np.zeros((2, 3)), np.zeros((3, 2)), "reference must have shape"),
-        (np.zeros((2, 3)), np.zeros((0, 3)), "reference is empty"),
-    ],
-)
-def test_nearest_neighbors_rejects_bad_input(queries, reference, message):
-    with pytest.raises(ValueError, match=message):
-        mesh_metrics.nearest_neighbors(queries, reference)
-
-
-# ----------------------------
-# Normals and point-to-plane
-# ----------------------------
-def test_vertex_normals_of_a_plane_point_along_its_axis():
-    positions, triangles = grid_mesh()
-    normals = mesh_metrics.vertex_normals(positions, triangles)
-
-    assert np.linalg.norm(normals, axis=1) == pytest.approx(1.0)
-    assert np.abs(normals[:, 2]) == pytest.approx(1.0)
-    assert normals[:, :2] == pytest.approx(0.0)
-
-
-def test_vertex_normals_are_zero_where_undefined():
-    positions, triangles = grid_mesh()
-    loose = np.vstack([positions, [[5.0, 5.0, 5.0]]])
-    normals = mesh_metrics.vertex_normals(loose, triangles)
-
-    assert normals[-1] == pytest.approx(0.0)  # touched by no triangle
-    assert mesh_metrics.vertex_normals(positions, np.empty((0, 3))) == pytest.approx(
-        0.0
-    )
-
-
-def test_point_to_plane_ignores_a_slide_along_the_surface():
-    """Error tangential to the reference surface is not depth error.
-
-    A plane shifted within its own plane still lies on that plane, so
-    point-to-plane sees nothing while point-to-point sees the whole shift.
-    """
-    positions, triangles = grid_mesh(side=12)
-    normals = mesh_metrics.vertex_normals(positions, triangles)
-    # A shift small enough that the nearest vertex is a neighbour on the plane.
-    slid = positions + [0.04, 0.0, 0.0]
-
-    tangential = mesh_metrics.point_to_plane(slid, positions, normals)
-    straight = mesh_metrics.point_to_point(slid, positions)
-
-    assert tangential == pytest.approx(0.0, abs=1e-12)
-    assert np.mean(straight) > 0.03
-
-
-def test_point_to_plane_measures_offset_along_the_normal():
-    positions, triangles = grid_mesh(side=12)
-    normals = mesh_metrics.vertex_normals(positions, triangles)
-    lifted = positions + [0.0, 0.0, 0.02]
-
-    assert mesh_metrics.point_to_plane(lifted, positions, normals) == pytest.approx(
-        0.02
-    )
-
-
-def test_point_to_plane_falls_back_where_the_normal_is_undefined():
-    """Without a normal there is no plane, so the honest answer is the distance."""
-    reference = np.zeros((1, 3))
-    queries = np.array([[0.0, 0.0, 0.5]])
-    normals = np.zeros((1, 3))
-
-    assert mesh_metrics.point_to_plane(queries, reference, normals) == pytest.approx(
-        0.5
-    )
-
-
-def test_point_to_plane_rejects_mismatched_normals():
-    with pytest.raises(ValueError, match="one row per reference vertex"):
-        mesh_metrics.point_to_plane(
-            np.zeros((2, 3)), np.zeros((3, 3)), np.zeros((2, 3))
-        )
-
-
-# ----------------------------
-# The metric against closed-form answers
-# ----------------------------
-def test_quantization_error_matches_its_closed_form():
-    """A known quantizer has a known RMS error, and the metric should find it.
-
-    Rounding each coordinate to a multiple of `step` gives an offset uniform on
-    +/- step/2 per axis, so the 3-D RMS is step * sqrt(3/12) and no offset can
-    exceed step * sqrt(3)/2. The points are spread far enough apart that the
-    nearest reference vertex is the one each point came from.
-    """
-    step = 0.05
-    reference = np.random.default_rng(4).random((4000, 3)) * 10.0
-    decoded = np.round(reference / step) * step
-
-    distances = mesh_metrics.point_to_point(decoded, reference)
-    expected_rms = step * np.sqrt(3.0 / 12.0)
-
-    assert np.sqrt(np.mean(distances ** 2)) == pytest.approx(expected_rms, rel=0.05)
-    assert distances.max() <= step * np.sqrt(3.0) / 2.0 + 1e-12
-
-
-def test_psnr_follows_the_definition():
-    distances = np.full(10, 0.5)
-    summary = mesh_metrics.DirectionalError.summarize(distances, peak=10.0)
-
-    assert summary.rms == pytest.approx(0.5)
-    assert summary.mean == pytest.approx(0.5)
-    assert summary.maximum == pytest.approx(0.5)
-    assert summary.psnr_db == pytest.approx(10.0 * np.log10(100.0 / 0.25))
-
-
-def test_identical_meshes_have_no_error_and_infinite_psnr():
-    positions, triangles = grid_mesh()
-    result = mesh_metrics.compare_meshes(positions, triangles, positions, triangles)
-
-    assert result.decoded_distances == pytest.approx(0.0)
-    assert result.reference_distances == pytest.approx(0.0)
-    assert result.symmetric_rms == pytest.approx(0.0)
-    assert result.forward.psnr_db == np.inf
-    assert result.symmetric_psnr_db == np.inf
-
-
-def test_psnr_is_undefined_rather_than_perfect_without_a_scale():
-    """A degenerate reference has no bounding box, so PSNR has no peak.
-
-    Reporting `inf` here would read as a perfect match when in fact the error is
-    nonzero and only the scale is missing.
-    """
-    summary = mesh_metrics.DirectionalError.summarize(np.full(4, 0.25), peak=0.0)
-    assert np.isnan(summary.psnr_db)
-
-
-def test_symmetric_figures_take_the_worse_direction():
-    """Deleting geometry is invisible in one direction and obvious in the other."""
-    positions, triangles = grid_mesh(side=12)
-    keep = positions[:, 0] < 0.5
-    partial = positions[keep]
-
-    result = mesh_metrics.compare_meshes(
-        positions, triangles, partial, np.empty((0, 3), dtype=np.uint32)
-    )
-
-    # Every surviving vertex sits exactly on the reference.
-    assert result.forward.rms == pytest.approx(0.0)
-    # The half that was dropped has nothing near it.
-    assert result.backward.rms > 0.1
-    assert result.symmetric_rms == result.backward.rms
-    assert result.hausdorff == result.backward.maximum
-    assert result.symmetric_psnr_db == result.backward.psnr_db
-
-
-def test_bounding_box_diagonal():
-    positions = np.array([[0.0, 0.0, 0.0], [3.0, 4.0, 0.0]])
-    assert mesh_metrics.bounding_box_diagonal(positions) == pytest.approx(5.0)
-    assert mesh_metrics.bounding_box_diagonal(np.empty((0, 3))) == 0.0
-
-
-def test_compare_meshes_rejects_an_unknown_metric():
-    positions, triangles = grid_mesh()
-    with pytest.raises(ValueError, match="metric must be"):
-        mesh_metrics.compare_meshes(
-            positions, triangles, positions, triangles, metric="hausdorff"
-        )
-
-
-# ----------------------------
 # Colormaps
-# ----------------------------
 def test_the_ramp_is_monotone_in_lightness():
-    """The property that makes a sequential ramp readable, checked not eyeballed."""
     luminance = colormaps.relative_luminance(colormaps.lookup_table())
     steps = np.diff(luminance)
 
     assert np.all(steps >= 0.0) or np.all(steps <= 0.0), (
         "the ramp reverses direction in lightness"
     )
-    # And it must actually travel, or magnitude has nowhere to show.
     assert abs(luminance[-1] - luminance[0]) > 0.5
 
 
@@ -378,7 +113,6 @@ def test_colorize_marks_unmeasurable_vertices_off_the_ramp():
 
 
 def test_normalize_treats_a_degenerate_range_as_the_floor():
-    """An exact match gives a zero-width scale; it must not divide by zero."""
     assert colormaps.normalize(np.zeros(4), 0.0, 0.0) == pytest.approx(0.0)
     assert colormaps.normalize(np.ones(4), 1.0, 0.0) == pytest.approx(0.0)
 
@@ -395,9 +129,7 @@ def test_colorbar_strip_runs_from_the_bottom_of_the_ramp_to_the_top():
     assert np.array_equal(strip[0], strip[-1])
 
 
-# ----------------------------
 # Pairing and per-frame comparison
-# ----------------------------
 def test_pairing_truncates_to_the_shorter_sequence_and_says_so():
     positions, triangles = grid_mesh()
     reference = sequence_of([(positions, triangles)] * 5)
@@ -434,7 +166,6 @@ def test_pairing_rejects_a_zero_length_sequence():
 def test_the_up_axis_permutation_does_not_change_the_distances(
     reference_sequence, shifted_sequence
 ):
-    """Reorienting for the viewer is rigid, so it must not move the measurement."""
     plain = compare_frames.compare_sequences(
         reference_sequence, shifted_sequence, order=[0, 1, 2]
     )
@@ -444,7 +175,7 @@ def test_the_up_axis_permutation_does_not_change_the_distances(
 
     for left, right in zip(plain.frames, rotated.frames):
         assert left.decoded_distances == pytest.approx(right.decoded_distances)
-    # ...but the geometry handed to the viewer really was permuted.
+    # Rotation changes display coordinates, not measured distances.
     assert not np.allclose(
         plain.frames[0].decoded.positions, rotated.frames[0].decoded.positions
     )
@@ -453,11 +184,6 @@ def test_the_up_axis_permutation_does_not_change_the_distances(
 def test_the_colour_scale_is_one_value_for_the_whole_sequence(
     reference_sequence, shifted_sequence
 ):
-    """Per-frame rescaling would make frames incomparable; assert it does not happen.
-
-    Frame 2's offset is three times frame 0's, so its colours must come out
-    brighter on the shared scale rather than identical.
-    """
     comparison = compare_frames.compare_sequences(
         reference_sequence, shifted_sequence, percentile=None
     )
@@ -494,7 +220,6 @@ def test_the_colour_scale_comes_from_the_requested_source(
 def test_a_percentile_scale_sits_below_the_maximum(
     reference_sequence, shifted_sequence
 ):
-    """The point of a percentile: one stray vertex must not set the scale."""
     comparison = compare_frames.compare_sequences(
         reference_sequence, shifted_sequence, percentile=50.0
     )
@@ -523,7 +248,6 @@ def test_error_colours_are_rgba_and_opaque(reference_sequence, shifted_sequence)
 
 
 def test_zero_shading_leaves_the_ramp_untouched(reference_sequence, shifted_sequence):
-    """The claim that lightness is data alone, checked at the boundary."""
     comparison = compare_frames.compare_sequences(reference_sequence, shifted_sequence)
     frame = comparison.frames[0]
 
@@ -596,9 +320,7 @@ def test_point_to_plane_is_available_end_to_end(reference_sequence, shifted_sequ
     assert comparison.frames[0].decoded_distances == pytest.approx(0.01)
 
 
-# ----------------------------
 # The command line
-# ----------------------------
 @pytest.fixture
 def folders(tmp_path):
     """A reference folder and a decoded folder lifted 0.01 along the normal."""
@@ -631,15 +353,12 @@ def test_info_reports_the_table_and_the_summary(folders, capsys):
 
 
 def test_info_needs_no_gui(folders, monkeypatch, capsys):
-    """`--info` must not import the viewer: it is the form used over ssh."""
     import builtins
 
     real_import = builtins.__import__
 
     def fail_on_qt(name, *args, **kwargs):
-        # The viewer module too, not just Qt: it is what pulls Qt in, and
-        # catching it here is what keeps the import inside `run` below the
-        # `--info` return.
+        # Block viewer imports as well as their Qt dependencies.
         if name.startswith(("PyQt6", "pyqtgraph", "OpenGL", "viewer_")):
             raise AssertionError(f"--info must not import {name}")
         return real_import(name, *args, **kwargs)
@@ -752,3 +471,53 @@ def test_metrics_overlay_names_the_direction_it_shows():
 
     lines = viewer_compare_qt.metrics_lines(comparison, 0, 10.0)
     assert any("decoded → reference" in line for line in lines)
+
+
+@pytest.mark.player
+@pytest.mark.parametrize("width", [5, 6, 7])
+def test_comparison_framebuffer_preserves_padded_rgb_rows(width):
+    from types import SimpleNamespace
+    QtGui = pytest.importorskip("PyQt6.QtGui")
+    Image = pytest.importorskip("PIL.Image")
+    import viewer_compare_qt
+
+    expected = np.arange(width * 4 * 3, dtype=np.uint8).reshape(4, width, 3)
+    framebuffer = QtGui.QImage(width, 4, QtGui.QImage.Format.Format_RGB888)
+    for row in range(4):
+        for column in range(width):
+            framebuffer.setPixelColor(column, row, QtGui.QColor(*map(int, expected[row, column])))
+    view = SimpleNamespace(grabFramebuffer=lambda: framebuffer)
+    picture = viewer_compare_qt._framebuffer(view, SimpleNamespace(width=width, height=4), Image)
+    np.testing.assert_array_equal(np.asarray(picture), expected)
+
+
+@pytest.mark.player
+@pytest.mark.slow
+def test_comparison_gif_after_single_viewer(tmp_path, folders):
+    import os
+    import warnings
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    from PIL import Image
+    from open4d.demo import mesh_sequence
+    from open4d.visualization import render_gif
+
+    with mesh_sequence(side=3, frames=2) as source:
+        render_gif(source, tmp_path / "single.gif", width=65, height=65, no_metrics=True)
+    destination = tmp_path / "comparison.gif"
+    args = cli.build_parser().parse_args([str(folders[0]), str(folders[1]),
+                                         "--save", str(destination), "--width", "101",
+                                         "--height", "101"])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cli.run(args)
+    assert not [warning for warning in caught if issubclass(warning.category, RuntimeWarning)]
+    with Image.open(destination) as image:
+        assert image.n_frames > 1
+        assert image.width == 210
+
+
+def test_comparison_stride_keeps_playback_speed(folders):
+    args = cli.build_parser().parse_args([str(folders[0]), str(folders[1]), "--stride", "2", "--info"])
+    cli.run(args)
+    assert args.fps == 15

@@ -179,8 +179,6 @@ class Sequence:
         value = getattr(self._provider, name, None)
         if value is not None and not isinstance(value, bool):
             raise TypeError(f"provider {name} must be bool or None")
-        if value is None and self.topology is TopologyMode.FIXED:
-            return True
         return value
 
     @property
@@ -222,6 +220,9 @@ class _ViewProvider:
         self.parent = parent
         self.indices = indices
         self.metadata = parent.metadata
+        fps = self.metadata.get("fps")
+        if isinstance(fps, Real) and not isinstance(fps, bool) and math.isfinite(fps) and fps > 0:
+            self.metadata = {**self.metadata, "fps": float(fps) / abs(indices.step)}
         self.topology = parent.topology
         # Key-frame ordinals are the parent's, and a slice may start mid-group or
         # skip frames, so they cannot be rebased onto this view in general.
@@ -252,6 +253,22 @@ class SequenceView(Sequence):
     """A lightweight ordinal view into another sequence."""
 
     def __init__(self, parent: Sequence, indices: range) -> None:
+        if not isinstance(parent, Sequence):
+            raise TypeError("parent must be a Sequence")
+        parent._ensure_open()
+        if not isinstance(indices, range):
+            raise TypeError("view indices must be a range")
+        if indices and (min(indices[0], indices[-1]) < 0
+                        or max(indices[0], indices[-1]) >= len(parent)):
+            raise IndexError("view indices are outside the parent sequence")
         self.parent = parent
         self.indices = indices
         super().__init__(_ViewProvider(parent, indices))
+
+    @property
+    def closed(self) -> bool:
+        return self._closed or self.parent.closed
+
+    def _ensure_open(self) -> None:
+        super()._ensure_open()
+        self.parent._ensure_open()

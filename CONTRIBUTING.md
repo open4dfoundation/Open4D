@@ -1,68 +1,44 @@
 # Contributing to Open4D
 
-Open4D combines a lightweight Python package with independent research
-systems. A component is complete only when setup is reproducible, a licensed
-sample runs end to end, automated tests pass, outputs are documented, and the
-component works through its supported Open4D interface.
-
-## Release safety
-
-Do not publish a PyPI package, GitHub release, container, dataset, model,
-native plugin, or repository bundle while `THIRD_PARTY.md` contains unresolved
-`BLOCK` entries. The explicit Python package list is technical containment; it
-is not legal approval to publish.
-
-## Contribution lanes
-
-- **Lightweight platform:** `open4d.core`, `open4d.torch_ops`, the Open3D
-  adapter, examples, documentation, and CPU tests.
-- **Research codecs:** each directory under `open4d/codecs/` is an independent
-  experimental workflow. Its Python stages use the shared Python 3.12 codec
-  dependency set; native and GPU requirements remain component-specific.
-  Preserve the paper implementation and integrate through narrow adapters.
-- **RGB-D reconstruction and transport:** hardware, CUDA, and network work
-  under `open4d/reconstruction/rgbd/`. Prefer synthetic or recorded tests.
-- **Gaussian reconstruction:** treat the imported research directories as
-  isolated components and avoid unrelated refactors.
-- **Unity/XR:** experimental native integration with unresolved binary and
-  fixture provenance.
-
-Do not combine unrelated lanes in one pull request or opportunistically clean
-up copied research code.
-
-## Lightweight setup
+## Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -e '.[dev]'
 python -m pytest
 ```
 
-The base package supports Python 3.10–3.13. Open3D is tested on 3.10–3.12.
-Optional test tiers are explicit:
+The base package supports Python 3.10 through 3.13. Tests requiring optional
+libraries skip when those libraries are absent. GPU, camera and interactive
+viewer tests need their stated environment variables and hardware.
+
+For research and reconstruction tests on Python 3.12:
 
 ```bash
-python -m pip install -e '.[dev,open3d,torch]'
-python -m pytest -m open3d integrations/open3d/tests open4d/torch_ops/tests
-
-python -m pip install -e '.[dev,torch]'
-python -m pytest -m 'torch and not open3d' open4d/torch_ops/tests
+python -m pip install -e '.[dev,klt,n4mc,qndf,open3d,gaussians]'
+python -m pytest open4d/codec/tests/test_research_cpu.py -m 'not gpu'
+python -m pytest open4d/streaming/tests integrations/open3d/tests
 ```
 
-Registered markers are `cpu`, `open3d`, `torch`, `gpu`, `hardware`, `slow`, and
-`player`. Tests needing GPUs, physical hardware, local datasets, or graphical
-sessions must not run in the default tier.
+## Code
 
-## Required checks
+- Keep the base install NumPy-only and import optional dependencies when used.
+- Put public mesh codec adapters in `open4d/codec`, Gaussian APIs in
+  `open4d/gaussians.py`, and transport/reconstruction in `open4d/streaming`.
+- Preserve the research implementations under `open4d/codecs` and
+  `open4d/reconstruction`. Connect them through small adapters.
+- A decoded artifact must work without the original input or hidden encoder
+  files. Keep native backends separate from the installed Python package.
+- Keep splats separate from `TriangleMesh`, and live iterators separate from
+  finite `Sequence` objects.
+- Add tests for changed behavior. Keep examples short; put benchmarks in `scripts`.
 
-Run the checks relevant to your change:
+## Checks
 
 ```bash
 python -m pytest
-python -m compileall -q open4d integrations examples/visualization scripts
-bash -n scripts/*.sh
+python -m compileall -q open4d/*.py open4d/streaming/*.py open4d/codec open4d/core open4d/io open4d/torch_ops open4d/visualization integrations/__init__.py integrations/open3d examples/visualization scripts
 python scripts/check_markdown_links.py
 python scripts/check_provenance.py
 python scripts/check_release_gate.py --expect-blocked
@@ -71,33 +47,20 @@ python scripts/check_wheel_contents.py dist/open4d-*.whl
 python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
 ```
 
-## Public boundary rules
+The package checks enforce an explicit file list for wheels and source archives.
+The compile check matches CI's supported Python paths; vendored tools such as
+Eigen's historical Python 2 maintenance scripts are outside that check.
+CI also installs the wheel outside the checkout and tests the installed API.
+A pull request should describe the behavior changed, relevant tests, and known
+limitations.
 
-- Keep the base install NumPy-only and import optional dependencies lazily.
-- Preserve `TriangleMesh -> Frame -> FrameProvider -> Sequence` layering and
-  canonical dtype normalization.
-- Do not call a codec artifact self-contained until it decodes in a fresh
-  process without original geometry or undeclared encoder intermediates.
-- Keep finite `Sequence` separate from future live-stream semantics.
-- Report payload, container, filesystem, and wire bytes separately.
-- Do not force point clouds, TSDF volumes, or Gaussian splats into
-  `TriangleMesh`.
+## Data and release
 
-## Data and provenance
+Keep datasets, training runs, checkpoints, logs and generated media outside the
+repository. See [artifact handling](docs/artifacts.md). Small test fixtures need
+a known source and license.
 
-Follow [`docs/artifacts.md`](docs/artifacts.md). Do not add datasets, training
-runs, checkpoints, decoded geometry, logs, or generated videos. A deliberately
-small fixture needs a known license, provenance, checksum, and a test that
-requires it.
-
-Any copied code, submodule, model, dataset, binary, paper, or media addition
-must update [`THIRD_PARTY.md`](THIRD_PARTY.md) with its immutable source,
-revision, modifications, license, distribution constraints, and release
-decision.
-
-## Pull-request evidence
-
-A pull request must state the behavior changed, commands and environment used,
-input/output formats, compatibility impact, provenance impact, and remaining
-limitations. Documentation status claims must name their commit, audit date,
-environment, and verification command.
+Preserve third-party licenses and update [THIRD_PARTY.md](THIRD_PARTY.md) when
+adding or changing imported code, binaries, models or data. Do not publish a
+package, release or repository bundle while that ledger has unresolved `BLOCK`
+entries. The package file list does not grant redistribution rights.

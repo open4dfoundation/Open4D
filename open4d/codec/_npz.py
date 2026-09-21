@@ -21,6 +21,7 @@ from zipfile import (
 import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d._files import publish_file as _publish_file
 
 from ._protocol import CodecError
 
@@ -46,6 +47,41 @@ def _json_value(value, name: str):
     if isinstance(value, (list, tuple)):
         return [_json_value(item, name) for item in value]
     raise CodecError(f"{name} metadata value {type(value).__name__} is not serializable")
+
+
+def _validate_manifest(manifest, *, schema: str | None, codec: str) -> dict:
+    if not isinstance(manifest, dict):
+        raise CodecError("artifact manifest root must be an object")
+    if manifest.get("schema") != schema or manifest.get("codec") != codec:
+        raise CodecError(f"unsupported {codec} artifact schema or codec")
+    frames = manifest.get("frames")
+    if not isinstance(frames, list):
+        raise CodecError("artifact manifest must contain a frame list")
+    nonmonotonic = manifest.get("allow_nonmonotonic_timestamps", False)
+    if not isinstance(nonmonotonic, bool):
+        raise CodecError("allow_nonmonotonic_timestamps must be boolean")
+    for name in ("has_constant_vertex_count", "has_vertex_correspondence"):
+        if manifest.get(name) is not None and not isinstance(manifest[name], bool):
+            raise CodecError(f"{name} must be boolean or null")
+    if not isinstance(manifest.get("metadata", {}), dict):
+        raise CodecError("sequence metadata must be an object")
+    _json_value(manifest.get("metadata", {}), "sequence")
+    previous = None
+    for ordinal, record in enumerate(frames):
+        if not isinstance(record, dict):
+            raise CodecError(f"invalid frame record {ordinal}")
+        index, timestamp = record.get("frame_index"), record.get("timestamp")
+        if type(index) is not int or index < 0:
+            raise CodecError(f"invalid frame index at {ordinal}")
+        if type(timestamp) not in (int, float) or not math.isfinite(timestamp):
+            raise CodecError(f"invalid frame timestamp at {ordinal}")
+        if previous is not None and not nonmonotonic and timestamp < previous:
+            raise CodecError("frame timestamps must be nondecreasing")
+        previous = timestamp
+        if not isinstance(record.get("metadata", {}), dict):
+            raise CodecError(f"frame {ordinal} metadata must be an object")
+        _json_value(record.get("metadata", {}), f"frame {ordinal}")
+    return manifest
 
 
 def _array_bytes(array: np.ndarray) -> bytes:
@@ -170,7 +206,7 @@ class NumPyZipCodec:
             with ZipFile(source, "r") as archive:
                 manifest = json.loads(archive.read("manifest.json"))
                 return isinstance(manifest, Mapping) and manifest.get("codec") == self.id
-        except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
+        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
             return False
 
     def encode(
@@ -237,7 +273,7 @@ class NumPyZipCodec:
                     "manifest.json",
                     json.dumps(manifest, separators=(",", ":"), sort_keys=True),
                 )
-            temporary.replace(destination)
+            _publish_file(temporary, destination, overwrite=overwrite)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -251,25 +287,14 @@ class NumPyZipCodec:
         try:
             archive = ZipFile(source, "r")
             manifest = json.loads(archive.read("manifest.json"))
-            if not isinstance(manifest, Mapping):
-                raise CodecError("artifact manifest root must be an object")
-            if manifest.get("schema") != _SCHEMA:
-                raise CodecError(
-                    f"unsupported artifact schema {manifest.get('schema')!r}"
-                )
-            if not isinstance(manifest.get("frames"), list):
-                raise CodecError("artifact manifest has no frame list")
-            if manifest.get("codec") != self.id:
-                raise CodecError(
-                    f"artifact uses codec {manifest.get('codec')!r}, not {self.id!r}"
-                )
+            _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
             return Sequence(_ZipProvider(source, archive, manifest, self))
         except Exception as error:
             if archive is not None:
                 archive.close()
             if isinstance(error, CodecError):
                 raise
-            if not isinstance(error, (BadZipFile, KeyError, json.JSONDecodeError)):
+            if not isinstance(error, (BadZipFile, KeyError, ValueError, TypeError)):
                 raise
             raise CodecError(f"invalid Open4D artifact {source}: {error}") from error
 

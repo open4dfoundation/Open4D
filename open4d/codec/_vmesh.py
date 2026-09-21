@@ -19,7 +19,7 @@ from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import Open4DError, open_sequence
 from open4d.io._mesh import write_obj
 
-from ._npz import _json_value
+from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
 
 _SCHEMA = "open4d.vmesh-sequence/v1"
@@ -60,6 +60,20 @@ def _raw_fps(value: float | None) -> float:
     return result
 
 
+def _position_normalization(manifest):
+    if "position_bounds" not in manifest and "position_bit_depth" not in manifest:
+        return None
+    try:
+        bounds = np.asarray(manifest["position_bounds"], dtype=np.float64)
+        bits = manifest["position_bit_depth"]
+        if (bounds.shape != (2, 3) or not np.isfinite(bounds).all()
+                or np.any(bounds[0] > bounds[1]) or type(bits) is not int or not 1 <= bits <= 30):
+            raise ValueError("expected finite XYZ bounds and a bit depth from 1 to 30")
+    except (KeyError, TypeError, ValueError) as error:
+        raise CodecError(f"invalid position normalization: {error}") from error
+    return bounds, (1 << bits) - 1
+
+
 def _run(command: list[str], label: str) -> None:
     result = subprocess.run(
         command, shell=False, check=False, capture_output=True, text=True
@@ -77,11 +91,12 @@ class _DecodedProvider:
         self.temporary = temporary
         self.decoded = decoded
         self.manifest = manifest
+        self.normalization = _position_normalization(manifest)
         self.frames = manifest["frames"]
         self.metadata = MappingProxyType(manifest.get("metadata", {}))
-        self.topology = TopologyMode(manifest.get("topology", "unknown"))
-        self.has_constant_vertex_count = manifest.get("has_constant_vertex_count")
-        self.has_vertex_correspondence = manifest.get("has_vertex_correspondence")
+        self.topology = TopologyMode.UNKNOWN
+        self.has_constant_vertex_count = None
+        self.has_vertex_correspondence = None
         self.allow_nonmonotonic_timestamps = manifest.get(
             "allow_nonmonotonic_timestamps", False
         )
@@ -98,9 +113,8 @@ class _DecodedProvider:
         record = self.frames[index]
         decoded = self.decoded[index]
         geometry = decoded.geometry
-        if "position_bounds" in self.manifest:
-            lower, upper = np.asarray(self.manifest["position_bounds"])
-            limit = (1 << self.manifest["position_bit_depth"]) - 1
+        if self.normalization is not None:
+            (lower, upper), limit = self.normalization
             positions = lower + geometry.positions / limit * (upper - lower)
             geometry = TriangleMesh(positions, geometry.triangles)
         return Frame(
@@ -109,8 +123,10 @@ class _DecodedProvider:
         )
 
     def close(self) -> None:
-        self.decoded.close()
-        self.temporary.cleanup()
+        try:
+            self.decoded.close()
+        finally:
+            self.temporary.cleanup()
 
 
 class _RawDecodedProvider:
@@ -150,8 +166,10 @@ class _RawDecodedProvider:
         return self.decoded[index]
 
     def close(self) -> None:
-        self.decoded.close()
-        self.temporary.cleanup()
+        try:
+            self.decoded.close()
+        finally:
+            self.temporary.cleanup()
 
 
 class VMeshCodec:
@@ -175,7 +193,7 @@ class VMeshCodec:
                 and manifest.get("schema") == _SCHEMA
                 and manifest.get("codec") == self.id
             )
-        except (OSError, BadZipFile, KeyError, json.JSONDecodeError):
+        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
             return False
 
     def encode(
@@ -252,14 +270,18 @@ class VMeshCodec:
             _run(command, f"{self.id} encoder")
             if not stream.is_file() or not stream.stat().st_size:
                 raise CodecError(f"{self.id} encoder produced no bitstream")
-            temporary = destination.with_name(f".{destination.name}.tmp")
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{destination.name}.", suffix=".tmp",
+                dir=destination.parent, delete=False,
+            ) as temporary_stream:
+                temporary = Path(temporary_stream.name)
             try:
                 with ZipFile(temporary, "w", compression=ZIP_STORED) as archive:
                     archive.write(stream, "sequence.vmesh")
                     if decoder_config:
                         archive.write(Path(decoder_config).absolute(), "decoder.cfg")
                     archive.writestr("manifest.json", json.dumps(manifest))
-                temporary.replace(destination)
+                _publish_file(temporary, destination, overwrite=overwrite)
             except Exception:
                 temporary.unlink(missing_ok=True)
                 raise
@@ -287,6 +309,7 @@ class VMeshCodec:
         )
         temporary = tempfile.TemporaryDirectory(prefix=f"open4d-{self.id}-decode-")
         work = Path(temporary.name)
+        decoded = None
         try:
             if raw:
                 stream = source
@@ -294,13 +317,8 @@ class VMeshCodec:
             else:
                 with ZipFile(source) as archive:
                     manifest = json.loads(archive.read("manifest.json"))
-                    if not isinstance(manifest, Mapping):
-                        raise CodecError("V-Mesh artifact manifest root must be an object")
-                    if (
-                        manifest.get("schema") != _SCHEMA
-                        or manifest.get("codec") != self.id
-                    ):
-                        raise CodecError(f"artifact is not {self.id}")
+                    _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
+                    _position_normalization(manifest)
                     archive.extract("sequence.vmesh", work)
                     if "decoder.cfg" in archive.namelist():
                         archive.extract("decoder.cfg", work)
@@ -341,8 +359,12 @@ class VMeshCodec:
                     f"{self.id} decoded {len(decoded)} frames, expected {len(manifest['frames'])}"
                 )
             return Sequence(_DecodedProvider(temporary, decoded, manifest))
-        except Exception:
-            temporary.cleanup()
+        except BaseException:
+            try:
+                if decoded is not None:
+                    decoded.close()
+            finally:
+                temporary.cleanup()
             raise
 
 

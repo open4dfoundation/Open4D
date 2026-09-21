@@ -49,6 +49,7 @@ def test_component_discovery_covers_new_directories_and_submodules(tmp_path: Pat
 
     assert discover_required_ledger_paths(tmp_path) == {
         "integrations/unity",
+        "open4d/streaming",
         "open4d/codecs/existing",
         "open4d/codecs/faster_vdmc",
         "open4d/reconstruction/capture",
@@ -69,6 +70,7 @@ def test_nested_submodules_are_covered_by_their_top_level_component(tmp_path: Pa
 
     assert discover_required_ledger_paths(tmp_path) == {
         "integrations/unity",
+        "open4d/streaming",
         "open4d/codecs/qndf",
     }
 
@@ -80,6 +82,7 @@ def test_component_discovery_ignores_generated_and_hidden_directories(tmp_path: 
 
     assert discover_required_ledger_paths(tmp_path) == {
         "integrations/unity",
+        "open4d/streaming",
         "open4d/codecs/qndf",
     }
 

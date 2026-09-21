@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import os
+from numbers import Real
 from pathlib import Path
 
 from open4d.core import Sequence
@@ -59,6 +60,8 @@ def _prepare(
     )
     if not math.isfinite(playback_fps) or playback_fps <= 0:
         raise ValueError("fps must be finite and greater than zero")
+    if fps is None:
+        playback_fps /= stride
     return LazyRenderSequence(
         sequence,
         stride=stride,
@@ -73,7 +76,16 @@ def _open_source(source: Sequence | str | os.PathLike[str]) -> tuple[Sequence, b
     if isinstance(source, (str, os.PathLike)):
         from open4d import _api as public_api
 
-        return public_api.load(source), True
+        from open4d.codec import available_codecs
+
+        suffix = Path(source).suffix.lower()
+        if any(suffix in info.suffixes and info.representation != "triangle_mesh"
+               for info in available_codecs()):
+            raise TypeError("the Qt viewer takes mesh sequences; Gaussian runs need their native renderer")
+        sequence = public_api.load(source)
+        if not isinstance(sequence, Sequence):
+            raise TypeError("the Qt viewer takes an open4d.Sequence")
+        return sequence, True
     raise TypeError("source must be an open4d.Sequence or path-like sequence source")
 
 
@@ -81,17 +93,28 @@ def _options(fps: float, values: dict) -> ViewerOptions:
     options = ViewerOptions(fps=fps, **values)
     if not isinstance(options.title, str) or not options.title:
         raise ValueError("title must be a non-empty string")
-    if any(value is not None and not isinstance(value, int)
+    if any(value is not None and (not isinstance(value, int) or isinstance(value, bool))
            for value in (options.x, options.y)):
         raise ValueError("x and y must be integers or None")
     if (options.x is None) != (options.y is None):
         raise ValueError("x and y must be provided together")
-    if options.width < 1 or options.height < 1:
-        raise ValueError("width and height must be positive")
-    if options.point_size <= 0:
-        raise ValueError("point_size must be greater than zero")
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 1
+           for value in (options.width, options.height)):
+        raise ValueError("width and height must be positive integers")
+    for name in ("point_size", "distance", "elevation", "azimuth", "ambient"):
+        value = getattr(options, name)
+        if not isinstance(value, Real) or not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+    if options.point_size <= 0 or options.distance <= 0:
+        raise ValueError("point_size and distance must be greater than zero")
     if not 0 <= options.ambient <= 1:
         raise ValueError("ambient must be in [0, 1]")
+    for name in ("color", "background"):
+        channels = getattr(options, name)
+        if (not isinstance(channels, (tuple, list)) or len(channels) != 3
+                or any(not isinstance(channel, Real) or not 0 <= channel <= 1
+                       for channel in channels)):
+            raise ValueError(f"{name} must have three channels in [0, 1]")
     return options
 
 
@@ -107,6 +130,7 @@ def visualize(
     """Open an interactive Qt viewer for a sequence or sequence file.
 
     PyQt6, pyqtgraph, and PyOpenGL are imported only when this function runs.
+    Stride skips frames while keeping the source speed; fps overrides playback.
     """
     from . import _qt
 

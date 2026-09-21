@@ -145,6 +145,68 @@ def test_chamfer_rejects_unbatched_input():
         chamfer_distance(torch.rand(5, 3), torch.rand(5, 3))
 
 
+def test_chamfer_unreduced_preserves_both_point_counts():
+    x = torch.tensor([[[0., 0, 0], [2., 0, 0]]])
+    y = torch.tensor([[[0., 0, 0], [1., 0, 0], [3., 0, 0]]])
+    (forward, backward), _ = chamfer_distance(x, y, point_reduction=None, batch_reduction=None)
+    torch.testing.assert_close(forward, torch.tensor([[0., 1.]]))
+    torch.testing.assert_close(backward, torch.tensor([[0., 1., 1.]]))
+    with pytest.raises(ValueError, match="batch_reduction"):
+        chamfer_distance(x, y, point_reduction=None)
+
+
+def test_chamfer_max_is_squared_hausdorff_distance():
+    x = torch.tensor([[[0., 0, 0]]])
+    y = torch.tensor([[[3., 0, 0]]])
+    assert float(chamfer_distance(x, y, point_reduction="max")[0]) == 9
+
+
+def test_chamfer_does_not_lose_distance_after_translation():
+    x = torch.full((1, 30, 3), 1e8, dtype=torch.float64)
+    y = x.clone()
+    y[:, :, 0] += 1
+    assert float(chamfer_distance(x, y)[0]) == pytest.approx(2)
+
+
+def test_small_mesh_sampling_and_normals_do_not_depend_on_distance_units():
+    verts = torch.tensor([[0., 0, 0], [1., 0, 0], [0., 1, 0],
+                          [10., 0, 0], [11., 0, 0], [10., 1, 0]], dtype=torch.float64) * 1e-5
+    faces = torch.tensor([[0, 1, 2], [3, 4, 5]])
+    torch.manual_seed(321)
+    points, _ = sample_points_from_mesh(verts, faces, 5000)
+    assert 0.47 < float((points[:, 0] < 5e-5).double().mean()) < 0.53
+    torch.testing.assert_close(face_normals(verts, faces)[:, 2], torch.ones(2, dtype=verts.dtype))
+    torch.testing.assert_close(vertex_normals(verts, faces)[:, 2], torch.ones(6, dtype=verts.dtype))
+
+
+@pytest.mark.parametrize("scale", [1e-4, 1e-2, 1., 100.])
+def test_small_triangle_distance_matches_perpendicular_projection(scale):
+    verts = torch.tensor([[0., 0, 0], [1., 0, 0], [0., 1, 0]], dtype=torch.float64) * scale
+    points = torch.tensor([[.2, .2, 1.]], dtype=torch.float64) * scale
+    distance, _ = point_face_distance_bruteforce(points, verts, torch.tensor([[0, 1, 2]]))
+    assert float(distance[0]) == pytest.approx(scale * scale, rel=1e-12)
+
+
+def test_degenerate_triangle_distance_uses_its_remaining_edge():
+    verts = torch.tensor([[0., 0, 0], [0., 0, 0], [2., 0, 0]], dtype=torch.float64)
+    distance, _ = point_face_distance_bruteforce(torch.tensor([[1., 1, 0]], dtype=verts.dtype),
+                                                 verts, torch.tensor([[0, 1, 2]]))
+    assert float(distance[0]) == 1
+    with pytest.raises(ValueError, match="surface area"):
+        sample_points_from_mesh(verts, torch.tensor([[0, 1, 2]]), 10)
+
+
+@pytest.mark.parametrize("function", [point_face_distance, point_face_distance_bruteforce])
+def test_point_face_distance_handles_empty_queries_and_rejects_invalid_faces(function):
+    verts, faces = unit_square()
+    distances, indices = function(torch.empty((0, 3), dtype=verts.dtype), verts, faces)
+    assert distances.shape == indices.shape == (0,)
+    with pytest.raises(ValueError, match="at least one"):
+        function(verts[:1], verts, faces[:0])
+    with pytest.raises(ValueError, match="out-of-range"):
+        function(verts[:1], verts, torch.tensor([[0, 1, -1]]))
+
+
 # ----------------------------
 # Point-to-face distance, against closed form and brute force
 # ----------------------------

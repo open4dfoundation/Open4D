@@ -14,6 +14,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from open4d.core import Frame
+
 
 def _open3d() -> Any:
     try:
@@ -21,8 +23,7 @@ def _open3d() -> Any:
     except ImportError as exc:
         raise ImportError(
             "The Open3D integration requires the optional 'open3d' package. "
-            "Install it with: python -m pip install -r "
-            "integrations/open3d/requirements.txt"
+            "Install it with: python -m pip install 'open4d[open3d]'"
         ) from exc
     return o3d
 
@@ -41,6 +42,8 @@ def _member(frame: object, *names: str) -> Any:
 
 def _unpack_frame(frame: object) -> tuple[Any, Any, Any, Any]:
     """Return positions, triangles, colors, and normals from a decoded frame."""
+    if isinstance(frame, Frame):
+        frame = frame.geometry
     if isinstance(frame, Sequence) and not isinstance(frame, (str, bytes, np.ndarray)):
         if len(frame) != 3:
             raise TypeError(
@@ -65,8 +68,8 @@ def _positions(value: ArrayLike | None) -> NDArray[np.float64]:
     array = np.asarray(value)
     if array.ndim != 2 or array.shape[1:] != (3,):
         raise ValueError(f"Vertices/points must have shape (N, 3); got {array.shape}")
-    if not np.issubdtype(array.dtype, np.number):
-        raise TypeError("Vertices/points must be numeric")
+    if array.dtype.kind not in "fiu":
+        raise TypeError("Vertices/points must be real numbers")
     result = np.asarray(array, dtype=np.float64)
     if not np.isfinite(result).all():
         raise ValueError("Vertices/points must contain only finite values")
@@ -94,8 +97,8 @@ def _vertex_attribute(
         raise ValueError(
             f"{name} must have shape ({vertex_count}, 3); got {array.shape}"
         )
-    if not np.issubdtype(array.dtype, np.number):
-        raise TypeError(f"{name} must be numeric")
+    if array.dtype.kind not in "fiu":
+        raise TypeError(f"{name} must be real numbers")
     result = np.asarray(array, dtype=np.float64)
     if not np.isfinite(result).all():
         raise ValueError(f"{name} must contain only finite values")
