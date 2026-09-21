@@ -100,8 +100,10 @@ with open4d.load("capture.usdc") as sequence:
 
 ## Adaptive streaming
 
-[`open4d/streaming`](open4d/streaming) plays volumetric sequences in a browser
-and compares delivery methods against each other. Within this adaptive streaming platform, pick one from the list, or replay a bandwidth trace and watch them respond to it. 
+[`open4d/webclients`](open4d/webclients) plays volumetric sequences in a
+browser and compares delivery methods against each other. Within this
+adaptive streaming platform, pick one from the list, or replay a bandwidth
+trace and watch them respond to it.
 
 <p align="center">
   <img src="docs/assets/streaming-demo.png" width="100%" alt="The system chooser listing five streaming methods with per-object selection, beside a 3D Gaussian splat frame decoded and rendered in the browser">
@@ -109,7 +111,7 @@ and compares delivery methods against each other. Within this adaptive streaming
 
 The clients share one platform-free core, so the browser and desktop clients
 run the same segment loop and the same adaptation logic. See
-[`open4d/streaming/README.md`](open4d/streaming/README.md) for a quick start and
+[`open4d/webclients/README.md`](open4d/webclients/README.md) for a quick start and
 for how to add your own method.
 
 ## Repository layout
@@ -122,8 +124,9 @@ open4d/
 ├── visualization/   public viewer and GIF renderer
 ├── torch_ops/       optional Torch geometry helpers
 ├── codecs/          draco, faster_vdmc, klt, n4mc, qndf, qndf_int8, tsmc, tvmc, vdmc
-├── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools, streamer
-└── streaming/       browser clients and the adaptive-streaming logic they share
+├── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools
+├── streamer/        serving and playing a reconstruction, whatever it is made of
+└── webclients/      browser clients and the adaptive-streaming logic they share
 integrations/        open3d, unity
 examples/            runnable sequence loading, visualization, and comparison
 scripts/             repository-level setup utilities

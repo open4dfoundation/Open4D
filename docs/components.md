@@ -27,7 +27,7 @@ hardware requirements to the shared Python baseline. See
 | [**Vega**](../open4d/reconstruction/vega/README.md) | An ORBIT adaptation of Vega (MobiCom 2025): mobile volumetric video streaming with 3D Gaussian splatting |
 | [**ReRF**](../open4d/reconstruction/rerf/README.md) | Neural residual radiance fields (CVPR 2023) as a streamable compression method |
 | [**gs-tools**](../open4d/reconstruction/gs_tools/README.md) | The one environment, rasterizers, and viewer the Gaussian methods share, plus `gs-tools view` for putting several methods under one camera |
-| [**streamer**](../open4d/reconstruction/streamer/README.md) | Streaming and playback for 4D reconstructions, whatever their representation. Producers import it to describe and serve their output; it imports none of them |
+| [**streamer**](../open4d/streamer/README.md) | Streaming and playback for 4D reconstructions, whatever their representation. Producers import it to describe and serve their output; it imports none of them |
 
 ## Integrations
 

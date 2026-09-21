@@ -1,0 +1,3085 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Open4D Streaming Platform</title>
+<!--
+  The viewer `gs-tools view` serves. One page, no build step and no CDN: it is
+  handed a `view.json` bundle (see gs_tools/io/bundle.py) and plays whichever
+  representations it finds a renderer for -- see REPRESENTATIONS below, which
+  mirrors `open4d.core.Representation`. Today that is 3DGS Gaussians under a
+  free camera and pre-rendered pixels for anything that cannot be decoded here
+  at all. Gaussian frames arrive as 3DGS PLY or as quantised `.splat`; both
+  parse to one shape, so nothing below the parsers knows which it got.
+
+  It has two modes, and the split is not cosmetic -- it is the boundary of what
+  can honestly be compared:
+
+  Explore   Free camera, Gaussian methods only, several at once in synced panes.
+            Every pane shares one orbit camera, so the geometry differences are
+            the only differences. A method that ships no Gaussians cannot appear
+            here at all, which is the point: there is nothing to aim a free
+            camera at.
+
+  Compare   One camera path -- the scene's own capture rig, read from the corpus
+            by gs_tools/cameras.py -- with camera and time scrubbed
+            independently. Gaussian methods are rendered at the selected rig
+            pose; image methods show what was rendered or captured there. This
+            is the mode a volumetric method and a photograph can join, and the
+            one where a difference between panes means something numeric.
+
+  The splat path is a WebGL2 EWA splatter. Per Gaussian it builds the world 3D
+  covariance on the CPU, projects it to a 2D covariance per frame on the GPU,
+  and draws a 3-sigma quad in the covariance's own eigenbasis, so a fragment at
+  quad coordinate c has alpha = opacity * exp(-|c|^2/2) with no further algebra.
+  Gaussians are depth-sorted far-to-near on the CPU (a counting sort over 16-bit
+  depth buckets) and blended premultiplied-over, which is what makes the result
+  match a real 3DGS render rather than approximate it. Checked against
+  diff_gaussian_rasterization at 62 dB PSNR.
+-->
+<style>
+  :root { color-scheme: dark; --panel: #16181d; --edge: #2c313a; --text: #e6e8ec;
+          --dim: #9aa3b2; --accent: #6ea8fe; --bg: #0b0c0f; --wipe: 50%; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  [hidden] { display: none !important; }
+  #app { display: flex; height: 100%; }
+  #stage { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #panes { flex: 1; min-height: 0; display: grid; gap: 2px; background: var(--edge); position: relative; }
+  #panes.wipe { display: block; }
+  .pane { position: relative; background: var(--bg); overflow: hidden; min-width: 0; }
+  #panes.wipe .pane { position: absolute; inset: 0; }
+  #panes.wipe .pane:nth-child(2) { clip-path: inset(0 0 0 var(--wipe)); }
+  .pane canvas, .pane img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .pane img { object-fit: contain; }
+  .pane .label { position: absolute; top: 8px; left: 10px; z-index: 2; font-size: 11px;
+                 letter-spacing: .06em; text-transform: uppercase; color: var(--text);
+                 background: #0b0c0fbb; padding: 2px 7px; border-radius: 4px; }
+  .pane .missing { position: absolute; inset: 0; display: grid; place-content: center;
+                   text-align: center; padding: 24px; color: var(--dim); font-size: 12px;
+                   gap: 6px; }
+  .pane .missing .why { color: #d8a657; font-weight: 600; }
+  #wipeHandle { position: absolute; top: 0; bottom: 0; left: var(--wipe); width: 2px;
+                background: var(--accent); cursor: ew-resize; z-index: 3; }
+  #wipeHandle::after { content: ""; position: absolute; top: 50%; left: -9px; width: 20px;
+                       height: 20px; margin-top: -10px; border-radius: 50%;
+                       background: var(--accent); box-shadow: 0 0 0 3px #0b0c0f88; }
+  #side { width: 330px; flex: none; border-left: 1px solid var(--edge); background: var(--panel);
+          padding: 14px 16px; overflow-y: auto; }
+  /* Without a breakpoint a narrow window gave #side its full 330px and collapsed
+     #stage to nothing -- and the stage is where the mode toggle, the scrubbers and
+     the render itself live, so the viewer looked like a sidebar with no viewer in
+     it. Below this width the two stack, stage first. */
+  @media (max-width: 820px) {
+    #app { flex-direction: column; }
+    #stage { flex: 1 1 auto; min-height: 55vh; }
+    #side { width: 100%; flex: 0 0 auto; max-height: 45vh;
+            border-left: none; border-top: 1px solid var(--edge); }
+  }
+  h1 { font-size: 14px; margin: 0 0 2px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+       margin: 18px 0 6px; font-weight: 600; }
+  select, button { font: inherit; color: var(--text); background: #21252c; border: 1px solid var(--edge);
+                   border-radius: 6px; padding: 5px 9px; }
+  button:hover:not(:disabled), select:hover { border-color: #3d4552; }
+  button:disabled { opacity: .4; cursor: default; }
+  select { width: 100%; }
+  .seg { display: flex; gap: 0; }
+  .seg button { border-radius: 0; flex: 1; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #08111f; border-color: var(--accent); }
+  .methods label { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .methods input { accent-color: var(--accent); }
+  .methods .why { color: var(--dim); font-size: 11px; margin-left: auto; }
+  .scrubber { display: grid; grid-template-columns: 62px 1fr 66px; gap: 8px; align-items: center;
+              padding: 7px 14px; }
+  .scrubber label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .scrubber input { accent-color: var(--accent); }
+  .scrubber .value { font-variant-numeric: tabular-nums; color: var(--dim); text-align: right; }
+  #transport { border-top: 1px solid var(--edge); background: var(--panel); }
+  #transportRow { display: flex; gap: 10px; align-items: center; padding: 8px 14px 4px; }
+  #status { position: absolute; bottom: 8px; left: 10px; z-index: 4; font-variant-numeric: tabular-nums;
+            color: var(--dim); background: #0b0c0fcc; padding: 3px 8px; border-radius: 5px; }
+  #error { position: absolute; inset: 0; display: none; place-content: center; padding: 40px;
+           text-align: center; color: #ff9b9b; white-space: pre-wrap; z-index: 5; }
+  ul { margin: 4px 0 0; padding-left: 18px; }
+  li { color: var(--dim); margin-bottom: 4px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 4px 0 0; }
+  dt { color: var(--dim); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  /* The metrics table. Monospace and tabular so columns of numbers line up and
+     a value that changes does not shift the ones beside it -- a readout that
+     jitters horizontally is unreadable while it updates. */
+  table.metrics { width: 100%; border-collapse: collapse; margin: 4px 0 0;
+                  font: 11px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+                  font-variant-numeric: tabular-nums; }
+  table.metrics th { text-align: right; font-weight: 600; color: var(--dim);
+                     padding: 0 0 3px 6px; border-bottom: 1px solid var(--edge);
+                     white-space: nowrap; }
+  table.metrics th:first-child, table.metrics td:first-child {
+    text-align: left; padding-left: 0; }
+  table.metrics td { text-align: right; padding: 2px 0 2px 6px; white-space: nowrap; }
+  table.metrics tbody tr:hover { background: #1c2027; }
+  table.metrics td.name { color: var(--text); max-width: 96px; overflow: hidden;
+                          text-overflow: ellipsis; }
+  table.metrics td.n { color: var(--text); }
+  table.metrics td.void { color: #5b6472; }
+  table.metrics tr.frozen td { color: #d8a657; }
+  table.metrics tfoot td { border-top: 1px solid var(--edge); color: var(--dim);
+                           padding-top: 3px; }
+
+  /* Terse tags instead of sentences. A caveat a reader needs while looking at a
+     render -- "SH deg 0", "training view" -- is a label, not a paragraph, and
+     three paragraphs of them pushed the numbers off the screen. */
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 0; }
+  .tag { font: 10px/1.6 ui-monospace, monospace; letter-spacing: .02em;
+         background: #21252c; border: 1px solid var(--edge); border-radius: 3px;
+         padding: 0 5px; color: var(--dim); white-space: nowrap; }
+  .tag.warn { border-color: #6b5426; color: #d8a657; }
+  .tag b { color: var(--text); font-weight: 600; }
+
+  details { margin: 6px 0 0; }
+  details > summary { cursor: pointer; color: var(--dim); font-size: 11px;
+                      text-transform: uppercase; letter-spacing: .08em;
+                      font-weight: 600; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "\25B8 "; color: var(--dim); }
+  details[open] > summary::before { content: "\25BE "; }
+  label.toggle { display: flex; align-items: center; gap: 7px; margin: 8px 0 0;
+                 color: var(--dim); font-size: 11px; cursor: pointer; }
+  label.toggle input { accent-color: var(--accent); }
+  kbd { background: #21252c; border: 1px solid var(--edge); border-radius: 4px; padding: 0 4px;
+        font: 11px ui-monospace, monospace; }
+</style>
+
+<div id="app">
+  <div id="stage">
+    <div id="panes"></div>
+    <div id="status">loading…</div>
+    <div id="error"></div>
+    <div id="transport">
+      <div id="transportRow">
+        <button id="playPause" title="Space">▶</button>
+        <div class="seg" style="flex:1">
+          <button id="modeExplore" aria-pressed="true" title="Free camera, shared across panes">explore</button>
+          <button id="modeCompare" aria-pressed="false" title="Every pane at one rig pose">compare</button>
+        </div>
+        <button id="wipeToggle" aria-pressed="false" title="A/B wipe between two panes">A|B</button>
+      </div>
+      <div class="scrubber">
+        <label for="scrubFrame">frame</label>
+        <input id="scrubFrame" type="range" min="0" max="0" value="0" step="1">
+        <span class="value" id="frameLabel">– / –</span>
+      </div>
+      <div class="scrubber" id="cameraRow">
+        <label for="scrubCamera">camera</label>
+        <input id="scrubCamera" type="range" min="0" max="0" value="0" step="1">
+        <span class="value" id="cameraLabel">– / –</span>
+      </div>
+    </div>
+  </div>
+  <div id="side">
+    <h1 id="title">Open4D Streaming Platform</h1>
+
+    <h2>subject</h2>
+    <select id="sceneSelect"></select>
+
+    <h2>methods</h2>
+    <div class="methods" id="methodList"></div>
+
+    <h2>per pane</h2>
+    <table class="metrics" id="paneTable"></table>
+
+    <h2>session</h2>
+    <table class="metrics" id="sessionTable"></table>
+    <label class="toggle" id="adaptRow" hidden>
+      <input type="checkbox" id="adapt" checked> adapt to measured link
+    </label>
+
+    <div class="tags" id="tags"></div>
+
+    <details id="notesBlock">
+      <summary>caveats</summary>
+      <ul id="notes"></ul>
+    </details>
+
+    <details>
+      <summary>controls</summary>
+      <ul id="controlHelp"></ul>
+    </details>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const statusEl = document.getElementById("status");
+const errorEl = document.getElementById("error");
+const panesEl = document.getElementById("panes");
+const scrubFrame = document.getElementById("scrubFrame");
+const scrubCamera = document.getElementById("scrubCamera");
+const frameLabel = document.getElementById("frameLabel");
+const cameraLabel = document.getElementById("cameraLabel");
+const playPause = document.getElementById("playPause");
+const sceneSelect = document.getElementById("sceneSelect");
+const methodList = document.getElementById("methodList");
+const cameraRow = document.getElementById("cameraRow");
+const wipeToggle = document.getElementById("wipeToggle");
+
+function fail(message) {
+  errorEl.textContent = message;
+  errorEl.style.display = "grid";
+  statusEl.hidden = true;
+}
+
+
+/* --------------------------------------------------------------- shaders --- */
+const VERTEX_SHADER = `#version 300 es
+precision highp float;
+precision highp int;
+
+uniform sampler2D uData;      // RGBA32F, 3 texels per Gaussian
+uniform sampler2D uColor;     // RGBA8, 1 texel per Gaussian
+uniform int uDataWidth;
+uniform int uColorWidth;
+uniform vec3 uEye;
+uniform vec3 uRight;
+uniform vec3 uDown;
+uniform vec3 uForward;
+uniform vec2 uFocal;          // pixels
+uniform vec2 uViewport;       // pixels
+
+in vec2 aCorner;              // quad corner in [-3, 3], i.e. 3 sigma
+in uint aIndex;               // Gaussian index, in far-to-near order
+
+out vec2 vCorner;
+out vec4 vColor;
+
+vec4 fetchData(uint texel) {
+  int index = int(texel);
+  return texelFetch(uData, ivec2(index % uDataWidth, index / uDataWidth), 0);
+}
+
+void main() {
+  uint base = aIndex * 3u;
+  vec4 slot0 = fetchData(base);
+  vec4 slot1 = fetchData(base + 1u);
+  vec4 slot2 = fetchData(base + 2u);
+
+  vec3 rel = slot0.xyz - uEye;
+  vec3 cam = vec3(dot(rel, uRight), dot(rel, uDown), dot(rel, uForward));
+  // Behind the camera, or so close that the projection Jacobian blows up.
+  if (cam.z < 0.05) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+
+  mat3 cov = mat3(
+    vec3(slot1.x, slot1.y, slot1.z),
+    vec3(slot1.y, slot1.w, slot2.x),
+    vec3(slot1.z, slot2.x, slot2.y)
+  );
+  // Columns are the camera axes, so this maps camera -> world and its
+  // transpose maps world -> camera.
+  mat3 basis = mat3(uRight, uDown, uForward);
+  mat3 worldToCam = transpose(basis);
+  mat3 covCam = worldToCam * cov * basis;
+
+  float inv = 1.0 / cam.z;
+  mat3 jacobian = mat3(
+    vec3(uFocal.x * inv, 0.0, 0.0),
+    vec3(0.0, uFocal.y * inv, 0.0),
+    vec3(-uFocal.x * cam.x * inv * inv, -uFocal.y * cam.y * inv * inv, 0.0)
+  );
+  mat3 projected = jacobian * covCam * transpose(jacobian);
+
+  // The 0.3 px dilation is 3DGS's low-pass filter: without it a Gaussian
+  // thinner than a pixel aliases into flicker as the camera moves.
+  float a = projected[0][0] + 0.3;
+  float b = projected[1][0];
+  float c = projected[1][1] + 0.3;
+  float mid = 0.5 * (a + c);
+  float radius = sqrt(max(mid * mid - (a * c - b * b), 0.0));
+  float major = mid + radius;
+  float minor = mid - radius;
+  if (minor <= 0.0) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+
+  // Eigenvector for the major eigenvalue: (a - major) x + b y = 0.
+  vec2 axis = abs(b) < 1e-12 ? (a >= c ? vec2(1.0, 0.0) : vec2(0.0, 1.0))
+                             : normalize(vec2(b, major - a));
+  vec2 majorAxis = min(sqrt(major), 512.0) * axis;
+  vec2 minorAxis = min(sqrt(minor), 512.0) * vec2(-axis.y, axis.x);
+  vec2 offsetPx = aCorner.x * majorAxis + aCorner.y * minorAxis;
+
+  vec2 centrePx = vec2(uFocal.x * cam.x * inv, uFocal.y * cam.y * inv);
+  // Image y runs down, NDC y runs up.
+  vec2 toNdc = vec2(2.0 / uViewport.x, -2.0 / uViewport.y);
+  gl_Position = vec4((centrePx + offsetPx) * toNdc, 0.0, 1.0);
+
+  int ci = int(aIndex);
+  vec4 rgb = texelFetch(uColor, ivec2(ci % uColorWidth, ci / uColorWidth), 0);
+  vColor = vec4(rgb.rgb, slot0.w);
+  vCorner = aCorner;
+}
+`;
+
+const FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+in vec2 vCorner;
+in vec4 vColor;
+out vec4 fragColor;
+void main() {
+  float squared = dot(vCorner, vCorner);
+  if (squared > 9.0) discard;          // outside 3 sigma
+  float alpha = vColor.a * exp(-0.5 * squared);
+  if (alpha < 1.0 / 510.0) discard;
+  fragColor = vec4(vColor.rgb * alpha, alpha);   // premultiplied
+}
+`;
+
+function compile(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(shader) || "shader compile failed");
+  }
+  return shader;
+}
+
+/* -------------------------------------------------------------- renderer --- */
+class SplatRenderer {
+  constructor(gl) {
+    this.gl = gl;
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, VERTEX_SHADER));
+    gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program) || "program link failed");
+    }
+    this.program = program;
+    this.uniform = {};
+    for (const name of ["uData", "uColor", "uDataWidth", "uColorWidth", "uEye",
+                        "uRight", "uDown", "uForward", "uFocal", "uViewport"]) {
+      this.uniform[name] = gl.getUniformLocation(program, name);
+    }
+
+    this.corners = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.corners);
+    // Triangle strip over a 3-sigma square.
+    gl.bufferData(gl.ARRAY_BUFFER,
+      new Float32Array([-3, -3, 3, -3, -3, 3, 3, 3]), gl.STATIC_DRAW);
+
+    this.indexBuffer = gl.createBuffer();
+    this.dataTexture = this.makeTexture(gl.RGBA32F, gl.FLOAT);
+    this.colorTexture = this.makeTexture(gl.RGBA8, gl.UNSIGNED_BYTE);
+    this.width = 2048;
+    this.count = 0;
+    this.order = null;
+    this.depths = null;
+    this.buckets = new Uint32Array(65536);
+    this.starts = new Uint32Array(65536);
+  }
+
+  makeTexture(internalFormat, type) {
+    const gl = this.gl;
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    texture._internalFormat = internalFormat;
+    texture._type = type;
+    return texture;
+  }
+
+  upload(frame) {
+    const gl = this.gl;
+    this.count = frame.count;
+    this.positions = frame.positions;
+
+    const dataTexels = frame.count * 3;
+    const dataRows = Math.ceil(dataTexels / this.width);
+    const padded = new Float32Array(this.width * dataRows * 4);
+    padded.set(frame.data);
+    gl.bindTexture(gl.TEXTURE_2D, this.dataTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.width, dataRows, 0,
+                  gl.RGBA, gl.FLOAT, padded);
+
+    const colorRows = Math.ceil(frame.count / this.width);
+    const paddedColors = new Uint8Array(this.width * colorRows * 4);
+    paddedColors.set(frame.colors);
+    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.width, colorRows, 0,
+                  gl.RGBA, gl.UNSIGNED_BYTE, paddedColors);
+
+    if (!this.order || this.order.length < frame.count) {
+      this.order = new Uint32Array(frame.count);
+      this.depths = new Float32Array(frame.count);
+    }
+    this.sortedFor = null;
+  }
+
+  /* Far-to-near order, by a counting sort over 16-bit depth buckets.
+   * A comparison sort of half a million floats per frame is the one thing that
+   * would make playback stutter; bucketing is O(n) and the quantisation error
+   * is below what a swapped pair of overlapping splats can show. */
+  sort(eye, forward) {
+    const n = this.count;
+    const positions = this.positions;
+    const depths = this.depths;
+    let low = Infinity, high = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = (positions[i * 3] - eye[0]) * forward[0]
+              + (positions[i * 3 + 1] - eye[1]) * forward[1]
+              + (positions[i * 3 + 2] - eye[2]) * forward[2];
+      depths[i] = d;
+      if (d < low) low = d;
+      if (d > high) high = d;
+    }
+    const buckets = this.buckets.fill(0);
+    const scale = high > low ? 65535 / (high - low) : 0;
+    const key = new Uint16Array(n);
+    for (let i = 0; i < n; i++) {
+      // Negated, so bucket 0 is the farthest and the sort comes out back-to-front.
+      const bucket = 65535 - ((depths[i] - low) * scale) | 0;
+      key[i] = bucket < 0 ? 0 : bucket > 65535 ? 65535 : bucket;
+      buckets[key[i]]++;
+    }
+    const starts = this.starts;
+    let running = 0;
+    for (let b = 0; b < 65536; b++) { starts[b] = running; running += buckets[b]; }
+    const order = this.order;
+    for (let i = 0; i < n; i++) order[starts[key[i]]++] = i;
+
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.indexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, order.subarray(0, n), gl.DYNAMIC_DRAW);
+  }
+
+  /* `rect` is where in the canvas to draw, `canvasSize` the whole thing.
+   * They differ in compare mode: the splat is letterboxed to the capture rig's
+   * aspect so it frames the subject exactly as the captured image beside it
+   * does, and a difference between the two panes is then a difference in the
+   * reconstruction rather than in the crop. */
+  draw(camera, rect, canvasSize) {
+    const gl = this.gl;
+    gl.viewport(0, 0, canvasSize[0], canvasSize[1]);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.clearColor(0.043, 0.047, 0.059, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    // The letterboxed region is cleared to black, because that is what the
+    // corpus captured against and what an image pane beside this one shows.
+    // Matching it is what lets a silhouette be judged rather than guessed at.
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(rect[0], rect[1], rect[2], rect[3]);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.disable(gl.SCISSOR_TEST);
+    if (!this.count) return;
+    gl.viewport(rect[0], rect[1], rect[2], rect[3]);
+
+    gl.useProgram(this.program);
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.dataTexture);
+    gl.uniform1i(this.uniform.uData, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
+    gl.uniform1i(this.uniform.uColor, 1);
+    gl.uniform1i(this.uniform.uDataWidth, this.width);
+    gl.uniform1i(this.uniform.uColorWidth, this.width);
+    gl.uniform3fv(this.uniform.uEye, camera.eye);
+    gl.uniform3fv(this.uniform.uRight, camera.right);
+    gl.uniform3fv(this.uniform.uDown, camera.down);
+    gl.uniform3fv(this.uniform.uForward, camera.forward);
+    gl.uniform2f(this.uniform.uFocal, camera.focal[0], camera.focal[1]);
+    gl.uniform2f(this.uniform.uViewport, rect[2], rect[3]);
+
+    const corner = gl.getAttribLocation(this.program, "aCorner");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.corners);
+    gl.enableVertexAttribArray(corner);
+    gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(corner, 0);
+
+    const index = gl.getAttribLocation(this.program, "aIndex");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.indexBuffer);
+    gl.enableVertexAttribArray(index);
+    gl.vertexAttribIPointer(index, 1, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(index, 1);
+
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.count);
+  }
+}
+
+/* ---------------------------------------------------------------- camera --- */
+const WORLD_UP = [0, 1, 0];
+
+function cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function normalize(v) {
+  const n = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / n, v[1] / n, v[2] / n];
+}
+
+class OrbitCamera {
+  constructor() { this.fovY = 50 * Math.PI / 180; this.reset([0, 0, 0], 4); }
+
+  reset(target, distance) {
+    this.target = target.slice();
+    this.distance = distance;
+    this.home = { target: target.slice(), distance };
+    this.yaw = 0;
+    this.pitch = 12 * Math.PI / 180;
+  }
+
+  goHome() {
+    this.target = this.home.target.slice();
+    this.distance = this.home.distance;
+    this.yaw = 0;
+    this.pitch = 12 * Math.PI / 180;
+  }
+
+  /* Distance at which a sphere of `radius` about the target just fits.
+   * Whichever of the two half-angles is narrower is the binding one, so a wide
+   * scene in a tall window frames as well as a standing figure in a wide one. */
+  fitDistance(radius, viewport) {
+    const halfY = this.fovY / 2;
+    const aspect = Math.max(viewport[0], 1) / Math.max(viewport[1], 1);
+    const halfX = Math.atan(aspect * Math.tan(halfY));
+    return (radius / Math.sin(Math.min(halfX, halfY))) * 1.05;
+  }
+
+  frame(viewport) {
+    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    const eye = [
+      this.target[0] + this.distance * Math.sin(this.yaw) * cp,
+      this.target[1] + this.distance * sp,
+      this.target[2] + this.distance * Math.cos(this.yaw) * cp,
+    ];
+    const forward = normalize([this.target[0] - eye[0], this.target[1] - eye[1], this.target[2] - eye[2]]);
+    // right = forward x up, down = forward x right: an orthonormal (right, down,
+    // forward) triple in which world +Y ends up as screen-up.
+    const right = normalize(cross(forward, WORLD_UP));
+    const down = normalize(cross(forward, right));
+    const fy = 0.5 * viewport[1] / Math.tan(this.fovY / 2);
+    return { eye, right, down, forward, focal: [fy, fy] };
+  }
+}
+
+
+/* --------------------------------------------------- mesh / point shaders ---
+ * Same camera math as the splat path -- eye plus a (right, down, forward) basis
+ * and a focal length in pixels -- so a mesh pane and a splat pane of the same
+ * scene agree geometrically. What differs is that this writes a real depth and
+ * runs the depth test: triangles occlude, where splats are blended in sorted
+ * order and never do. */
+const MESH_VERTEX_SHADER = `#version 300 es
+precision highp float;
+
+uniform vec3 uEye;
+uniform vec3 uRight;
+uniform vec3 uDown;
+uniform vec3 uForward;
+uniform vec2 uFocal;
+uniform vec2 uViewport;
+uniform vec2 uDepthRange;   // near, far
+uniform float uPointSize;
+
+in vec3 aPosition;
+in vec4 aColor;
+
+out vec3 vWorld;
+out vec4 vColor;
+
+void main() {
+  vWorld = aPosition;
+  vColor = aColor;
+  vec3 p = aPosition - uEye;
+  vec3 cam = vec3(dot(p, uRight), dot(p, uDown), dot(p, uForward));
+  float near = uDepthRange.x, far = uDepthRange.y;
+  if (cam.z < near) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+
+  // The perspective divide rides in w, so interpolation stays perspective
+  // correct and the depth buffer gets the usual hyperbolic z.
+  vec2 px = vec2(uFocal.x * cam.x, uFocal.y * cam.y);
+  vec2 toNdc = vec2(2.0 / uViewport.x, -2.0 / uViewport.y);
+  float clipZ = (cam.z * (far + near) - 2.0 * far * near) / (far - near);
+  gl_Position = vec4(px * toNdc, clipZ, cam.z);
+  gl_PointSize = uPointSize;
+}
+`;
+
+const MESH_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+uniform vec3 uEye;
+uniform int uMode;          // 0 = triangles, 1 = points
+uniform float uAmbient;
+
+in vec3 vWorld;
+in vec4 vColor;
+out vec4 fragColor;
+
+void main() {
+  vec3 toEye = normalize(uEye - vWorld);
+  vec3 normal;
+  if (uMode == 1) {
+    // A point has no surface to differentiate, so it is shaded as a small
+    // sphere: the disc's own coordinates stand in for a normal, which reads as
+    // round rather than as a flat chip.
+    vec2 disc = gl_PointCoord * 2.0 - 1.0;
+    float squared = dot(disc, disc);
+    if (squared > 1.0) discard;
+    normal = normalize(vec3(disc.x, -disc.y, sqrt(max(1.0 - squared, 0.0))));
+  } else {
+    // Flat shading from screen-space derivatives. No CPU normals and none in
+    // the file: Open4D's PLY writer refuses to store them, and a normal derived
+    // here is correct for whatever geometry actually arrived.
+    normal = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+    if (dot(normal, toEye) < 0.0) normal = -normal;
+  }
+  float lambert = uAmbient + (1.0 - uAmbient) * max(dot(normal, toEye), 0.0);
+  fragColor = vec4(vColor.rgb * lambert, 1.0);
+}
+`;
+
+/* Triangles and points, sharing one program. Same interface as SplatRenderer --
+ * upload / sort / draw -- so a Pane does not know which it is holding; `sort`
+ * is a no-op here because the depth buffer does that job. */
+class MeshRenderer {
+  constructor(gl, mode) {
+    this.gl = gl;
+    this.mode = mode === "points" ? 1 : 0;
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, MESH_VERTEX_SHADER));
+    gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, MESH_FRAGMENT_SHADER));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program) || "program link failed");
+    }
+    this.program = program;
+    this.uniform = {};
+    for (const name of ["uEye", "uRight", "uDown", "uForward", "uFocal",
+                        "uViewport", "uDepthRange", "uPointSize", "uMode",
+                        "uAmbient"]) {
+      this.uniform[name] = gl.getUniformLocation(program, name);
+    }
+    this.positionBuffer = gl.createBuffer();
+    this.colorBuffer = gl.createBuffer();
+    this.indexBuffer = gl.createBuffer();
+    this.count = 0;
+    this.indexCount = 0;
+    this.bounds = null;
+  }
+
+  upload(parsed) {
+    const gl = this.gl;
+    this.count = parsed.count;
+    this.bounds = parsed.bounds;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, parsed.positions, gl.DYNAMIC_DRAW);
+
+    // A mesh with no colour is drawn in the same near-white the Qt sequence
+    // viewer uses, so the two do not disagree about what an uncoloured mesh
+    // looks like.
+    const colors = parsed.colors || (() => {
+      const flat = new Uint8Array(parsed.count * 4);
+      for (let i = 0; i < parsed.count; i++) {
+        flat[i * 4] = 242; flat[i * 4 + 1] = 242; flat[i * 4 + 2] = 247;
+        flat[i * 4 + 3] = 255;
+      }
+      return flat;
+    })();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
+
+    this.indexCount = parsed.indices ? parsed.indices.length : 0;
+    if (this.indexCount) {
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, parsed.indices, gl.DYNAMIC_DRAW);
+    }
+  }
+
+  /* Nothing to do: the depth buffer resolves occlusion, which is the whole
+   * reason a mesh does not need the far-to-near ordering a splat does. */
+  sort() {}
+
+  /* Near and far from the frame's own bounding box, so a scene of any scale
+   * gets usable depth precision instead of a guessed constant. */
+  _depthRange(eye) {
+    if (!this.bounds) return [0.01, 100.0];
+    const [lower, upper] = this.bounds;
+    let near = Infinity, far = 0;
+    for (let corner = 0; corner < 8; corner++) {
+      const point = [
+        (corner & 1) ? upper[0] : lower[0],
+        (corner & 2) ? upper[1] : lower[1],
+        (corner & 4) ? upper[2] : lower[2],
+      ];
+      const distance = Math.hypot(point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]);
+      near = Math.min(near, distance);
+      far = Math.max(far, distance);
+    }
+    // The eye can be inside the box, so the near plane cannot simply be the
+    // closest corner.
+    return [Math.max(near * 0.5, far * 1e-4, 1e-4), far * 2 + 1e-3];
+  }
+
+  draw(camera, rect, canvasSize) {
+    const gl = this.gl;
+    gl.viewport(0, 0, canvasSize[0], canvasSize[1]);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.clearColor(0.043, 0.047, 0.059, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (!this.count) return;
+
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(rect[0], rect[1], rect[2], rect[3]);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(rect[0], rect[1], rect[2], rect[3]);
+
+    gl.useProgram(this.program);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+
+    const position = gl.getAttribLocation(this.program, "aPosition");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 3, gl.FLOAT, false, 0, 0);
+
+    const color = gl.getAttribLocation(this.program, "aColor");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.enableVertexAttribArray(color);
+    gl.vertexAttribPointer(color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+    const depth = this._depthRange(camera.eye);
+    gl.uniform3fv(this.uniform.uEye, camera.eye);
+    gl.uniform3fv(this.uniform.uRight, camera.right);
+    gl.uniform3fv(this.uniform.uDown, camera.down);
+    gl.uniform3fv(this.uniform.uForward, camera.forward);
+    gl.uniform2f(this.uniform.uFocal, camera.focal[0], camera.focal[1]);
+    gl.uniform2f(this.uniform.uViewport, rect[2], rect[3]);
+    gl.uniform2f(this.uniform.uDepthRange, depth[0], depth[1]);
+    gl.uniform1f(this.uniform.uPointSize, 3.0);
+    gl.uniform1i(this.uniform.uMode, this.mode);
+    gl.uniform1f(this.uniform.uAmbient, 0.32);
+
+    if (this.mode === 0 && this.indexCount) {
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+      gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
+    } else {
+      // A mesh clip whose frames carry no faces still has vertices worth
+      // showing, so it falls through to points rather than drawing nothing.
+      gl.uniform1i(this.uniform.uMode, 1);
+      gl.drawArrays(gl.POINTS, 0, this.count);
+    }
+    gl.disable(gl.DEPTH_TEST);
+  }
+}
+
+/* ---------------------------------------------------- representations ---
+ * What a decoded frame *is*, mirroring `open4d.core.Representation`. A
+ * representation decides which source parses it, which surface shows it, and
+ * whether a free camera is meaningful -- so adding one is an entry here plus a
+ * renderer, not a new branch in every function that touches a clip.
+ *
+ * `geometry` is core's `Representation.has_geometry`, and decides whether a free
+ * camera is meaningful: pixels carry none, so such a pane shows whatever camera
+ * the renderer chose and its controls say so.
+ *
+ * Every representation core defines is registered here. Being in this table is
+ * still the separate question of whether playback is possible at all, which is
+ * what a clip naming an unregistered representation runs into -- it is reported
+ * as unplayable rather than rendering a blank pane, and that is what the next
+ * representation to arrive here without a renderer will get.
+ */
+const REPRESENTATIONS = {
+  mesh: {
+    geometry: true,
+    surface: "canvas",
+    decode: decodeFrame("mesh"),
+    cacheSize: 6,
+    renderer: (gl) => new MeshRenderer(gl, "mesh"),
+  },
+  points: {
+    geometry: true,
+    surface: "canvas",
+    decode: decodeFrame("points"),
+    cacheSize: 6,
+    renderer: (gl) => new MeshRenderer(gl, "points"),
+  },
+  gaussians: {
+    geometry: true,
+    surface: "canvas",
+    decode: decodeFrame("gaussians"),
+    cacheSize: 6,
+    renderer: (gl) => new SplatRenderer(gl),
+  },
+  pixels: {
+    geometry: false,
+    surface: "image",
+    // Not the worker: an <img> needs the main thread, and a browser already
+    // decodes an image off it, so there is nothing to move.
+    decode: decodeImage,
+    // Pixels decode to an <img>, which is cheap next to a parsed vertex buffer,
+    // so a longer window costs little and covers a faster scrub.
+    cacheSize: 16,
+  },
+};
+
+
+/* view.json v1 called these `kind`. Bundles already on disk are worth keeping
+ * readable, so the field is migrated on load rather than requiring a re-export. */
+const LEGACY_KINDS = { splats: "gaussians", images: "pixels" };
+
+function spec(clip) { return clip ? REPRESENTATIONS[clip.representation] : undefined; }
+function playable(clip) { return spec(clip) !== undefined; }
+function hasGeometry(clip) { const s = spec(clip); return s !== undefined && s.geometry; }
+function isPixels(clip) { const s = spec(clip); return s !== undefined && !s.geometry; }
+/* A clip rendered as it is watched: a URL instead of a frame list, so there is
+ * no scheduler, no cache and nothing to scrub. See streamer/live.py. */
+function isLive(clip) { return !!(clip && clip.stream); }
+/* What a streamed pane should call itself. The transport is the same either
+ * way; what differs is whether anything is being computed while you watch, and
+ * calling a replay "live" is a claim the software does not support. */
+function streamLabel(clip) {
+  return clip && clip.stream && clip.stream.origin === "replay" ? "replay" : "live";
+}
+
+/* ---------------------------------------------------------------- decoding ---
+ * Geometry is parsed in a worker (client/worker.js), because parsing is the one
+ * expensive synchronous step in playback -- 16 to 32 ms a frame on this
+ * repository's content -- and on the main thread every one of those is a missed
+ * frame for *every* pane, not just the one decoding.
+ *
+ * One worker, not a pool. Decoding is serialised through it, which is enough to
+ * unblock the main thread and is the whole win; a pool would add throughput and
+ * a copy of the 286 kB Draco module per worker, and there is no measurement yet
+ * saying the queue is the bottleneck rather than the network.
+ *
+ * Buffers go in and come back transferred, so nothing large is copied. That does
+ * mean the request buffer is neutered afterwards, which is correct here -- the
+ * Scheduler has no use for the bytes once they are parsed -- and would be a bug
+ * for any caller that wanted to keep them.
+ */
+class WorkerDecoder {
+  constructor(url = "client/worker.js") {
+    this.url = url;
+    this.worker = null;
+    this.pending = new Map();
+    this.nextId = 1;
+  }
+
+  _start() {
+    if (this.worker) return this.worker;
+    this.worker = new Worker(this.url);
+    this.worker.onmessage = (event) => {
+      const { id, parsed, error } = event.data;
+      const settle = this.pending.get(id);
+      if (!settle) return;
+      this.pending.delete(id);
+      if (error) settle.reject(new Error(error));
+      else settle.resolve(parsed);
+    };
+    this.worker.onerror = (event) => {
+      // A worker that fails to start fails every request, and silently unless
+      // this rejects them: the page would sit at "loading" with no reason.
+      const reason = new Error(
+        `decode worker failed: ${event.message || "could not start " + this.url}`);
+      for (const settle of this.pending.values()) settle.reject(reason);
+      this.pending.clear();
+    };
+    return this.worker;
+  }
+
+  decode(representation, buffer, url) {
+    const worker = this._start();
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      worker.postMessage({ id, representation, url, buffer }, [buffer]);
+    });
+  }
+}
+
+const decoder = new WorkerDecoder();
+
+/* What a representation hands the Scheduler: same signature as before, so
+ * nothing downstream knows the parse moved off this thread. */
+function decodeFrame(representation) {
+  return (buffer, url) => decoder.decode(representation, buffer, url);
+}
+
+/* ---------------------------------------------------------- one file a clip ---
+ * A clip packed as a single container: a header naming the frames, then their
+ * bytes end to end. See streamer/sequence.py for the layout.
+ *
+ * One request instead of thirty. On loopback that changes nothing, which is
+ * why per-frame fetching survived so long; over a 20 ms link thirty frames is
+ * thirty round trips, 600 ms of latency before anything plays. And for a free
+ * camera the sequence is the only sensible unit anyway -- a frame that has
+ * been thrown away cannot be redrawn from a new angle, so the whole thing has
+ * to be held regardless of how it was asked for.
+ */
+/* A frame's suffix, by the same rule `worker.js` uses to choose its codec.
+ * Transcribed rather than shared because the worker is a separate script, and
+ * held to the original by `streamer_tests/test_client_parsers.py`. */
+function suffixOf(url) {
+  const path = String(url).split("?", 1)[0];
+  const dot = path.lastIndexOf(".");
+  return dot < 0 ? "" : path.slice(dot).toLowerCase();
+}
+
+const SEQ_MAGIC = "O4DSEQ\0\0";
+//: magic(8) + version(4) + count(4) + suffix length(4)
+const SEQ_PREAMBLE = 20;
+
+/* The header of a container, from its first bytes. Parsed separately from the
+ * body so a download that has only started can already say how many frames are
+ * coming, which is what a progress count needs. */
+function readSequenceHeader(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < SEQ_PREAMBLE) throw new Error("sequence header truncated");
+  let magic = "";
+  for (let i = 0; i < 8; i++) magic += String.fromCharCode(bytes[i]);
+  if (magic !== SEQ_MAGIC) throw new Error("not a sequence container");
+  const view = new DataView(buffer);
+  const version = view.getUint32(8, true);
+  if (version !== 1) throw new Error(`sequence version ${version} is not 1`);
+  const count = view.getUint32(12, true);
+  const suffixLength = view.getUint32(16, true);
+  let suffix = "";
+  for (let i = 0; i < suffixLength; i++) {
+    suffix += String.fromCharCode(bytes[SEQ_PREAMBLE + i]);
+  }
+  const table = SEQ_PREAMBLE + suffixLength;
+  if (bytes.length < table + 8 * count) throw new Error("sequence table truncated");
+  const entries = [];
+  for (let i = 0; i < count; i++) {
+    entries.push({
+      offset: view.getUint32(table + 8 * i, true),
+      length: view.getUint32(table + 8 * i + 4, true),
+    });
+  }
+  return { suffix, entries };
+}
+
+/* One frame's bytes, as its own ArrayBuffer.
+ *
+ * Sliced rather than viewed: the decode worker takes ownership of what it is
+ * given, and handing it a view into the container would transfer the whole
+ * container on the first frame and leave the rest unreachable. */
+function sequenceFrame(buffer, header, index) {
+  const entry = header.entries[index];
+  return buffer.slice(entry.offset, entry.offset + entry.length);
+}
+
+/* ------------------------------------------------------------- adaptation ---
+ * Three pieces: measure what the link delivers, read the ladder a clip
+ * carries, and pick a rung per pane.
+ *
+ * The rule here is deliberately *not* the one `streamer.policy` implements.
+ * That one maximises total weighted quality under a budget, which is right for
+ * a player -- and wrong for a comparison, because the way to maximise a sum is
+ * to make the panes unequal, spending on whichever gains most per byte. A
+ * viewer whose whole purpose is judging two methods against each other must
+ * not decide that one of them gets the bandwidth.
+ *
+ * So the budget is split evenly and each pane takes the best rung its share
+ * affords. Equal shares, equal treatment, and the comparison stays honest.
+ * `policy.choose` is still what answers "what would an optimising client do",
+ * from Python, where it can be measured -- and it is not transcribed here,
+ * which also means there is no second implementation of it to drift.
+ */
+
+class RateMeter {
+  /* What the link is actually delivering, as an exponentially weighted mean.
+   *
+   * Measured from this client's own fetches rather than told: a browser cannot
+   * see the server's configured capacity, and a client that trusted a number
+   * it was handed would not be estimating anything. Weighted by bytes, so a
+   * 33 kB frame counts for more than a 3 kB one -- an unweighted mean over
+   * mixed sizes is dominated by whichever rung happens to be small.
+   *
+   * Only samples above `minBytes` count. A cache hit or a 304 completes in
+   * microseconds and would read as a gigabit link, which is exactly the
+   * over-estimate that then overshoots the real one.
+   */
+  constructor({ halfLife = 8, minBytes = 2048 } = {}) {
+    this.halfLife = halfLife;          // samples, not seconds
+    this.minBytes = minBytes;
+    this.bitsPerSecond = 0;
+    this.samples = 0;
+    this.bytes = 0;
+  }
+
+  record(bytes, seconds) {
+    if (bytes < this.minBytes || seconds <= 0) return;
+    const rate = (bytes * 8) / seconds;
+    this.samples += 1;
+    this.bytes += bytes;
+    if (this.samples === 1) { this.bitsPerSecond = rate; return; }
+    const alpha = 1 - Math.pow(0.5, 1 / this.halfLife);
+    this.bitsPerSecond += alpha * (rate - this.bitsPerSecond);
+  }
+
+  reset() { this.bitsPerSecond = 0; this.samples = 0; this.bytes = 0; }
+}
+
+const meter = new RateMeter();
+
+/* A clip's renditions, cheapest first: the default plus whatever variants the
+ * manifest carries. The default's size is `detail.bytes_per_frame`, which
+ * `streamer.metrics --write` records -- a variant states its own size, but the
+ * default's is only on disk, so without that a client can compare the rungs it
+ * might move to and not the one it is on. */
+function rungsOf(clip, fps) {
+  if (!clip || !clip.frames || !clip.frames.length) return [];
+  const detail = clip.detail || {};
+  const rungs = [];
+  if (detail.bytes_per_frame) {
+    rungs.push({
+      name: "default", frames: clip.frames,
+      bitsPerSecond: detail.bytes_per_frame * 8 * fps,
+      quality: detail.quality || {},
+    });
+  }
+  for (const variant of clip.variants || []) {
+    if (!variant.frames || !variant.frames.length) continue;
+    rungs.push({
+      name: variant.name, frames: variant.frames,
+      bitsPerSecond: (variant.bytes / variant.frames.length) * 8 * fps,
+      quality: variant.quality || {},
+    });
+  }
+  return rungs.sort((a, b) => a.bitsPerSecond - b.bitsPerSecond);
+}
+
+/* The budget to spend, given the rate and how full this pane's buffer is.
+ *
+ * Rate alone is a lagging average, so a client that trusts it keeps buying the
+ * rung the link *used* to afford and drains its buffer doing so. Occupancy is
+ * the state that says whether the last few decisions were affordable.
+ *
+ * Clamped to [0.5, 1.5] of the estimate: unclamped, an empty buffer would pick
+ * the floor and never climb out, and a full one would overshoot the link and
+ * empty itself. Mirrors `streamer.playback.buffer_budget`, where the same rule
+ * is measured -- worth 0.7 dB there, which is honest about how much it buys. */
+function bufferBudget(rate, seconds, target) {
+  if (target <= 0) return rate;
+  return rate * Math.max(0.5, Math.min(1.5, seconds / target));
+}
+
+/* Seconds of decoded playback a pane has ahead of the frame being shown.
+ *
+ * Read off the scheduler's cache rather than tracked separately: the cache
+ * *is* the buffer, and a second counter would be a second thing to get wrong.
+ * Only frames ahead of the playhead count -- ones behind it are cached for a
+ * scrub backwards and buy no time. */
+function bufferedSeconds(pane, frame, fps) {
+  if (!pane.source || !pane.source.cache) return 0;
+  let ahead = 0;
+  for (const index of pane.source.cache.keys()) if (index >= frame) ahead += 1;
+  return ahead / fps;
+}
+
+/* The best rung a share affords, or the cheapest when nothing does.
+ *
+ * Falling back to the cheapest rather than showing nothing: a pane that has
+ * gone blank tells a viewer less than a pane that is visibly coarse, and the
+ * frames are on disk either way -- this is a bundle, not a live encoder, so
+ * the only cost of overrunning is that it arrives late. */
+function affordable(rungs, share) {
+  if (!rungs.length) return null;
+  let chosen = rungs[0];
+  for (const rung of rungs) if (rung.bitsPerSecond <= share) chosen = rung;
+  return chosen;
+}
+
+/* ------------------------------------------------------------- scheduling ---
+ * When a frame can only be decoded after another one, requesting it and hoping
+ * is wrong. `open4d.core.Dependency` is where that is declared -- a codec's
+ * frames may need the group's key frame first (`gop`, as in Vega's
+ * group-of-volumes), or its decode stream may not rewind at all (`sequential`,
+ * as in ReRF) -- and a manifest carries the declaration per clip.
+ *
+ * This is that model's client half. `chain` is a transcription of
+ * Dependency.chain, and being a transcription is a liability: two
+ * implementations of one rule in two languages drift. So it is held to the
+ * Python one by a test that runs both over the same cases
+ * (streamer_tests/test_scheduler.py). Change one, and that test tells you about
+ * the other.
+ *
+ * Every clip this repository writes today is independent, because every
+ * exporter decodes before it writes. The gop and sequential paths are therefore
+ * tested rather than exercised; they are what a producer serving a bitstream as
+ * its frames would need, and building them after such a producer existed would
+ * mean changing the client at the same time as trusting a new encoder.
+ */
+const INDEPENDENT = { mode: "independent", keyFrames: [] };
+
+function dependencyOf(clip) {
+  const raw = clip && clip.dependency;
+  if (!raw) return INDEPENDENT;
+  return { mode: raw.mode, keyFrames: raw.key_frames || [] };
+}
+
+/* The frames to decode, in order, to make `index` available -- see
+ * Dependency.chain for why a backward seek in a sequential stream comes back as
+ * a full replay rather than a step. `decoded` is where the decoder currently
+ * sits, or null. */
+function chain(dependency, index, decoded = null) {
+  if (index < 0) throw new Error("index must be nonnegative");
+  if (dependency.mode === "independent") return [index];
+  if (decoded === index) return [];
+
+  let start;
+  if (dependency.mode === "gop") {
+    const keys = dependency.keyFrames.filter((key) => key <= index);
+    if (!keys.length) throw new Error(`no key frame at or before ${index}`);
+    start = keys[keys.length - 1];
+    if (decoded !== null && start <= decoded && decoded < index) start = decoded + 1;
+  } else {
+    start = decoded !== null && decoded < index ? decoded + 1 : 0;
+  }
+  const frames = [];
+  for (let i = start; i <= index; i++) frames.push(i);
+  return frames;
+}
+
+/* One cache, one prefetch policy, one place that honours the dependency chain.
+ *
+ * Before this the two clip sources each kept their own: different look-ahead
+ * (two frames against four), and only one of them evicted -- the image path
+ * grew without bound, so scrubbing a long clip kept every frame it had ever
+ * shown. Hoisting it fixes that and is most of why this exists today, given
+ * that nothing yet declares a dependency to honour.
+ */
+class Scheduler {
+  constructor(clip, root, decode,
+              { cacheSize = 6, lookAhead = 3, meter = null } = {}) {
+    this.clip = clip;
+    this.root = root;
+    this.decode = decode;
+    // Passed in rather than reached for as a page global. A scheduler that
+    // read one could not be exercised outside a page -- and this one is, by
+    // `streamer_tests/test_scheduler.py`, which runs it as shipped under Node.
+    this.meter = meter;
+    this.dependency = dependencyOf(clip);
+    this.cacheSize = Math.max(1, cacheSize);
+    this.lookAhead = lookAhead;
+    this.cache = new Map();          // index -> decoded frame, insertion-ordered
+    this.pending = new Map();        // index -> in-flight promise
+    this.decoded = null;             // where a stateful decoder currently sits
+    this.rung = null;                // chosen rendition, or null for the default
+    this.resident = false;           // whole clip downloaded and held?
+    this.abandoned = false;          // pane moved on; stop fetching
+    this._packing = null;            // in-flight container download, if any
+    //: Bytes this pane may hold. A Gaussian frame decodes to roughly 50 bytes
+    //: a Gaussian, so 200 MB is about sixty frames of this content -- enough
+    //: for a short clip, and short of what would take the tab down.
+    this.byteBudget = 200e6;
+    this.stats = { decodes: 0, bytes: 0, hits: 0, misses: 0, replays: 0,
+                   // Milliseconds, exponentially smoothed, and kept apart:
+                   // fetch and decode fail for different reasons and have
+                   // different fixes -- a slow fetch is the link, a slow decode
+                   // is this machine -- so one readout for both would send a
+                   // reader to the wrong place.
+                   fetchMs: 0, decodeMs: 0 };
+  }
+
+  get length() { return this.clip.frames.length; }
+
+  /* The frame list in force. Every rendition shares the clip's timeline -- the
+   * manifest refuses one that does not -- so an index means the same instant
+   * whichever rung is playing, and switching mid-clip cannot jump in time. */
+  get frames() {
+    return this.rung && this.rung.frames ? this.rung.frames : this.clip.frames;
+  }
+
+  /* Move to a different rendition.
+   *
+   * Cached frames are *kept*. They hold the same content at a different
+   * quality, so a frame already decoded is still the right picture for its
+   * index; dropping the cache would re-fetch what is already in hand and stall
+   * playback at exactly the moment the link is under pressure. The new rung
+   * applies to frames not yet fetched, which is where it can still help.
+   */
+  /* The container this clip is packed into, or null if its frames are
+   * separate files. Mirrors `frames`: a rung that ships its own container uses
+   * that one, and a rung with its own frame list but no container falls back to
+   * fetching them singly rather than reading the *base* clip's container --
+   * which holds the right frames at the wrong quality. */
+  get sequence() {
+    if (this.rung && this.rung.sequence) return this.rung.sequence;
+    if (this.rung && this.rung.frames) return null;
+    return this.clip.sequence || null;
+  }
+
+  useRung(rung) {
+    const before = this.rung ? this.rung.name : null;
+    const after = rung ? rung.name : null;
+    if (before === after) return false;
+    this.rung = rung;
+    this.stats.switches = (this.stats.switches || 0) + 1;
+    return true;
+  }
+
+  /* A decoded frame may hold a resource the browser will not reclaim on its own
+   * -- an image decoded from a blob keeps that blob alive through its object
+   * URL. Evicting the frame has to let it go, or a long scrub leaks every frame
+   * it ever showed, which is the bug the old unbounded image cache had in a
+   * different form. */
+  static release(value) {
+    if (value && value.objectUrl) {
+      URL.revokeObjectURL(value.objectUrl);
+      value.objectUrl = null;
+    }
+  }
+
+  _touch(index, value) {
+    // Nothing is cached after the pane has gone. A decode already in flight
+    // when `release` ran resolves afterwards and would re-populate a cache
+    // that was just cleared -- and for an image frame that also strands a blob
+    // URL, because the revoke pass has already been and gone. Guarded here
+    // rather than at each call site: this is the only way into the cache.
+    if (this.abandoned) {
+      Scheduler.release(value);
+      return;
+    }
+    // Insertion-ordered Map as an LRU: re-inserting moves a key to the end, so
+    // the oldest is always the first key.
+    this.cache.delete(index);
+    this.cache.set(index, value);
+    while (this.cache.size > this.cacheSize) {
+      const oldest = this.cache.keys().next().value;
+      Scheduler.release(this.cache.get(oldest));
+      this.cache.delete(oldest);
+    }
+  }
+
+  /* Drop everything, releasing each frame. Called when a pane changes clip or
+   * goes away: the scheduler is replaced, and whatever it still held would
+   * otherwise never be reclaimed. */
+  release() {
+    this.abandoned = true;
+    this.resident = false;
+    for (const value of this.cache.values()) Scheduler.release(value);
+    this.cache.clear();
+    this.pending.clear();
+  }
+
+  async _decodeOne(index) {
+    if (this.cache.has(index)) return this.cache.get(index);
+    if (this.pending.has(index)) return this.pending.get(index);
+    const url = this.root + this.frames[index];
+    const began = performance.now();
+    const task = fetch(url).then(async (response) => {
+      if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+      const buffer = await response.arrayBuffer();
+      // Timed to the last byte, and reported before decoding: the decode is
+      // this machine's problem, and folding it in would make a slow GPU look
+      // like a slow link -- which is the error that then picks a lower rung
+      // and does not help.
+      if (this.meter) {
+        this.meter.record(buffer.byteLength, (performance.now() - began) / 1000);
+      }
+      const fetched = performance.now();
+      // The response's own Content-Type, which the server takes from the
+      // representation registry -- so an image is decoded as the type it was
+      // served as rather than by leaving a browser to sniff a typeless blob.
+      const parsed = await this.decode(buffer, url, response.headers
+        ? response.headers.get("Content-Type") : null);
+      this.pending.delete(index);
+      this.stats.decodes += 1;
+      this.stats.bytes += buffer.byteLength;
+      const smooth = (was, now) => (was ? was + 0.25 * (now - was) : now);
+      this.stats.fetchMs = smooth(this.stats.fetchMs, fetched - began);
+      this.stats.decodeMs = smooth(this.stats.decodeMs, performance.now() - fetched);
+      this._touch(index, parsed);
+      return parsed;
+    }).catch((error) => { this.pending.delete(index); throw error; });
+    this.pending.set(index, task);
+    return task;
+  }
+
+  /* The frame at `index`, decoding whatever has to come first. */
+  async seek(index) {
+    if (this.cache.has(index)) {
+      this.stats.hits += 1;
+      const value = this.cache.get(index);
+      this._touch(index, value);
+      return value;
+    }
+    this.stats.misses += 1;
+    // A packed clip has no per-frame files to fetch: packing deletes them, so
+    // the container is the only place the frame exists. Held as one promise so
+    // a pane that starts playing before the download was asked for joins the
+    // one in flight rather than starting a second copy of a 63 MB transfer.
+    if (this.sequence) {
+      if (!this._packing) {
+        this._packing = this.downloadAll(null)
+          .finally(() => { this._packing = null; });
+      }
+      await this._packing;
+      if (this.cache.has(index)) {
+        const value = this.cache.get(index);
+        this._touch(index, value);
+        return value;
+      }
+      // Only reachable when the container was refused as too big to hold. The
+      // frame files may still be there -- packing can keep them -- so fall
+      // through and ask for one, which either works or 404s honestly.
+    }
+    const plan = chain(this.dependency, index, this.decoded);
+    if (plan.length > 1) this.stats.replays += 1;
+    let last = this.cache.get(index);
+    for (const step of plan) {
+      last = await this._decodeOne(step);
+      if (this.dependency.mode !== "independent") this.decoded = step;
+    }
+    return last;
+  }
+
+  /* Fetch the whole clip, reporting progress, and keep it.
+   *
+   * This is the on-demand shape, and it is the right one for a free camera.
+   * A streaming player fetches a few frames ahead and throws them away behind
+   * the playhead, because it only ever needs the frame it is showing. A viewer
+   * that can be spun around needs the frame's *geometry* resident to redraw it
+   * from a new angle -- so the frame has to stay, and if it has to stay there
+   * is no reason to have fetched it late.
+   *
+   * So: download, then play from memory. Playback after the first pass is
+   * exact -- no fetch in the loop, no stall, and the camera is free the whole
+   * time. What was a bandwidth problem becomes a wait at the start, which is a
+   * thing a person understands and a progress bar can show.
+   *
+   * Bounded by bytes, not frames. Thirty Gaussian frames decode to about
+   * 100 MB and four panes of that is most of a tab's budget, so a clip too big
+   * to hold falls back to the sliding window it had before rather than
+   * exhausting memory and taking the page down with it.
+   */
+  async downloadAll(onProgress) {
+    const total = this.length;
+    if (!total) return true;
+    // Already held. Worth checking since this is called again whenever the pane
+    // set changes -- and re-entering it would re-fetch a 63 MB container that
+    // is sitting in memory, which is what following the camera onto a ring
+    // station started doing.
+    if (this.resident) {
+      if (onProgress) onProgress(total, total, this.stats.bytes, true);
+      return true;
+    }
+    const packed = this.sequence;
+    if (packed) return this._downloadPacked(packed, onProgress);
+    const budget = this.byteBudget;
+    let bytes = 0;
+    this.cacheSize = Math.max(this.cacheSize, total);
+    for (let index = 0; index < total; index++) {
+      if (this.abandoned) return false;
+      await this._decodeOne(index);
+      bytes = this.stats.bytes;
+      if (bytes > budget) {
+        // Too big to hold. Shrink back to a window and let playback stream it.
+        this.cacheSize = 6;
+        this.resident = false;
+        if (onProgress) onProgress(index + 1, total, bytes, false);
+        return false;
+      }
+      if (onProgress) onProgress(index + 1, total, bytes, true);
+    }
+    this.resident = true;
+    return true;
+  }
+
+  /* Fetch a clip packed as one file, then decode it out of memory.
+   *
+   * The same outcome as the loop above and a different transfer: one request
+   * rather than one per frame. Over a link that is the whole difference --
+   * thirty frames is thirty round trips, and a 20 ms connection spends 600 ms
+   * of pure latency before the first pixel. On loopback it changes nothing,
+   * which is exactly why the per-frame path looked fine for so long.
+   *
+   * Progress is reported in two phases: estimated from bytes while the
+   * container arrives, then exactly per frame as it is decoded. A reader sees
+   * one number that climbs and cannot tell where the phases meet, which is
+   * what they want; a bar pinned at zero through a 63 MB transfer is not.
+   */
+  async _downloadPacked(packed, onProgress) {
+    const total = this.length;
+    const url = this.root + packed.url;
+    const expected = packed.bytes || 0;
+    if (expected > this.byteBudget) {
+      // Refused from the manifest, before a byte is fetched. The per-frame
+      // path can only notice once it is already over budget, having paid for
+      // the frames that took it there.
+      this.cacheSize = 6;
+      this.resident = false;
+      if (onProgress) onProgress(0, total, 0, false);
+      return false;
+    }
+    // Raised to fit before anything is decoded. A clip held under a smaller
+    // cache evicts the frames it just decoded, and the next seek has nowhere to
+    // go but back to the container -- so a "resident" clip would re-download
+    // itself once per frame, which is how this was found.
+    this.cacheSize = Math.max(this.cacheSize, total);
+    const began = performance.now();
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    const buffer = await this._readPacked(response, expected, total, onProgress);
+    if (!buffer) return false;                  // pane moved on mid-transfer
+    // One rate sample for the whole container, which beats any the per-frame
+    // path took: a transfer this long has left slow start behind, so it
+    // measures the link rather than the ramp onto it.
+    if (this.meter) {
+      this.meter.record(buffer.byteLength, (performance.now() - began) / 1000);
+    }
+    const fetched = performance.now();
+    this.stats.bytes += buffer.byteLength;
+    const header = readSequenceHeader(buffer);
+    if (header.entries.length !== total) {
+      throw new Error(`${url}: holds ${header.entries.length} frames,`
+        + ` clip lists ${total}`);
+    }
+    // The frame list survives packing, and this is one reason it has to: a
+    // frame is decoded by the codec its *own* name selects. Handing the
+    // container's name to the decode instead is a `.seq` suffix in a table of
+    // `.ply` and `.splat`, which is how every Gaussian pane went blank -- and
+    // silently, because pixels are decoded from the media type on the main
+    // thread and were unaffected, so it looked like one method being broken
+    // rather than one code path.
+    const names = this.frames;
+    if (suffixOf(names[0]) !== `.${header.suffix}`) {
+      throw new Error(`${url}: holds .${header.suffix} frames, clip lists`
+        + ` ${suffixOf(names[0])} -- one of them would be decoded wrongly`);
+    }
+    // From the manifest, not a response header: the container is served as
+    // octet-stream because the frames inside it are what have a type.
+    const mediaType = packed.media_type || null;
+    for (let index = 0; index < total; index++) {
+      if (this.abandoned) return false;
+      const frame = sequenceFrame(buffer, header, index);
+      this._touch(index, await this.decode(frame, this.root + names[index],
+                                           mediaType));
+      this.stats.decodes += 1;
+      if (onProgress) onProgress(index + 1, total, this.stats.bytes, true);
+    }
+    this.stats.fetchMs = fetched - began;
+    this.stats.decodeMs = (performance.now() - fetched) / total;
+    this.resident = true;
+    return true;
+  }
+
+  /* The container's bytes, reporting progress as they arrive.
+   *
+   * Read through the body stream rather than `arrayBuffer()` so there is
+   * something to report at all: `arrayBuffer()` resolves once, at the end, and
+   * a single-request download would otherwise show no progress whatsoever --
+   * strictly worse to watch than the thirty requests it replaces. Falls back to
+   * `arrayBuffer()` where there is no stream to read, which is what the test
+   * doubles give it.
+   */
+  async _readPacked(response, expected, total, onProgress) {
+    if (!response.body || !response.body.getReader) {
+      return response.arrayBuffer();
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (this.abandoned) { reader.cancel().catch(() => {}); return null; }
+      chunks.push(value);
+      got += value.byteLength;
+      if (onProgress && expected) {
+        // Bytes shown as frames, because frames are the unit the caller counts
+        // and the two phases have to share one scale to make a bar that only
+        // ever goes forward. Never the last frame: that one is claimed by the
+        // decode loop, so a download at 100% cannot look finished while the
+        // frames it holds are still being parsed.
+        const reached = Math.min(total - 1, Math.floor((got / expected) * total));
+        onProgress(reached, total, got, true);
+      }
+    }
+    const buffer = new Uint8Array(got);
+    let at = 0;
+    for (const chunk of chunks) { buffer.set(chunk, at); at += chunk.byteLength; }
+    return buffer.buffer;
+  }
+
+  /* Look ahead along the direction playback actually moves. Only the frames a
+   * forward step would need are fetched, which for a dependent clip is the next
+   * few in the chain rather than an arbitrary window. */
+  prefetch(index) {
+    for (let ahead = 1; ahead <= this.lookAhead; ahead++) {
+      const next = (index + ahead) % this.length;
+      if (this.cache.has(next) || this.pending.has(next)) continue;
+      if (this.dependency.mode === "independent") {
+        this._decodeOne(next).catch(() => {});
+      } else if (next === index + ahead) {
+        // Not across the loop point: restarting a dependent stream to prefetch
+        // frame 0 would evict the frames being played to get there.
+        this._decodeOne(next).catch(() => {});
+      }
+    }
+  }
+
+  snapshot() {
+    return {
+      ...this.stats,
+      cached: this.cache.size,
+      pending: this.pending.size,
+      mode: this.dependency.mode,
+      rung: this.rung ? this.rung.name : "default",
+      frozen: !!this.frozen,
+    };
+  }
+}
+
+/* The decoders a Scheduler drives turn bytes into something a renderer takes
+ * and nothing else: no caching, no look-ahead, no idea what frame it is. That
+ * all moved to the Scheduler, so the paths share one policy instead of
+ * disagreeing about it.
+ *
+ * A parsed geometry frame is roughly 50 bytes a Gaussian, so a handful is tens
+ * of megabytes and the whole sequence is not -- hence the small cache each
+ * representation asks for rather than an unbounded one. */
+
+
+/* Pixels arrive as an <img> rather than an array, because that is what the
+ * surface takes. Decoded through a blob URL so the fetch, and therefore the
+ * byte count and the cache, work the same way as every other representation --
+ * setting `img.src` to the frame URL would put the transfer somewhere the
+ * scheduler cannot see. */
+function decodeImage(buffer, url, mediaType) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([buffer], mediaType ? { type: mediaType } : undefined);
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    // The URL stays alive for as long as this frame is cached, and is revoked
+    // when the Scheduler evicts it (see `release`). Revoking it here on load
+    // looks tidy and is wrong: a decoded frame's `src` is what a pane assigns to
+    // its own <img>, so a revoked URL leaves the pane showing nothing at all --
+    // silently, because assigning a dead blob URL is not an error.
+    image.objectUrl = objectUrl;
+    image.onload = () => resolve(image);
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error(`could not decode ${url}`));
+    };
+    image.src = objectUrl;
+  });
+}
+
+/* ------------------------------------------------------------------ panes ---
+ * One pane per method. A pane owns whichever surface its clip needs -- a WebGL
+ * canvas with its own renderer for splats, an <img> for a rendered or captured
+ * sequence -- and is told what to show; it never decides what to compare with
+ * what. Separate contexts rather than one canvas with scissored viewports
+ * because half the panes are not canvases at all.
+ */
+class Pane {
+  constructor(method) {
+    this.method = method;
+    this.host = document.createElement("div");
+    this.host.className = "pane";
+    this.label = document.createElement("div");
+    this.label.className = "label";
+    this.label.textContent = method;
+    this.host.appendChild(this.label);
+    this.clip = null;
+    this.source = null;
+    this.renderer = null;
+    this.rendererKind = null;
+    this.gl = null;
+    this.canvas = null;
+    this.image = null;
+    this.loaded = -1;
+    this.sortKey = "";
+  }
+
+  /* Why this pane is empty, on the pane itself.
+   *
+   * On the pane and not in the sidebar: a reader looking at four panes and one
+   * blank needs the reason where the blank is. `headline` is the fact,
+   * `remedy` is what to do -- separated because for a live stream the remedy
+   * is on another machine, and a reader who cannot act on it should at least
+   * not think the page is broken. */
+  _explain(headline, remedy) {
+    if (this.missing) this.missing.remove();
+    this.missing = document.createElement("div");
+    this.missing.className = "missing";
+    const strong = document.createElement("div");
+    strong.className = "why";
+    strong.textContent = headline;
+    const rest = document.createElement("div");
+    rest.textContent = remedy;
+    this.missing.append(strong, rest);
+    this.host.appendChild(this.missing);
+  }
+
+  _surface(which, makeRenderer) {
+    if (which === "canvas" && !this.canvas) {
+      this.canvas = document.createElement("canvas");
+      this.host.appendChild(this.canvas);
+      const gl = this.canvas.getContext("webgl2", { antialias: false, premultipliedAlpha: true });
+      if (!gl) throw new Error("WebGL2 unavailable");
+      this.gl = gl;
+    }
+    // The renderer is per representation, and a pane's representation changes
+    // when its clip does -- so it is rebuilt when the kind of renderer needed
+    // changes, on the one canvas rather than a new context per switch.
+    if (which === "canvas" && makeRenderer && this.rendererKind !== makeRenderer.kind) {
+      this.renderer = makeRenderer(this.gl);
+      this.rendererKind = makeRenderer.kind;
+    }
+    if (which === "image" && !this.image) {
+      this.image = document.createElement("img");
+      this.image.alt = "";
+      this.host.appendChild(this.image);
+    }
+    if (this.canvas) this.canvas.hidden = which !== "canvas";
+    if (this.image) this.image.hidden = which !== "image";
+  }
+
+  setClip(clip) {
+    if (this.source && this.source.release) this.source.release();
+    this.clip = clip;
+    this.loaded = -1;
+    this.sortKey = "";
+    if (this.missing) { this.missing.remove(); this.missing = null; }
+    if (!clip) {
+      if (this.canvas) this.canvas.hidden = true;
+      if (this.image) this.image.hidden = true;
+      this.source = null;
+      // Otherwise the label keeps naming the camera of the clip that was here
+      // before, which is the one thing a pane saying "nothing here" must not do.
+      this.label.textContent = this.method;
+      this._explain(
+        `${this.method} has nothing at this camera.`,
+        "Only a representation with geometry can be rendered anywhere; "
+        + "pre-rendered pixels exist only where they were made.");
+      return;
+    }
+    const kind = spec(clip);
+    if (isLive(clip)) {
+      // No scheduler: the browser owns the connection, and multipart replacement
+      // is a browser feature. Set once -- reassigning src restarts the stream.
+      this._surface("image", null);
+      this.source = null;
+      /* A live pane depends on a renderer this page does not control, and those
+       * die: the box reboots, the process is killed, the GPU is wanted for
+       * something else. When that happens the proxy answers 502 and an <img>
+       * shows nothing at all -- so the subject looked simply absent, with the
+       * page insisting everything was fine. Say what is wrong and what would
+       * fix it, because the fix is on another machine. */
+      this.image.onerror = () => {
+        if (this.clip !== clip) return;        // a later clip owns this pane now
+        this._explain(
+          `${this.method} is a live stream and its renderer is not answering.`,
+          `The bundle proxies ${(clip.detail && clip.detail.upstream)
+            || clip.stream.url} — start that renderer and reload.`);
+      };
+      this.image.onload = () => {
+        if (this.clip === clip && this.missing) {
+          this.missing.remove();
+          this.missing = null;
+        }
+      };
+      this.image.src = clip.stream.url;
+      this.loaded = 0;
+      // Through the same labeller as every other pane, so there is one place
+      // that decides how a pane names what it holds.
+      this.label.textContent = `${this.method} · ${describeSource(clip)}`;
+      return;
+    }
+    const make = kind.renderer;
+    if (make) make.kind = clip.representation;
+    this._surface(kind.surface, make);
+    this.source = new Scheduler(clip, "./", kind.decode, {
+      cacheSize: kind.cacheSize, meter,
+    });
+    this.label.textContent = `${this.method} · ${describeSource(clip)}`;
+  }
+
+  /* A canvas dropped from the DOM keeps its WebGL context until the browser
+   * decides otherwise, and browsers cap how many exist at once -- so a pane
+   * that goes away has to say so, or a few method changes silently exhaust the
+   * budget and the surviving canvases start losing their contexts. */
+  dispose() {
+    if (this.source && this.source.release) this.source.release();
+    this.source = null;
+    if (this.gl) {
+      const lose = this.gl.getExtension("WEBGL_lose_context");
+      if (lose) lose.loseContext();
+    }
+    this.renderer = null;
+    this.gl = null;
+    this.host.remove();
+  }
+
+  get length() { return this.source ? this.source.length : 0; }
+
+  async show(frame) {
+    if (isLive(this.clip)) return;   // the stream advances itself
+    if (!this.source) return;
+    const index = Math.min(frame, this.source.length - 1);
+    // seek, not fetch: for a clip that declares a dependency this decodes
+    // whatever has to come first, in order.
+    const decoded = await this.source.seek(index);
+    if (isPixels(this.clip)) {
+      this.image.src = decoded.src;
+    } else {
+      this.renderer.upload(decoded);
+      this.sortKey = "";
+    }
+    this.loaded = index;
+    this.source.prefetch(index);
+  }
+
+  /* Largest rect of the given aspect centred in the canvas, in device pixels.
+   * Compare mode letterboxes splats to the rig's aspect so a rendered pane and
+   * a captured pane frame the subject identically -- without it the two are
+   * cropped differently and every visual difference is suspect. */
+  static fit(width, height, aspect) {
+    if (!aspect) return [0, 0, width, height];
+    let w = width, h = Math.round(width / aspect);
+    if (h > height) { h = height; w = Math.round(height * aspect); }
+    return [Math.round((width - w) / 2), Math.round((height - h) / 2), w, h];
+  }
+
+  draw(basisFor, aspect) {
+    if (!this.renderer || !this.canvas || this.canvas.hidden || this.loaded < 0) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.round(rect.width * scale));
+    const height = Math.max(1, Math.round(rect.height * scale));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.sortKey = "";
+    }
+    const box = Pane.fit(width, height, aspect);
+    const camera = basisFor([box[2], box[3]]);
+    const key = `${this.loaded}|${camera.eye.map((v) => v.toFixed(4))}`
+              + `|${camera.forward.map((v) => v.toFixed(4))}|${box.join(",")}`;
+    if (key !== this.sortKey) {
+      this.renderer.sort(camera.eye, camera.forward);
+      this.sortKey = key;
+    }
+    this.renderer.draw(camera, box, [width, height]);
+  }
+}
+
+/* ---------------------------------------------------------------- session --- */
+const app = {
+  index: null, scenes: {}, scene: null, mode: "explore", frame: 0, station: 0,
+  methods: [], panes: [], playing: false, lastAdvance: 0, advancing: false,
+  fps: 30, wipe: false,
+  // Adapt to the measured link by default. A bundle whose clips have one
+  // rendition each is unaffected, so this costs nothing where there is no
+  // ladder -- and where there is one, the default should be the behaviour the
+  // ladder was built for.
+  adapt: true, decision: null,
+  // On demand: the client takes a copy of prepared content and plays it from
+  // memory. `downloadToken` invalidates a download in flight when the
+  // selection changes, so a slow clip cannot finish into a pane that has since
+  // moved on.
+  download: null, downloadToken: 0,
+  // Seconds of decoded playback to aim to keep ahead. Small, because a pane
+  // caches a handful of frames rather than seconds of them: the cache is the
+  // buffer, and a Gaussian frame is megabytes.
+  targetBuffer: 0.15,
+};
+
+function setStatus(text) { statusEl.textContent = text; statusEl.hidden = false; }
+
+/* Clips carry `scene` and `method`; a bundle written before they did, or one
+ * holding something with no subject, is folded into a single pseudo-scene so
+ * one code path covers both rather than two that drift. */
+function normalise(index) {
+  const unplayable = new Set();
+  for (const clip of index.clips) {
+    if (!clip.scene) clip.scene = "(ungrouped)";
+    if (!clip.method) clip.method = clip.name;
+    if (!clip.representation) clip.representation = LEGACY_KINDS[clip.kind] || clip.kind;
+    if (!playable(clip)) unplayable.add(clip.representation);
+  }
+  // Named rather than silently dropped: "nothing appeared" is indistinguishable
+  // from a broken bundle, and the fix (a renderer for that representation) is
+  // not something a user can guess at.
+  if (unplayable.size) {
+    console.warn(
+      `no renderer for representation(s): ${[...unplayable].join(", ")}; `
+      + "those clips are hidden");
+  }
+  index.clips = index.clips.filter(playable);
+  return index;
+}
+
+function scenesInBundle() {
+  const seen = [];
+  for (const clip of app.index.clips) if (!seen.includes(clip.scene)) seen.push(clip.scene);
+  return seen;
+}
+
+/* Every method for a scene, and whether this mode can show it.
+ *
+ * Listed rather than filtered. Explore is a free camera and a photograph has
+ * no geometry to aim one at, so a captured method genuinely cannot appear
+ * there -- but *hiding* it means someone who opens `basketball` looking for
+ * the photograph finds it simply absent, with nothing saying it exists or how
+ * to reach it. That is a worse failure than a greyed-out row, and it was
+ * reported as the option missing.
+ */
+function methodsFor(scene, mode) {
+  const seen = new Map();
+  const shell = shellOf(app.scenes[scene]);
+  for (const clip of app.index.clips) {
+    if (clip.scene !== scene) continue;
+    // Pixels are usable in Explore when the scene's rig is a ring: the drag
+    // then picks the nearest rendered view instead of being refused. Without a
+    // ring there is nothing to snap onto and they stay compare-only.
+    const usable = mode !== "explore" || hasGeometry(clip)
+      || (isPixels(clip) && !!shell && clip.camera !== null
+          && clip.camera !== undefined);
+    // A method with several clips is usable if any one of them is: Vega has
+    // Gaussians, so it survives Explore even where its image clips do not.
+    if (!seen.has(clip.method) || usable) seen.set(clip.method, usable
+      || (seen.get(clip.method) || false));
+  }
+  // Sorted, because the order this arrives in is manifest order, which is the
+  // order clips happened to be imported in. basketball had its Vega clip added
+  // before its ReRF ones and every later subject the other way round, so the
+  // two panes came up swapped depending on the subject -- and `selectScene`
+  // takes the first two, so with more than two methods the *choice* would
+  // depend on import history too.
+  return [...seen]
+    .map(([method, usable]) => ({ method, usable }))
+    .sort((a, b) => a.method.localeCompare(b.method));
+}
+
+function rig() { return app.scenes[app.scene] || null; }
+
+/* ------------------------------------------------ a free camera for pixels ---
+ * A pre-rendered method is not stuck at one viewpoint, and saying so was an
+ * error on my part: ReRF renders free viewpoint -- `rerf_render.py
+ * --render_360` walks a ring around the subject, and that is the code path that
+ * produced the orbit clips in this bundle. What it needs is a CUDA GPU, so the
+ * rendering happens here, offline, rather than in a browser.
+ *
+ * Which leaves a real difference in *where* pixels are made, and no reason for
+ * it to be a difference in what the camera does. Vega ships geometry, so a drag
+ * rasterises a new view. ReRF ships a ring of rendered views, so a drag picks
+ * the nearest one. Same gesture, and the honest caveats are that the azimuth is
+ * quantised to the ring's spacing and the elevation is whatever it was rendered
+ * at -- both of which the pane label states rather than hides.
+ */
+
+//: Tolerance for calling a rig a shell, as a fraction of its radius. Poses are
+//: written from a float32 render pipeline, so exact equality is not available;
+//: 2% is far tighter than the arc between neighbouring stations.
+const SHELL_TOLERANCE = 0.02;
+
+//: Elevations within this many degrees of each other are one ring. The rings
+//: this recovers are 25 degrees apart, so the margin is wide.
+const RING_MERGE_DEG = 1.0;
+
+/* Where a rig's cameras are all looking.
+ *
+ * Solved from the poses rather than taken as the centroid of their positions.
+ * A single ring's centroid *is* its centre, which is why the centroid was good
+ * enough while there was one ring -- but stack two rings at different heights
+ * and the centroid sits between them, off the axis, and every radius measured
+ * from it comes out different. The cameras themselves know better: each one
+ * points at the target, so the target is the point closest to all of their view
+ * rays. Least squares over `sum |(I - ff')(x - p)|^2`, which is a 3x3 solve.
+ */
+function lookAtCentre(poses) {
+  const a = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const b = [0, 0, 0];
+  for (const pose of poses) {
+    const f = normalize(pose.forward);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const m = (r === c ? 1 : 0) - f[r] * f[c];
+        a[r * 3 + c] += m;
+        b[r] += m * pose.position[c];
+      }
+    }
+  }
+  const det = a[0] * (a[4] * a[8] - a[5] * a[7])
+            - a[1] * (a[3] * a[8] - a[5] * a[6])
+            + a[2] * (a[3] * a[7] - a[4] * a[6]);
+  // Degenerate when every camera looks the same way -- a rig with no
+  // convergence has no centre to find, and inverting anyway would produce a
+  // wild point and a shell that happened to fit it.
+  if (!isFinite(det) || Math.abs(det) < 1e-9) return null;
+  const solve = (column) => {
+    const m = a.slice();
+    for (let r = 0; r < 3; r++) m[r * 3 + column] = b[r];
+    return (m[0] * (m[4] * m[8] - m[5] * m[7])
+          - m[1] * (m[3] * m[8] - m[5] * m[6])
+          + m[2] * (m[3] * m[7] - m[4] * m[6])) / det;
+  };
+  return [solve(0), solve(1), solve(2)];
+}
+
+/* The shell of viewpoints a rig describes, or null if it does not describe one.
+ *
+ * Checked rather than assumed: a rig read from a capture corpus is wherever the
+ * cameras physically were, and snapping a free camera onto an arbitrary cloud
+ * of viewpoints would move it somewhere the user did not ask for. Only a rig
+ * whose stations sit at one radius about a common look-at point gets to stand
+ * in for an orbit.
+ *
+ * One radius and *not* one height, which is the generalisation from a single
+ * ring: `--elevations 0,25,-25` renders three of them, and the export puts the
+ * cameras at a constant distance precisely so that this holds and the subject
+ * does not change size between them.
+ */
+function shellOf(scene) {
+  if (!scene || !scene.poses || scene.poses.length < 4) return null;
+  if (scene._shell !== undefined) return scene._shell;
+  scene._shell = null;
+  const poses = scene.poses;
+  if (!poses.every((pose) => pose.position && pose.forward)) return null;
+  const centre = lookAtCentre(poses);
+  if (!centre) return null;
+
+  const offsets = poses.map((pose) => [0, 1, 2].map((i) => pose.position[i] - centre[i]));
+  const radii = offsets.map((o) => Math.hypot(o[0], o[1], o[2]));
+  const radius = radii.reduce((a, b) => a + b, 0) / radii.length;
+  if (!(radius > 0)) return null;
+  if (!radii.every((r) => Math.abs(r - radius) <= SHELL_TOLERANCE * radius)) return null;
+
+  // Unit direction from the subject out to each station. This is what a snap
+  // compares against, and it carries azimuth and elevation together -- so the
+  // seam at +/-180 degrees needs no special case and neither does the vertical.
+  const dirs = offsets.map((o, i) => [o[0] / radii[i], o[1] / radii[i], o[2] / radii[i]]);
+  const up = WORLD_UP;
+  const elevations = dirs.map((d) =>
+    Math.asin(Math.max(-1, Math.min(1, d[0] * up[0] + d[1] * up[1] + d[2] * up[2])))
+    * 180 / Math.PI);
+
+  // Recover the rings, so the label can quote an azimuth step and an elevation
+  // count instead of one number that means neither.
+  const rings = [];
+  for (const elevation of [...elevations].sort((x, y) => x - y)) {
+    const last = rings[rings.length - 1];
+    if (last && Math.abs(elevation - last.elevation) <= RING_MERGE_DEG) {
+      last.count += 1;
+    } else {
+      rings.push({ elevation, count: 1 });
+    }
+  }
+  scene._shell = {
+    centre, radius, dirs, rings,
+    //: Azimuth step of the most populated ring, in degrees. Every ring the
+    //: export writes holds the same number of views, so this is the step of
+    //: all of them.
+    azimuthStep: 360 / Math.max(...rings.map((ring) => ring.count)),
+  };
+  return scene._shell;
+}
+
+/* The station pointing most nearly the same way as `direction`.
+ *
+ * Compared as directions from the subject, not as yaw and pitch separately: a
+ * dot product is monotone in the angle between them, so the largest one is the
+ * nearest station with no wrap-around to handle and no need to weigh a degree
+ * of azimuth against a degree of elevation.
+ */
+function nearestStation(shell, direction) {
+  const d = normalize(direction);
+  let best = 0, closest = -Infinity;
+  for (let index = 0; index < shell.dirs.length; index++) {
+    const s = shell.dirs[index];
+    const dot = s[0] * d[0] + s[1] * d[1] + s[2] * d[2];
+    if (dot > closest) { closest = dot; best = index; }
+  }
+  return best;
+}
+
+//: What each representation is called in a pane label, in the plural a count
+//: reads naturally with.
+const REPRESENTATION_NOUNS = {
+  gaussians: "gaussians", points: "points", mesh: "triangles", pixels: "pixels",
+};
+
+/* What a pane is actually showing, for its label.
+ *
+ * A method can reach a viewer as more than one thing -- ReRF ships both a
+ * ray-marched image per station and a point cloud read out of its density
+ * field -- and which one a pane holds changes what the picture means. Naming
+ * only the method left a pane labelled "rerf" showing a pre-rendered view with
+ * nothing saying so, and a pane labelled "rerf" showing a live-rasterised
+ * point cloud looking identical. So the label says which.
+ *
+ * Reported as it is, not as it is meant to be: a pixel pane in Explore says it
+ * is the nearest of the rendered views, because a viewer comparing it against
+ * a rasterised pane beside it would otherwise read the offset as a
+ * reconstruction error.
+ */
+function describeSource(clip) {
+  if (isLive(clip)) return streamLabel(clip);
+  const noun = REPRESENTATION_NOUNS[clip.representation] || clip.representation;
+  const count = (clip.counts || [])[0];
+  const sized = count ? `${count.toLocaleString()} ${noun}` : noun;
+  if (hasGeometry(clip)) {
+    // Rasterised here, from geometry, at whatever camera is asked for. In
+    // Explore that camera is free, which is the whole difference from a
+    // pre-rendered pane; in Compare it is the rig pose, and saying "free"
+    // there would describe a camera the mode does not give.
+    return app.mode === "explore" ? `${sized}, free camera`
+                                  : `${sized}, rasterised at cam ${app.station}`;
+  }
+  if (clip.camera === null || clip.camera === undefined) return noun;
+  const shell = app.mode === "explore" ? shellOf(rig()) : null;
+  if (shell) return `nearest of ${shell.dirs.length} rendered views`;
+  // "ray-marched", not "rendered": at a rig station this pane is the method's
+  // own renderer output, where the geometry pane beside it is this browser
+  // re-rasterising a reduction of the same reconstruction. That is the
+  // comparison the mode exists for, so the labels have to distinguish it.
+  return `ray-marched at cam ${clip.camera}`;
+}
+
+/* The station a pixel pane should show in Explore mode: the one nearest where
+ * the free camera is pointing. Null when the scene's rig is not a ring, in
+ * which case pixels stay out of Explore as they were. */
+function exploreStation() {
+  const shell = shellOf(rig());
+  if (!shell) return null;
+  // The camera's own direction from what it is looking at, in the same terms
+  // the shell holds its stations in.
+  const pitch = app.camera.pitch, yaw = app.camera.yaw;
+  return nearestStation(shell, [
+    Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch),
+    Math.cos(yaw) * Math.cos(pitch),
+  ]);
+}
+
+/* How the shell is sampled, for the pane label: the azimuth step and the
+ * elevations. Quoted as two numbers rather than one, because that is how it is
+ * experienced -- dragging sideways steps finely and dragging up jumps between
+ * rings -- and a single worst-case figure would be the ring gap and would
+ * describe the sideways drag wrongly. */
+function shellSampling(shell) {
+  const elevations = shell.rings.map((ring) => {
+    // Rounded away from negative zero. The flat ring's elevation comes out of
+    // an asin as a whisker below zero, and `(-0).toFixed(0)` is the string
+    // "-0", so a level rig read "-0°".
+    const degrees = Math.round(ring.elevation);
+    return `${degrees === 0 ? 0 : degrees}°`;
+  });
+  return `±${(shell.azimuthStep / 2).toFixed(1)}° azimuth, `
+    + (shell.rings.length === 1 ? `elevation fixed at ${elevations[0]}`
+        : `${shell.rings.length} elevations (${elevations.join(", ")})`);
+}
+
+function clipFor(method) {
+  const all = app.index.clips.filter((c) => c.scene === app.scene && c.method === method);
+  if (app.mode === "explore") {
+    // Geometry first: it can be rasterised at the exact camera, where a ring
+    // station is only the nearest one rendered.
+    const station = exploreStation();
+    return all.find(hasGeometry)
+        || (station === null ? null
+            : all.find((c) => isPixels(c) && c.camera === station))
+        || null;
+  }
+  // Compare: an image only exists at the station it was made at; Gaussians can
+  // be rendered at any of them, so they are the fallback rather than the first
+  // choice -- a real render beats a re-render of the same thing.
+  // A live clip is resolved whatever the station: it renders its own camera, and
+  // lives in its own scene precisely so that this cannot put it beside a rig
+  // pose and imply they match.
+  return all.find((c) => isPixels(c) && c.camera === app.station)
+      || all.find(isLive)
+      || all.find(hasGeometry)
+      || null;
+}
+
+function frameCount() {
+  // A live pane has no length and must not shorten the clip beside it; if every
+  // pane is live there is nothing to scrub and the transport bar says so.
+  const lengths = app.panes
+    .filter((pane) => !isLive(pane.clip))
+    .map((pane) => pane.length || 1);
+  return lengths.length ? Math.max(1, ...lengths) : 1;
+}
+
+function allPanesLive() {
+  return app.panes.length > 0 && app.panes.every((pane) => isLive(pane.clip));
+}
+
+/* A live scene has no timeline. Disabling the controls rather than leaving them
+ * inert is the difference between "there is nothing to scrub here" and "the
+ * scrubber is broken". */
+function updateTransport() {
+  const live = allPanesLive();
+  scrubFrame.disabled = live;
+  playPause.disabled = live;
+  if (live) {
+    app.playing = false;
+    playPause.textContent = "▶";
+    // Names what the panes actually are. All-replay reads "replay"; a mix says
+    // so rather than picking the flattering one.
+    const kinds = [...new Set(app.panes.map((pane) => streamLabel(pane.clip)))];
+    frameLabel.textContent = kinds.join(" + ");
+  }
+}
+
+/* Re-point every pane at the clip it should now be showing, without touching
+ * the panes themselves. This is what a camera step does: same methods, same
+ * renderers, different source -- so stepping through the rig costs a clip
+ * lookup rather than a WebGL context per station. */
+function updateClips() {
+  for (const pane of app.panes) {
+    try {
+      pane.setClip(clipFor(pane.method));
+    } catch (error) {
+      return fail(`Could not start a renderer for ${pane.method}: ${error.message || error}`);
+    }
+  }
+  scrubFrame.max = String(frameCount() - 1);
+  app.frame = Math.min(app.frame, frameCount() - 1);
+  updateTransport();
+  refreshPanel();
+  writeHash();
+  showFrame(app.frame);
+  // Take a copy of whatever is now selected. Both places the pane set can
+  // change end here, and both need it. Deliberately not awaited: the page stays
+  // interactive while it arrives, and each frame becomes playable as it lands
+  // rather than after all of them.
+  downloadSelection();
+}
+
+/* Move the pixel panes onto the ring station the camera now points at.
+ *
+ * Deliberately *not* per pointermove. Crossing a station changes which clip a
+ * pixel pane plays, so re-resolving mid-drag would start a download per station
+ * -- one spin across 36 of them is 50 MB of requests for pictures nobody
+ * stopped to look at. The geometry panes redraw every frame regardless, because
+ * for them the camera is the only input; the rendered panes catch up when the
+ * hand stops, which is when their picture is being read.
+ */
+//: How long the camera has to hold still before a pixel pane follows it, in
+//: milliseconds. Short enough not to feel like lag, long enough that a spin
+//: costs one fetch rather than one per station crossed.
+const FOLLOW_SETTLE_MS = 140;
+let followTimer = null;
+
+function followCamera() {
+  if (app.mode !== "explore" || exploreStation() === null) return;
+  if (followTimer) clearTimeout(followTimer);
+  followTimer = setTimeout(() => {
+    followTimer = null;
+    if (app.mode !== "explore") return;
+    let moved = false;
+    for (const pane of app.panes) {
+      const wanted = clipFor(pane.method);
+      if (wanted === pane.clip) continue;
+      try {
+        pane.setClip(wanted);
+      } catch (error) {
+        return fail(`Could not start a renderer for ${pane.method}:`
+          + ` ${error.message || error}`);
+      }
+      moved = true;
+    }
+    if (!moved) return;
+    refreshPanel();
+    showFrame(app.frame);
+    // Panes already resident return from this immediately, so following the
+    // camera costs the one station that changed.
+    downloadSelection();
+  }, FOLLOW_SETTLE_MS);
+}
+
+function rebuildPanes() {
+  const existing = new Map(app.panes.map((pane) => [pane.method, pane]));
+  app.panes = [];
+  for (const method of app.methods) {
+    const pane = existing.get(method) || new Pane(method);
+    existing.delete(method);
+    try {
+      pane.setClip(clipFor(method));
+    } catch (error) {
+      return fail(`Could not start a renderer for ${method}: ${error.message || error}`);
+    }
+    app.panes.push(pane);
+  }
+  for (const pane of existing.values()) pane.dispose();
+  // Reappend in order; moving an existing node does not recreate its context.
+  for (const pane of app.panes) panesEl.appendChild(pane.host);
+  const handle = document.getElementById("wipeHandle");
+  if (handle) handle.remove();
+  const wipeable = app.wipe && app.panes.length === 2;
+  panesEl.classList.toggle("wipe", wipeable);
+  panesEl.style.gridTemplateColumns = wipeable ? "" : `repeat(${Math.max(app.panes.length, 1)}, 1fr)`;
+  if (wipeable) {
+    const handle = document.createElement("div");
+    handle.id = "wipeHandle";
+    panesEl.appendChild(handle);
+    bindWipe(handle);
+  }
+  scrubFrame.max = String(frameCount() - 1);
+  app.frame = Math.min(app.frame, frameCount() - 1);
+  updateTransport();
+  refreshPanel();
+  writeHash();
+  showFrame(app.frame);
+  // Take a copy of whatever is now selected. Both places the pane set can
+  // change end here, and both need it. Deliberately not awaited: the page stays
+  // interactive while it arrives, and each frame becomes playable as it lands
+  // rather than after all of them.
+  downloadSelection();
+}
+
+/* ------------------------------------------------------------ the readouts ---
+ * A research panel, so: numbers in aligned columns, units in the header, one
+ * row per pane. Not prose.
+ *
+ * The earlier version summed across panes and wrote sentences -- "8 panes
+ * holding their last frame so the rest keep playing". That reads once and is
+ * useless afterwards: the question while watching is always *which* pane, and
+ * a total cannot answer it. Every figure here is per pane, and the aggregate
+ * sits in one footer row where it belongs.
+ *
+ * Every column is something a reader would act on:
+ *   rung/res   what is being sent, and how big it is
+ *   kB/f, Mb/s what it costs -- measured from the manifest, not estimated
+ *   PSNR/SSIM  what it is worth, against the captured reference
+ *   buf        seconds of decoded playback ahead: the margin before it slows
+ *   net/dec    where the time goes, and they are separate because the fixes are
+ */
+
+function fmt(value, digits = 1) {
+  return value === null || value === undefined || !isFinite(value)
+    ? "" : value.toFixed(digits);
+}
+
+function paneRow(pane) {
+  const rungs = rungsOf(pane.clip, app.fps);
+  const snap = pane.source && pane.source.snapshot ? pane.source.snapshot() : null;
+  const name = snap ? snap.rung : null;
+  const rung = rungs.find((r) => r.name === (name || "default")) || rungs[0] || null;
+  const stats = pane.source ? pane.source.stats : null;
+  const detail = rung && rung.name === "default"
+    ? (pane.clip.detail || {})
+    : ((pane.clip.variants || []).find((v) => v.name === (rung && rung.name)) || {}).detail
+      || {};
+  return {
+    pane,
+    method: pane.method,
+    live: isLive(pane.clip),
+    frozen: !!(pane.source && pane.source.frozen),
+    rung: rungs.length > 1 ? (name || "default") : "\u2014",
+    resolution: detail.resolution || null,
+    kbPerFrame: rung ? rung.bitsPerSecond / (8 * app.fps) / 1000 : null,
+    mbits: rung ? rung.bitsPerSecond / 1e6 : null,
+    psnr: rung && rung.quality ? rung.quality.psnr : null,
+    ssim: rung && rung.quality ? rung.quality.ssim : null,
+    buffered: pane.source ? bufferedSeconds(pane, app.frame, app.fps) : null,
+    fetchMs: stats ? stats.fetchMs : null,
+    decodeMs: stats ? stats.decodeMs : null,
+    bytes: stats ? stats.bytes : 0,
+    switches: stats ? (stats.switches || 0) : 0,
+  };
+}
+
+function renderPaneTable() {
+  const table = document.getElementById("paneTable");
+  table.innerHTML = "";
+  const rows = app.panes.filter((pane) => pane.clip).map(paneRow);
+  if (!rows.length) return;
+
+  const anyLadder = rows.some((row) => row.rung !== "\u2014");
+  const anyQuality = rows.some((row) => row.psnr !== null && row.psnr !== undefined);
+  const columns = [
+    ["method", (r) => r.method, "name"],
+    ...(anyLadder ? [["rung", (r) => (r.frozen ? "frozen" : r.rung), "n"]] : []),
+    ["res", (r) => r.resolution, ""],
+    ["kB/f", (r) => fmt(r.kbPerFrame), "n"],
+    ["Mb/s", (r) => fmt(r.mbits, 2), "n"],
+    ...(anyQuality ? [
+      ["PSNR", (r) => fmt(r.psnr, 2), "n"],
+      ["SSIM", (r) => fmt(r.ssim, 4), "n"],
+    ] : []),
+    ["buf s", (r) => fmt(r.buffered, 2), "n"],
+    ["net ms", (r) => fmt(r.fetchMs, 0), ""],
+    ["dec ms", (r) => fmt(r.decodeMs, 0), ""],
+  ];
+
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const [label] of columns) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headRow.appendChild(th);
+  }
+  head.appendChild(headRow);
+  table.appendChild(head);
+
+  const body = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    if (row.frozen) tr.className = "frozen";
+    for (const [, read, kind] of columns) {
+      const td = document.createElement("td");
+      const value = row.live ? (read === columns[0][1] ? row.method : "live") : read(row);
+      td.textContent = (value === null || value === undefined || value === "")
+        ? "\u2013" : value;
+      td.className = (value === null || value === undefined || value === "")
+        ? "void" : kind;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+
+  const totalBytes = rows.reduce((sum, row) => sum + row.bytes, 0);
+  const totalMbits = rows.reduce((sum, row) => sum + (row.mbits || 0), 0);
+  const foot = document.createElement("tfoot");
+  const footRow = document.createElement("tr");
+  const cells = [`${rows.length} panes`];
+  if (anyLadder) cells.push("");
+  cells.push("", "", fmt(totalMbits, 2));
+  if (anyQuality) cells.push("", "");
+  cells.push("", "", `${(totalBytes / 1e6).toFixed(1)} MB`);
+  for (const text of cells) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    footRow.appendChild(td);
+  }
+  foot.appendChild(footRow);
+  table.appendChild(foot);
+}
+
+function renderSessionTable() {
+  const table = document.getElementById("sessionTable");
+  table.innerHTML = "";
+  const shown = app.shownAt || [];
+  const achieved = shown.length > 1
+    ? (shown.length - 1) / ((shown[shown.length - 1] - shown[0]) / 1000) : null;
+
+  const rows = [
+    ["mode", app.mode],
+    ["frame", `${app.frame + 1} / ${frameCount()}`],
+    ["fps", achieved === null ? "\u2013"
+      : `${fmt(achieved)} / ${app.fps} target`],
+  ];
+  if (app.late) rows.push(["late advances", String(app.late)]);
+  if (app.download) {
+    const got = app.download;
+    rows.push(["downloaded", got.complete
+      ? `${got.done} / ${got.frames} frames`
+      : `${got.done} / ${got.frames} (pane ${got.pane} of ${got.panes})`]);
+    rows.push(["held", `${(paneBytes() / 1e6).toFixed(0)} MB`]);
+    rows.push(["playing", got.complete
+      ? (got.resident ? "from memory" : "streamed, too big to hold")
+      : "downloading"]);
+  }
+
+  const laddered = app.panes.filter(
+    (pane) => pane.source && rungsOf(pane.clip, app.fps).length > 1);
+  if (laddered.length) {
+    document.getElementById("adaptRow").hidden = false;
+    rows.push(["link", meter.samples
+      ? `${fmt(meter.bitsPerSecond / 1e6, 2)} Mbit/s`
+      : "unmeasured"]);
+    if (app.adapt && app.decision) {
+      rows.push(["share/pane", `${fmt(app.decision.share / 1e6, 2)} Mbit/s`]);
+      if (app.decision.frozen) {
+        rows.push(["frozen", `${app.decision.frozen} / ${app.decision.ladders}`]);
+      }
+    } else if (!app.adapt) {
+      rows.push(["adaptation", "pinned to default"]);
+    }
+    const switches = laddered.reduce(
+      (sum, pane) => sum + (pane.source.stats.switches || 0), 0);
+    rows.push(["rung switches", String(switches)]);
+  }
+
+  const active = app.panes.filter((pane) => pane.source && pane.source.snapshot);
+  if (active.length) {
+    const snaps = active.map((pane) => pane.source.snapshot());
+    const pending = snaps.reduce((sum, snap) => sum + snap.pending, 0);
+    rows.push(["in flight", String(pending)]);
+    const modes = new Set(snaps.map((snap) => snap.mode));
+    if (!(modes.size === 1 && modes.has("independent"))) {
+      rows.push(["decode order", [...modes].join(",")]);
+      rows.push(["replays", String(
+        active.reduce((sum, pane) => sum + pane.source.stats.replays, 0))]);
+    }
+  }
+
+  const body = document.createElement("tbody");
+  for (const [key, value] of rows) {
+    const tr = document.createElement("tr");
+    const label = document.createElement("td");
+    label.textContent = key;
+    label.className = "name";
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    cell.className = "n";
+    tr.append(label, cell);
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+}
+
+/* Caveats as tags. A reader looking at a render needs the ones that change how
+ * to read it -- that a camera was in the training set, that colour is baked at
+ * one direction -- and needs them at a glance. The full sentences are still
+ * available under `caveats`, because some of them genuinely need a sentence. */
+const TAG_RULES = [
+  [/training view/i, "training view", true],
+  [/sh_degree 0|no view-dependent/i, "SH deg 0", true],
+  [/colour baked|color baked/i, "baked colour", true],
+  [/relative depth|ray-march steps/i, "depth (relative)", false],
+  [/replay|rendered earlier/i, "replay", true],
+  [/rendered on demand|decoded and drawn per frame/i, "live render", false],
+  [/quantised|quantized/i, "quantised", true],
+  [/sequential|residual over its predecessor/i, "sequential decode", false],
+  [/no free camera|fixed viewpoint|cannot be steered/i, "fixed camera", false],
+  [/reference, not a reconstruction/i, "reference", false],
+];
+
+function renderTags() {
+  const host = document.getElementById("tags");
+  host.innerHTML = "";
+  const seen = new Map();
+  for (const pane of app.panes) {
+    for (const note of (pane.clip && pane.clip.notes) || []) {
+      for (const [pattern, label, warn] of TAG_RULES) {
+        if (pattern.test(note) && !seen.has(label)) seen.set(label, warn);
+      }
+    }
+  }
+  if (app.mode === "compare" && !rig()) seen.set("no rig for this subject", true);
+  for (const [label, warn] of seen) {
+    const tag = document.createElement("span");
+    tag.className = warn ? "tag warn" : "tag";
+    tag.textContent = label;
+    host.appendChild(tag);
+  }
+}
+
+function renderNotes() {
+  const notes = document.getElementById("notes");
+  notes.innerHTML = "";
+  const lines = [];
+  if (app.mode === "explore") {
+    lines.push("free camera shared across every pane: differences are the reconstructions, not the viewpoint");
+    const snapped = app.panes.filter((pane) => pane.clip && isPixels(pane.clip));
+    const shell = shellOf(rig());
+    if (snapped.length && shell) {
+      lines.push(`${snapped.map((pane) => pane.method).join(", ")}: free`
+        + ` viewpoint, but ray-marched on a GPU rather than in the browser, so`
+        + ` the views were rendered in advance and the drag picks the nearest of`
+        + ` ${shell.dirs.length} — ${shellSampling(shell)}`);
+    }
+  } else if (rig()) {
+    const pose = rig().poses[app.station];
+    lines.push(`rig camera ${app.station}${pose && pose.view_id !== null && pose.view_id !== undefined ? ` (captured view ${pose.view_id})` : " (interpolated)"}: every pane at this pose`);
+  } else {
+    lines.push("no capture rig in the bundle for this subject, so there is no shared camera to compare at");
+  }
+  for (const pane of app.panes) {
+    for (const note of (pane.clip && pane.clip.notes) || []) {
+      lines.push(`${pane.method}: ${note}`);
+    }
+  }
+  document.getElementById("notesBlock").hidden = lines.length === 0;
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    notes.appendChild(li);
+  }
+}
+
+function refreshPanel() {
+  renderPaneTable();
+  renderSessionTable();
+  renderTags();
+  renderNotes();
+
+  const help = document.getElementById("controlHelp");
+  help.innerHTML = "";
+  const items = app.mode === "explore"
+    ? ["<kbd>drag</kbd> orbit \u00b7 <kbd>shift</kbd>+drag or right-drag pan",
+       "<kbd>wheel</kbd> zoom \u00b7 <kbd>r</kbd> reset camera",
+       "<kbd>space</kbd> play/pause \u00b7 <kbd>\u2190</kbd> <kbd>\u2192</kbd> step one frame"]
+    : ["<kbd>,</kbd> <kbd>.</kbd> step the rig camera",
+       "<kbd>space</kbd> play/pause \u00b7 <kbd>\u2190</kbd> <kbd>\u2192</kbd> step one frame",
+       "<kbd>A|B</kbd> wipes between two panes; drag the handle"];
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.innerHTML = item;
+    help.appendChild(li);
+  }
+}
+
+function renderMethodList() {
+  methodList.innerHTML = "";
+  const entries = methodsFor(app.scene, app.mode);
+  const usable = entries.filter((entry) => entry.usable).map((e) => e.method);
+  if (!entries.length) {
+    const note = document.createElement("p");
+    note.className = "sub";
+    note.textContent = "No clips for this scene.";
+    methodList.appendChild(note);
+    return;
+  }
+  for (const { method, usable: playable } of entries) {
+    const row = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = playable && app.methods.includes(method);
+    box.disabled = !playable;
+    box.addEventListener("change", () => {
+      app.methods = usable.filter(
+        (candidate) => candidate === method ? box.checked : app.methods.includes(candidate));
+      rebuildPanes();
+      renderMethodList();
+    });
+    const text = document.createElement("span");
+    text.textContent = method;
+    if (!playable) text.style.color = "var(--dim)";
+    row.append(box, text);
+
+    const why = document.createElement("span");
+    why.className = "why";
+    if (!playable) {
+      // The one case: a pixel method under a free camera. Say where it lives
+      // rather than only that it does not live here.
+      why.textContent = "compare only";
+      why.title = "A photograph or a pre-rendered image exists only at the "
+        + "camera it was made at, so a free camera has nothing to aim at it. "
+        + "Switch to Compare.";
+      why.style.color = "#d8a657";
+    } else if (app.mode === "compare") {
+      const here = app.index.clips.find(
+        (c) => c.scene === app.scene && c.method === method
+               && isPixels(c) && c.camera === app.station);
+      const geometry = app.index.clips.find(
+        (c) => c.scene === app.scene && c.method === method && hasGeometry(c));
+      why.textContent = here ? "rendered here"
+        : geometry ? "renders here" : "not at this camera";
+    }
+    if (why.textContent) row.appendChild(why);
+    methodList.appendChild(row);
+  }
+}
+
+function selectScene(scene) {
+  app.scene = scene;
+  // A scene whose every clip is live has nothing a free camera could show, so
+  // landing on it in Explore would present an empty pane and a message about
+  // Gaussians. Switching is more useful than explaining.
+  const anyGeometry = app.index.clips.some(
+    (clip) => clip.scene === scene && hasGeometry(clip));
+  if (app.mode === "explore" && !anyGeometry) {
+    setMode("compare");
+    return;
+  }
+  // Only the usable ones, and only two: opening a subject should show
+  // something immediately rather than downloading every method at once.
+  const available = methodsFor(scene, app.mode)
+    .filter((entry) => entry.usable).map((entry) => entry.method);
+  app.methods = available.slice(0, 2);
+  app.station = 0;
+  const poses = rig() ? rig().poses.length : 0;
+  scrubCamera.max = String(Math.max(poses - 1, 0));
+  scrubCamera.value = "0";
+  cameraRow.hidden = app.mode !== "compare";
+  scrubCamera.disabled = poses === 0;
+  cameraLabel.textContent = poses ? `1 / ${poses}` : "none";
+  if (app.mode === "explore") {
+    const clip = app.index.clips.find((c) => c.scene === scene && hasGeometry(c));
+    const lower = (clip && clip.bounds_min) || [-1, -1, -1];
+    const upper = (clip && clip.bounds_max) || [1, 1, 1];
+    const centre = [0, 1, 2].map((i) => (lower[i] + upper[i]) / 2);
+    const diagonal = Math.hypot(upper[0] - lower[0], upper[1] - lower[1], upper[2] - lower[2]) || 2;
+    app.camera.reset(centre, app.camera.fitDistance(diagonal / 2, [panesEl.clientWidth || 960,
+                                                                  panesEl.clientHeight || 700]));
+  }
+  renderMethodList();
+  rebuildPanes();
+}
+
+function setMode(mode) {
+  app.mode = mode;
+  document.getElementById("modeExplore").setAttribute("aria-pressed", String(mode === "explore"));
+  document.getElementById("modeCompare").setAttribute("aria-pressed", String(mode === "compare"));
+  cameraRow.hidden = mode !== "compare";
+  selectScene(app.scene);
+}
+
+async function showFrame(index) {
+  const total = frameCount();
+  app.frame = ((index % total) + total) % total;
+  scrubFrame.value = String(app.frame);
+  writeHash();
+  if (allPanesLive()) {
+    updateTransport();
+  } else {
+    frameLabel.textContent = `${app.frame + 1} / ${total}`;
+  }
+  try {
+    // A frozen pane is skipped, not shown: it keeps whatever is on its canvas
+    // while the others advance. That is the whole difference between a freeze
+    // and a stall -- the rest of the view stays in motion.
+    await Promise.all(app.panes
+      .filter((pane) => !(pane.source && pane.source.frozen))
+      .map((pane) => pane.show(app.frame)));
+    /* Achieved frame rate, and how often an advance arrived late.
+     *
+     * The honest stall measure for this client: playback advances only once the
+     * previous frame has actually been shown, so it never freezes mid-frame --
+     * it runs slow instead. "Did it stall" is really "how far below the target
+     * rate did it run", and a late count says whether that was steady or
+     * bursty. */
+    const now = performance.now();
+    const shown = (app.shownAt = app.shownAt || []);
+    if (shown.length && now - shown[shown.length - 1] > 1.5 * (1000 / app.fps)) {
+      app.late = (app.late || 0) + 1;
+    }
+    shown.push(now);
+    if (shown.length > 30) shown.shift();
+    statusEl.hidden = true;
+  } catch (error) {
+    setStatus(String(error.message || error));
+  }
+}
+
+/* The camera every splat pane is drawn from. In compare mode it is the rig
+ * pose, with the rig's own vertical field of view, so a rendered pane and a
+ * captured pane are the same photograph of different content. */
+function basisFactory() {
+  if (app.mode === "compare" && rig()) {
+    const pose = rig().poses[app.station];
+    const fovY = rig().fov_y;
+    return (size) => ({
+      eye: pose.position,
+      right: pose.right,
+      down: pose.down,
+      forward: pose.forward,
+      focal: [0.5 * size[1] / Math.tan(fovY / 2), 0.5 * size[1] / Math.tan(fovY / 2)],
+    });
+  }
+  return (size) => app.camera.frame(size);
+}
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (!app.panes.length) return;
+  /* Advance on the buffer, not on a wall clock.
+   *
+   * This used to fire `showFrame` whenever 1/fps had elapsed and not wait for
+   * it. `showFrame` is async -- a fetch and a parse, tens of milliseconds at
+   * best and far more over a link -- so calls overlapped, each one moving
+   * `app.frame`, and they resolved in whatever order they finished. The counter
+   * raced ahead of the pictures and the panes showed whichever decode landed
+   * last, which is not slow playback but wrong playback.
+   *
+   * So: at most one advance in flight, and the next interval is timed from when
+   * the last frame was actually shown. A clip the machine can keep up with
+   * plays at `fps`; one it cannot plays as fast as it can decode, in order,
+   * which is the honest failure mode. `--fps` becomes a ceiling rather than a
+   * promise. */
+  if (app.playing && !app.advancing && now - app.lastAdvance >= 1000 / app.fps) {
+    app.advancing = true;
+    // Before the fetch, so a decision applies to the frame about to be asked
+    // for rather than the one after it.
+    chooseRungs();
+    showFrame(app.frame + 1).finally(() => {
+      app.advancing = false;
+      app.lastAdvance = performance.now();
+    });
+  }
+  const aspect = app.mode === "compare" && rig() ? rig().width / rig().height : 0;
+  const basis = basisFactory();
+  for (const pane of app.panes) pane.draw(basis, aspect);
+}
+
+/* Decide a rung for every pane, from what the link is delivering.
+ *
+ * Called from the playback loop rather than on a timer, so decisions happen at
+ * a rate tied to what is being watched -- and stop when playback stops, which
+ * a timer would not.
+ *
+ * `app.adapt` off pins every pane to the default rendition. That is not a
+ * debug switch: comparing two methods usually means wanting both at their best
+ * regardless of what the link can sustain, and letting the link decide would
+ * silently make the comparison about bandwidth instead.
+ */
+/* Download every selected clip, then start playing.
+ *
+ * On demand rather than live: the server holds prepared content and the client
+ * takes a copy. Until it is here, say so with a number -- a page that sits
+ * blank while 63 MB arrives is indistinguishable from a page that is broken,
+ * and that was the single most confusing thing about this viewer.
+ *
+ * Panes are downloaded in order rather than in parallel. One connection
+ * saturates the link either way, and doing them in turn means the first pane
+ * is playable while the rest arrive, instead of four half-finished ones.
+ */
+async function downloadSelection() {
+  const panes = app.panes.filter((pane) => pane.source && !isLive(pane.clip));
+  if (!panes.length) { app.download = null; return; }
+
+  const token = ++app.downloadToken;
+  const totals = panes.map((pane) => pane.source.length);
+  const frames = totals.reduce((a, b) => a + b, 0);
+  app.download = { done: 0, frames, bytes: 0, pane: 0, panes: panes.length,
+                   complete: false, resident: true };
+  let done = 0;
+
+  for (let index = 0; index < panes.length; index++) {
+    const pane = panes[index];
+    if (token !== app.downloadToken) return;      // selection changed under us
+    // The pane list was taken before the first await, and a pane can go away
+    // during one -- clicking through subjects disposes panes, which sets their
+    // source to null. Reaching into it then throws, and the catch below would
+    // report a disposed pane as a decode failure onto DOM that is no longer on
+    // the page. The clip check is the same guard against a pane that is still
+    // here but has moved to another subject's clip: its old scheduler was
+    // released, so there is nothing left to download.
+    if (!pane.source || pane.source.abandoned) continue;
+    app.download.pane = index + 1;
+    let held = false;
+    try {
+      held = await pane.source.downloadAll((got, of, bytes) => {
+        if (token !== app.downloadToken) return;
+        app.download.done = done + got;
+        app.download.bytes += 0;                  // bytes come from the totals below
+        setStatus(`downloading ${app.download.done} / ${frames} frames`
+          + ` · ${(paneBytes() / 1e6).toFixed(0)} MB`);
+      });
+    } catch (error) {
+      /* Said in the pane, and the other panes carry on.
+       *
+       * This used to propagate out of `downloadSelection` as an unhandled
+       * rejection: the pane stayed blank, nothing was logged where anyone
+       * would look, and the page went on insisting it was fine. That is how a
+       * decoder error reads as "this method is broken" -- which is what
+       * happened when every Gaussian frame was handed the container's `.seq`
+       * name instead of its own. A pane that cannot show its content has to
+       * say why. */
+      if (token !== app.downloadToken) return;
+      pane._explain(`${pane.method} could not be decoded.`,
+                    String(error && error.message || error));
+      app.download.resident = false;
+      done += totals[index];
+      app.download.done = done;
+      continue;
+    }
+    if (!held) app.download.resident = false;
+    done += totals[index];
+    app.download.done = done;
+  }
+  if (token !== app.downloadToken) return;
+  app.download.complete = true;
+  app.download.bytes = paneBytes();
+  statusEl.hidden = true;
+  refreshPanel();
+}
+
+/* Bytes fetched across every pane, from the schedulers themselves rather than
+ * counted again here: one counter is one thing to get wrong. */
+function paneBytes() {
+  return app.panes.reduce(
+    (sum, pane) => sum + (pane.source ? pane.source.stats.bytes : 0), 0);
+}
+
+function chooseRungs() {
+  const panes = app.panes.filter((pane) => pane.source && !isLive(pane.clip));
+  if (!panes.length) return;
+
+  if (!app.adapt) {
+    for (const pane of panes) { pane.source.useRung(null); pane.source.frozen = false; }
+    app.decision = null;
+    return;
+  }
+  const rate = meter.bitsPerSecond;
+  if (!rate) return;                 // nothing measured yet; leave as-is
+
+  const laddered = panes.filter((pane) => rungsOf(pane.clip, app.fps).length > 1);
+  if (!laddered.length) { app.decision = null; return; }
+
+  /* Deficit first. When the rate cannot carry every pane's cheapest rung,
+   * freezing some so the rest play beats starving all of them: a frozen pane
+   * holds its last frame while the others keep moving, and `streamer.playback`
+   * measures that trade -- on a collapsing trace it turned 30 seconds of stall
+   * into 56 of freeze, the same shortfall taken as a decision instead of a
+   * failure.
+   *
+   * Frozen by fullest buffer, and stickily: a pane already frozen stays frozen
+   * unless the rate recovers. Reconsidering from scratch each time would thaw
+   * one pane and freeze another, and panes would visibly flicker. */
+  const buffered = new Map(laddered.map(
+    (pane) => [pane, bufferedSeconds(pane, app.frame, app.fps)]));
+  const order = [...laddered].sort((a, b) => {
+    const froze = (pane) => (pane.source.frozen ? 1 : 0);
+    return froze(a) - froze(b) || buffered.get(a) - buffered.get(b);
+  });
+  const floor = (pane) => rungsOf(pane.clip, app.fps)[0].bitsPerSecond;
+  const playing = [...order];
+  while (playing.length
+         && playing.reduce((sum, pane) => sum + floor(pane), 0) > rate) {
+    playing.pop();
+  }
+  const frozen = new Set(laddered.filter((pane) => !playing.includes(pane)));
+
+  const share = playing.length ? rate / playing.length : 0;
+  let spent = 0;
+  for (const pane of laddered) {
+    pane.source.frozen = frozen.has(pane);
+    const rungs = rungsOf(pane.clip, app.fps);
+    if (frozen.has(pane)) continue;  // holds its last frame; nothing fetched
+    const budget = bufferBudget(share, buffered.get(pane), app.targetBuffer);
+    const rung = affordable(rungs, budget);
+    pane.source.useRung(rung && rung.name === "default" ? null : rung);
+    spent += rung ? rung.bitsPerSecond : 0;
+  }
+  app.decision = {
+    rate, share, spent, panes: panes.length,
+    ladders: laddered.length, frozen: frozen.size,
+  };
+}
+
+function togglePlay() {
+  app.playing = !app.playing;
+  playPause.textContent = app.playing ? "❚❚" : "▶";
+  app.lastAdvance = 0;
+}
+
+/* How far playback is behind the rate it was asked for. Reported rather than
+ * hidden: a clip at 129 MB a second of decoded frames cannot play at 30 fps
+ * over any link, and saying so is more useful than appearing to stutter. */
+function playbackRate() {
+  return app.shownAt && app.shownAt.length > 1
+    ? 1000 * (app.shownAt.length - 1) /
+      (app.shownAt[app.shownAt.length - 1] - app.shownAt[0])
+    : null;
+}
+
+function setStation(value) {
+  const poses = rig() ? rig().poses.length : 0;
+  if (!poses) return;
+  app.station = ((value % poses) + poses) % poses;
+  scrubCamera.value = String(app.station);
+  cameraLabel.textContent = `${app.station + 1} / ${poses}`;
+  updateClips();
+  renderMethodList();
+}
+
+function bindWipe(handle) {
+  let dragging = false;
+  const move = (event) => {
+    if (!dragging) return;
+    const rect = panesEl.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    document.documentElement.style.setProperty("--wipe", `${fraction * 100}%`);
+  };
+  handle.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    handle.setPointerCapture(event.pointerId);
+  });
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", (event) => {
+    dragging = false;
+    handle.releasePointerCapture(event.pointerId);
+  });
+}
+
+function bindControls() {
+  const adapt = document.getElementById("adapt");
+  adapt.checked = app.adapt;
+  adapt.addEventListener("change", () => {
+    app.adapt = adapt.checked;
+    // Applied immediately rather than at the next advance: the switch is most
+    // useful while paused, comparing the same frame at two rungs.
+    chooseRungs();
+    meter.reset();          // the pinned rung's rate says nothing about the other
+    refreshPanel();
+  });
+
+  let dragging = null;
+  panesEl.addEventListener("contextmenu", (event) => event.preventDefault());
+  panesEl.addEventListener("pointerdown", (event) => {
+    if (app.mode !== "explore" || event.target.id === "wipeHandle") return;
+    dragging = { x: event.clientX, y: event.clientY,
+                 pan: event.shiftKey || event.button === 2 || event.button === 1 };
+    panesEl.setPointerCapture(event.pointerId);
+  });
+  panesEl.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const dx = event.clientX - dragging.x, dy = event.clientY - dragging.y;
+    dragging.x = event.clientX; dragging.y = event.clientY;
+    const camera = app.camera;
+    if (dragging.pan) {
+      const size = [panesEl.clientWidth, panesEl.clientHeight];
+      const basis = camera.frame(size);
+      const perPixel = camera.distance / basis.focal[1];
+      for (let i = 0; i < 3; i++) {
+        camera.target[i] -= basis.right[i] * dx * perPixel + basis.down[i] * dy * perPixel;
+      }
+    } else {
+      camera.yaw -= dx * 0.005;
+      const limit = 85 * Math.PI / 180;
+      camera.pitch = Math.max(-limit, Math.min(limit, camera.pitch + dy * 0.005));
+      followCamera();
+    }
+  });
+  panesEl.addEventListener("pointerup", (event) => {
+    if (!dragging) return;
+    dragging = null;
+    panesEl.releasePointerCapture(event.pointerId);
+  });
+  panesEl.addEventListener("wheel", (event) => {
+    if (app.mode !== "explore") return;
+    event.preventDefault();
+    app.camera.distance *= Math.exp(event.deltaY * 0.001);
+  }, { passive: false });
+
+  playPause.addEventListener("click", togglePlay);
+  scrubFrame.addEventListener("input", () => {
+    app.playing = false; playPause.textContent = "▶";
+    showFrame(parseInt(scrubFrame.value, 10));
+  });
+  scrubCamera.addEventListener("input", () => setStation(parseInt(scrubCamera.value, 10)));
+  sceneSelect.addEventListener("change", () => selectScene(sceneSelect.value));
+  document.getElementById("modeExplore").addEventListener("click", () => setMode("explore"));
+  document.getElementById("modeCompare").addEventListener("click", () => setMode("compare"));
+  wipeToggle.addEventListener("click", () => {
+    app.wipe = !app.wipe;
+    wipeToggle.setAttribute("aria-pressed", String(app.wipe));
+    rebuildPanes();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") return;
+    if (event.key === " ") { event.preventDefault(); togglePlay(); }
+    else if (event.key === "ArrowRight") showFrame(app.frame + 1);
+    else if (event.key === "ArrowLeft") showFrame(app.frame - 1);
+    else if (event.key === "r" && app.mode === "explore") {
+      app.camera.goHome();
+      followCamera();               // home is a viewpoint too
+    }
+    else if (event.key === ".") setStation(app.station + 1);
+    else if (event.key === ",") setStation(app.station - 1);
+  });
+}
+
+/* The whole view state lives in the URL fragment, so a particular comparison --
+ * this scene, these methods, this rig camera, this frame -- is a link someone
+ * else can open. Read once at load, rewritten whenever the state changes. */
+function readHash() {
+  const out = {};
+  for (const part of location.hash.replace(/^#/, "").split("&")) {
+    if (!part) continue;
+    const [key, value] = part.split("=");
+    out[decodeURIComponent(key)] = decodeURIComponent(value || "");
+  }
+  return out;
+}
+
+function writeHash() {
+  if (!app.scene) return;
+  const parts = [
+    `scene=${encodeURIComponent(app.scene)}`,
+    `mode=${app.mode}`,
+    `methods=${app.methods.map(encodeURIComponent).join(",")}`,
+  ];
+  if (app.mode === "compare") parts.push(`camera=${app.station}`);
+  if (app.frame) parts.push(`frame=${app.frame}`);
+  if (app.wipe) parts.push("wipe=1");
+  const next = `#${parts.join("&")}`;
+  if (location.hash !== next) history.replaceState(null, "", next);
+}
+
+async function main() {
+  bindControls();
+  let index;
+  try {
+    const response = await fetch("./view.json");
+    if (!response.ok) throw new Error(`view.json: HTTP ${response.status}`);
+    index = normalise(await response.json());
+  } catch (error) {
+    return fail(`Could not read the bundle index.\n${error.message || error}`);
+  }
+  app.index = index;
+  app.scenes = index.scenes || {};
+  app.fps = index.fps || 30;
+  app.camera = new OrbitCamera();
+  /* The bundle's title, or the platform's own name.
+   *
+   * The line under this used to print `index.source`, which is every input
+   * path a bundle was built from joined together -- five absolute paths on
+   * this machine, wrapped with `word-break: break-all` because they did not
+   * fit. That is provenance, and it belongs where provenance is read: it is
+   * still in the manifest, and each clip carries its own `detail.source` in
+   * the per-pane notes. A header is for saying what this is. */
+  const title = index.title || "Open4D Streaming Platform";
+  document.getElementById("title").textContent = title;
+  document.title = title;
+  if (!index.clips || !index.clips.length) return fail("This bundle has no clips.");
+
+  const canvas = document.createElement("canvas");
+  if (!canvas.getContext("webgl2") && index.clips.some(hasGeometry)) {
+    return fail("This browser could not start WebGL2, which every geometry clip needs.\n"
+                + "Pre-rendered clips would still work; try a Chromium- or Firefox-based browser.");
+  }
+
+  for (const scene of scenesInBundle()) {
+    const option = document.createElement("option");
+    option.value = scene;
+    option.textContent = scene;
+    sceneSelect.appendChild(option);
+  }
+  // Compare needs a rig; without one in the bundle it has no camera to offer.
+  const anyRig = Object.keys(app.scenes).length > 0;
+  document.getElementById("modeCompare").disabled = !anyRig;
+  if (!anyRig) document.getElementById("modeCompare").title =
+    "no capture rig in this bundle — re-export with --corpus pointing at the ORBIT dataset";
+
+  requestAnimationFrame(tick);
+  const wanted = readHash();
+  const scenes = scenesInBundle();
+  app.scene = scenes.includes(wanted.scene) ? wanted.scene : scenes[0];
+  sceneSelect.value = app.scene;
+  if (wanted.wipe === "1") {
+    app.wipe = true;
+    wipeToggle.setAttribute("aria-pressed", "true");
+  }
+  setMode(wanted.mode === "compare" && anyRig ? "compare" : "explore");
+  if (wanted.methods) {
+    // Only the usable ones: a URL naming a captured method in Explore would
+    // otherwise select something this mode cannot show.
+    const available = methodsFor(app.scene, app.mode)
+      .filter((entry) => entry.usable).map((entry) => entry.method);
+    const asked = wanted.methods.split(",").filter((m) => available.includes(m));
+    if (asked.length) {
+      app.methods = asked;
+      renderMethodList();
+      rebuildPanes();
+    }
+  }
+  if (wanted.camera) setStation(parseInt(wanted.camera, 10) || 0);
+  if (wanted.frame) showFrame(parseInt(wanted.frame, 10) || 0);
+}
+
+main();
+</script>
