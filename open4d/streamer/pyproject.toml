@@ -1,0 +1,25 @@
+[project]
+name = "open4d-streamer"
+version = "0.1.0"
+description = "Streaming and playback for 4D reconstructions"
+requires-python = ">=3.10"
+# `open4d` for `open4d.core.Representation` and `open4d.core.Dependency`: a
+# bundle names representations with core's vocabulary rather than its own, and
+# the dependency model belongs to core because codecs outside this module have
+# it too. Core's own runtime requirement is numpy.
+dependencies = ["open4d"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["streamer*"]
+
+[tool.setuptools.package-data]
+# The page alone is not the client. It starts `client/worker.js`, which is
+# where every codec lives, and the worker `importScripts` the vendored Draco
+# pair beside it. The server reads all three off disk next to `viewer.html`,
+# so a wheel carrying only the page 404s the worker and decodes nothing.
+"streamer.client" = ["*.html", "*.js", "vendor/draco/*"]
