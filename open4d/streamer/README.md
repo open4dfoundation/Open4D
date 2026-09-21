@@ -2,9 +2,9 @@
 
 Streaming and playback for 4D reconstructions — whatever their representation.
 
-Separate from the modules that *produce* reconstructions (`gs_tools`, `vega`,
-`nevo`, `queen`, `3dgstream`) because it is specific to none of them, and was
-never specific to Gaussians. The dependency runs one way: producers import this
+Beside `../reconstruction` rather than inside it, because it produces no
+reconstruction: those modules make the content and this one delivers it. It is
+specific to none of them, and was never specific to Gaussians. The dependency runs one way: producers import this
 to describe and serve their output, and this imports none of them.
 
 ```

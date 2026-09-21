@@ -124,7 +124,8 @@ open4d/
 ├── visualization/   public viewer and GIF renderer
 ├── torch_ops/       optional Torch geometry helpers
 ├── codecs/          draco, faster_vdmc, klt, n4mc, qndf, qndf_int8, tsmc, tvmc, vdmc
-├── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools, streamer
+├── reconstruction/  rgbd, queen, 3dgstream, vega, rerf, gs_tools
+├── streamer/        serving and playing a reconstruction, whatever it is made of
 └── webclients/      browser clients and the adaptive-streaming logic they share
 integrations/        open3d, unity
 examples/            runnable sequence loading, visualization, and comparison

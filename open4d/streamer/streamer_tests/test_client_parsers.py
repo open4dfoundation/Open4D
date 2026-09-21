@@ -31,6 +31,7 @@ from open4d import Frame, MemoryFrameProvider, PointCloud, Sequence, TriangleMes
 from open4d.io import write_sequence
 
 from streamer.client import viewer_path
+from streamer_tests import open4d_tree
 
 
 def _source() -> str:
@@ -193,8 +194,7 @@ def test_a_real_captured_sequence_parses(tmp_path):
     import open4d
 
     source = (
-        Path(__file__).resolve().parents[3]
-        / "codecs/tvmc/arap-volume-tracking/data/basketball_player"
+        open4d_tree() / "codecs/tvmc/arap-volume-tracking/data/basketball_player"
     )
     if not source.is_dir():
         pytest.skip(f"{source} is not present")

@@ -81,4 +81,4 @@ def test_a_missing_streamer_says_how_to_install_it(tmp_path):
     with mock.patch.dict(sys.modules, {"streamer": None}):
         with pytest.raises(open4d.StreamerDependencyError) as caught:
             open4d.stream(sequence_of(), out_dir=tmp_path, name="capture")
-    assert "pip install -e open4d/reconstruction/streamer" in str(caught.value)
+    assert "pip install -e open4d/streamer" in str(caught.value)

@@ -31,6 +31,7 @@ def _source() -> str:
     """The decode worker, which is where the codecs live."""
     return (viewer_path().parent / "worker.js").read_text()
 from streamer.server import serve
+from streamer_tests import open4d_tree
 
 pytestmark = pytest.mark.cpu
 
@@ -42,8 +43,7 @@ DracoPy = pytest.importorskip("DracoPy", reason="Draco frames need open4d[draco]
 CLIENT = viewer_path().parent
 VENDOR = CLIENT / "vendor" / "draco"
 MESH_SOURCE = (
-    Path(__file__).resolve().parents[3]
-    / "codecs/tvmc/arap-volume-tracking/data/basketball_player"
+    open4d_tree() / "codecs/tvmc/arap-volume-tracking/data/basketball_player"
 )
 
 

@@ -56,7 +56,7 @@ def _require() -> Any:
             "open4d.stream needs the 'open4d-streamer' package, which is not "
             "part of the base install -- it imports open4d, so open4d cannot "
             "depend on it. From a source checkout:\n"
-            "    python -m pip install -e open4d/reconstruction/streamer"
+            "    python -m pip install -e open4d/streamer"
         ) from error
     return streamer
 

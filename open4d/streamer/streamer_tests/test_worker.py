@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from streamer.client import viewer_path
+from streamer_tests import open4d_tree
 
 pytestmark = pytest.mark.cpu
 
@@ -114,9 +115,7 @@ def test_the_worker_carries_no_pixel_codec():
 
 @requires_node
 def test_a_frame_comes_back_parsed(tmp_path):
-    ply = next(
-        (Path(__file__).resolve().parents[3] / "codecs/tvmc").rglob("*.obj"), None
-    )
+    ply = next((open4d_tree() / "codecs/tvmc").rglob("*.obj"), None)
     if ply is None:
         pytest.skip("no mesh source present")
     # A minimal mesh PLY, so this test needs no exporter and no dataset.
