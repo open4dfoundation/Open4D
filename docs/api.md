@@ -63,7 +63,7 @@ index, and per-frame streams alongside the geometry — see the
 
 ## Streaming
 
-`open4d.stream` exports a sequence as a bundle and serves it to a browser:
+`open4d.stream` exports a file as a bundle and serves it to a browser:
 
 ```python
 import open4d
@@ -71,6 +71,12 @@ import open4d
 open4d.stream("capture.usdc")
 open4d.stream("capture.usdc", rungs=["draco", "draco@11"], out_dir="bundle/")
 ```
+
+For a loaded sequence, pass browser options such as `name="capture"` and
+`out_dir="bundle/"`. `open4d.send(sequence, host, port)` explicitly selects
+decoded-mesh TCP transport and pairs with `open4d.receive`. Existing
+`open4d.stream(sequence, host, port)` calls, and frame iterables without browser
+options, retain that TCP behavior without requiring `open4d-streamer`.
 
 `rungs` is the quality ladder. The first is the rendition a client plays by
 default and the rest are what it can switch to mid-playback, so a one-entry

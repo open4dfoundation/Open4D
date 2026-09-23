@@ -21,7 +21,7 @@ hardware requirements to the shared Python baseline. See
 
 | Module | |
 |---|---|
-| [**RGB-D**](../open4d/reconstruction/rgbd/README.md) | Synchronized multi-camera RGB-D ingestion, calibrated point-cloud fusion, CUDA TSDF mesh reconstruction, and live browser playback. Includes both the original native reconstruction code and the Python two-camera streaming pipeline |
+| [**RGB-D**](../open4d/streaming/README.md) | Synchronized multi-camera RGB-D ingestion, calibrated point-cloud fusion, CUDA TSDF mesh reconstruction, and live browser playback. Includes both the original native reconstruction code and the Python two-camera streaming pipeline |
 | [**QUEEN**](../open4d/reconstruction/queen/README.md) | Quantized efficient encoding of dynamic Gaussians for streaming free-viewpoint video (NeurIPS 2024) |
 | [**3DGStream**](../open4d/reconstruction/3dgstream/README.md) | On-the-fly training of 3D Gaussians for streaming photo-realistic free-viewpoint video (CVPR 2024) |
 | [**Vega**](../open4d/reconstruction/vega/README.md) | An ORBIT adaptation of Vega (MobiCom 2025): mobile volumetric video streaming with 3D Gaussian splatting |

@@ -2,6 +2,8 @@ from concurrent.futures import ThreadPoolExecutor
 import importlib
 import json
 import socket
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -119,6 +121,13 @@ def test_reconstruct_validates_before_loading_optional_dependencies(kwargs, matc
     settings = {"intrinsics": (20, 20, 16, 16), **kwargs}
     with pytest.raises(ValueError, match=match):
         reconstruct(np.ones((1, 32, 32)), **settings)
+
+
+@pytest.mark.parametrize("version", ["0.18.0", "0.20.0"])
+def test_reconstruct_rejects_unsupported_open3d_before_returning_a_sequence(monkeypatch, version):
+    monkeypatch.setitem(sys.modules, "open3d", SimpleNamespace(__version__=version))
+    with pytest.raises(RuntimeError, match=r"Open3D 0\.19\.x.*open3d>=0\.19,<0\.20"):
+        reconstruct(np.ones((1, 32, 32)), intrinsics=(20, 20, 16, 16))
 
 
 @pytest.mark.open3d

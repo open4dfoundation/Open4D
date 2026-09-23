@@ -23,8 +23,12 @@ from .core import (
     TriangleMesh,
     dtypes,
 )
-from ._api import load, save, unload
-from ._streamer import StreamerDependencyError, stream
+from ._api import load, save, unload, reconstruct, stream
+from ._streamer import StreamerDependencyError
+from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode
+from .streaming import receive, send
+from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
+from .metrics import compare_meshes, compare_sequences
 from .visualization import visualize
 
 __all__ = [
@@ -64,7 +68,7 @@ __all__ = [
     "receive",
     "stream",
     "save",
-    "stream",
+    "send",
     "unload",
     "visualize",
 ]
