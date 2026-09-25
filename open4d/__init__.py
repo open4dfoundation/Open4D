@@ -30,6 +30,7 @@ from .streaming import receive, send
 from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
 from .metrics import compare_meshes, compare_sequences
 from .visualization import visualize
+from .native import NativeSequence, NeuralFieldFrame, import_native
 
 __all__ = [
     "ATTRIBUTE_FLOAT_DTYPE",
@@ -41,6 +42,9 @@ __all__ = [
     "GaussianSplats",
     "GaussianRun",
     "NeuralGaussianFrame",
+    "NativeSequence",
+    "NeuralFieldFrame",
+    "import_native",
     "FrameProvider",
     "GaussianCloud",
     "Geometry",

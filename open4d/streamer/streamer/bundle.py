@@ -42,6 +42,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -369,7 +370,16 @@ def write(
     if detail:
         index["detail"] = detail
     path = out_dir / INDEX_NAME
-    path.write_text(json.dumps(index, indent=2) + "\n")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=out_dir,
+                                         prefix=".view-", suffix=".json", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(index, indent=2) + "\n")
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return path
 
 

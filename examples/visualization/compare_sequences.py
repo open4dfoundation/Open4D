@@ -153,7 +153,7 @@ def report_error(comparison) -> None:
     summary = comparison.summary()
     print(f"\n  sequence symmetric RMS : {summary.symmetric_rms:.6g}")
     print(f"  sequence Hausdorff     : {summary.hausdorff:.6g}")
-    print(f"  mean symmetric PSNR    : {summary.mean_psnr_db:.2f} dB")
+    print(f"  sequence symmetric PSNR: {summary.mean_psnr_db:.2f} dB")
     print(f"  worst frame            : {summary.worst_frame}")
 
 

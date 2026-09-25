@@ -315,7 +315,8 @@ def test_missing_research_source_has_an_actionable_error(tmp_path, monkeypatch):
         research_module("klt.klt")
 
 
-def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch):
+@pytest.mark.parametrize("identifier,suffix", [("native-test", ".v4d"), ("vdmc", ".vmesh"), ("faster_vdmc", ".vmesh")])
+def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch, identifier, suffix):
     import open4d.codec._vmesh as implementation
 
     mesh = TriangleMesh([[-2.0, 3, 4], [2, 3, 4], [-2, 7, 4]], [[0, 1, 2]])
@@ -346,9 +347,9 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
             )
 
     monkeypatch.setattr(implementation, "_run", native_call)
-    codec = VMeshCodec("native-test")
+    codec = VMeshCodec(identifier)
     artifact = codec.encode(
-        clean, tmp_path / "sequence.v4d", encoder=executable,
+        clean, tmp_path / ("sequence" + suffix), encoder=executable,
     )
     decoded = codec.decode(artifact, decoder=executable)
 
@@ -360,7 +361,7 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
     assert decoded.has_vertex_correspondence is None
     assert decoded.timestamps == clean.timestamps
     assert [label for _, label in calls] == [
-        "native-test encoder", "native-test decoder"
+        f"{identifier} encoder", f"{identifier} decoder"
     ]
     assert all(isinstance(command, list) for command, _ in calls)
     assert "--encodeDisplacements=1" in calls[0][0]
@@ -420,7 +421,8 @@ def test_vmesh_decodes_a_raw_bitstream_without_an_open4d_manifest(
     assert not decoded_directory.exists()
 
 
-def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch):
+@pytest.mark.parametrize("requested", ["cpu", "auto"])
+def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, requested):
     import open4d.codec._klt as implementation
 
     source = Sequence(MemoryFrameProvider([
@@ -449,11 +451,15 @@ def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(implementation, "write_tsdf_sequence", prepare)
+    if requested == "auto":
+        torch = pytest.importorskip("torch")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
     monkeypatch.setattr(implementation, "_backend", lambda: SimpleNamespace(
         run_compression=compress, decode_compressed=decompress,
     ))
     artifact = encode_sequence(source, tmp_path / "take.k4d", codec="klt")
-    decoded = decode_sequence(artifact, device="cpu")
+    decoded = decode_sequence(artifact, device=requested)
 
     assert calls == [
         ("prepare", 1, 63), ("encode", 1, False),

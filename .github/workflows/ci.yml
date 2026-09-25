@@ -91,7 +91,9 @@ jobs:
           open4d/codec/tests/test_research_cpu.py
           open4d/codec/tests/test_qndf_preprocess.py
           open4d/codec/tests/test_qndf_entrypoints.py
+          open4d/codec/tests/test_codec_review.py
           open4d/codecs/n4mc/tests/test_codec.py
+          open4d/codecs/n4mc/tests/test_losses.py
 
   io-tools:
     name: I/O / real optional formats and benchmark smoke

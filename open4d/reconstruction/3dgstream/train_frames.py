@@ -127,10 +127,10 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
                 torch.save((gaussians.capture(), iteration), scene.output_path + "/chkpnt" + str(iteration) + ".pth")
 
     s1_end_time=time.time()
+    # The temporal representation is required even when densification is off.
+    scene.dump_NTC()
     # Densify
     if(opt.iterations_s2>0):
-    # Dump the NTC
-        scene.dump_NTC()
     # Update Gaussians by NTC
         gaussians.update_by_ntc()
     # Prune, Clone and setting up  

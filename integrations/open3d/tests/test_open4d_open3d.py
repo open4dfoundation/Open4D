@@ -17,6 +17,14 @@ VERTICES = np.array(
 TRIANGLES = np.array([[0, 1, 2]], dtype=np.uint32)
 
 
+def test_rgba_colors_are_accepted_with_explicit_alpha_warning():
+    colors = np.tile([1., 0.5, 0., 0.4], (3, 1))
+    frame = Frame(0, 0., TriangleMesh(VERTICES, TRIANGLES, colors=colors))
+    with pytest.warns(UserWarning, match="alpha"):
+        mesh = frame_to_open3d(frame)
+    np.testing.assert_allclose(np.asarray(mesh.vertex_colors), colors[:, :3])
+
+
 def test_core_frame_conversion() -> None:
     frame = Frame(7, 0.25, TriangleMesh(VERTICES, TRIANGLES))
 

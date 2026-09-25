@@ -7,7 +7,7 @@ codec vendors. Runnable from anywhere:
     python examples/streaming_demo.py
 
 Needs three things beyond the base install: the optional `open4d-streamer`
-package (``pip install -e open4d/streamer``), `open4d[draco]` for the Draco
+package (``pip install -e open4d/streamer``), `DracoPy` for the Draco
 rungs, and SciPy for the nearest-neighbour search the quality column uses.
 
 Output goes to ``examples/out/``, which the repository ignores.

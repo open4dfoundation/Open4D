@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from collections import deque
 import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 from types import MappingProxyType
@@ -19,6 +17,8 @@ from open4d.io._mesh import write_obj
 
 from ._npz import _json_value, _validate_manifest
 from ._protocol import CodecError
+from ._native import run as _run_native
+from ._v3c import pack_vmesh, probe_codec, unpack_vmesh
 
 
 def _executable(value, label: str) -> str:
@@ -36,15 +36,7 @@ def _positive_integer(value, name: str) -> int:
 
 def _run(python: str, action: str, request: Path) -> None:
     worker = Path(__file__).with_name("_tracked_worker.py")
-    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as log:
-        result = subprocess.run(
-            [python, str(worker), action, str(request)], cwd=request.parent,
-            stdout=log, stderr=subprocess.STDOUT, text=True, check=False,
-        )
-        if result.returncode:
-            log.seek(0)
-            detail = "".join(deque(log, maxlen=16)).strip()
-            raise CodecError(f"{action} failed (exit {result.returncode}):\n{detail}")
+    _run_native([python, str(worker), action, str(request)], action, cwd=request.parent)
 
 
 def _manifest(source: Path, codec: str) -> dict:
@@ -103,9 +95,12 @@ class TrackedMeshCodec:
 
     def __init__(self, identifier):
         self.id = identifier
-        self.suffixes = (f".{identifier}",)
+        self.suffixes = (f".{identifier}", ".vmesh")
 
     def can_decode(self, source: Path) -> bool:
+        source = Path(source)
+        if source.is_file() and source.suffix.lower() == ".vmesh":
+            return probe_codec(source) == self.id
         try:
             _manifest(source, self.id)
         except CodecError:
@@ -148,11 +143,14 @@ class TrackedMeshCodec:
         grid_resolution=512, key_frame=None, components=None, quantization=None,
         overwrite=False,
     ) -> Path:
-        """Encode geometry into a directory of native payloads and timing metadata."""
+        """Encode native payloads to a .vmesh file or legacy codec directory."""
         destination = Path(destination).absolute()
+        container = destination.suffix.lower() == ".vmesh"
         if destination.exists() and not overwrite:
             raise FileExistsError(f"destination already exists: {destination}")
-        if destination.exists() and not destination.is_dir():
+        if container and destination.is_dir():
+            raise IsADirectoryError(destination)
+        if not container and destination.exists() and not destination.is_dir():
             raise NotADirectoryError(destination)
         if len(sequence) < 2:
             raise CodecError(f"{self.id} requires at least two frames")
@@ -228,6 +226,8 @@ class TrackedMeshCodec:
                 if not (result / name).is_file() or not (result / name).stat().st_size:
                     raise CodecError(f"{self.id} encoder produced no {name}")
             (result / "metadata.json").write_text(json.dumps(manifest), encoding="utf-8")
+            if container:
+                return pack_vmesh(result, destination, overwrite=overwrite)
             previous = None
             if destination.exists():
                 if not overwrite:
@@ -259,14 +259,18 @@ class TrackedMeshCodec:
         return destination
 
     def decode(self, source: Path, *, backend=None, python=None, decoder=None) -> Sequence:
-        """Reconstruct frames using only the encoded directory."""
+        """Reconstruct frames from a .vmesh file or native codec directory."""
         source = Path(source).absolute()
-        manifest = _manifest(source, self.id)
-        settings = self._settings(backend, python, None, decoder, encoding=False)
         temporary = tempfile.TemporaryDirectory(prefix=f"open4d-{self.id}-decode-")
         decoded = None
         try:
             work = Path(temporary.name)
+            if source.is_file() and source.suffix.lower() == ".vmesh":
+                if probe_codec(source) != self.id:
+                    raise CodecError(f".vmesh does not contain {self.id} payloads")
+                source = unpack_vmesh(source, work / "native")
+            manifest = _manifest(source, self.id)
+            settings = self._settings(backend, python, None, decoder, encoding=False)
             output = work / "decoded"
             output.mkdir()
             settings.update(input=str(source), output=str(output), frames=len(manifest["frames"]))

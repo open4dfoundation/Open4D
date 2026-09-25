@@ -408,7 +408,7 @@ def test_reader_accepts_the_prototype_open4d_usd_layout(tmp_path):
         "open4d": {
             "version": 1,
             "source": "prototype-capture",
-            "key_frame_indices": [0],
+            "key_frame_indices": Vt.IntArray([0]),
         }
     }
     stage.GetRootLayer().Save()

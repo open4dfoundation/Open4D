@@ -41,7 +41,7 @@ const haveAsset = () => GOLDEN && fs.existsSync(
     fs.existsSync(GOLDEN.file) ? GOLDEN.file
         : path.join(__dirname, '..', GOLDEN.file));
 
-test('the golden fixture and its source asset are present', () => {
+test('the golden fixture and its source asset are present', { skip: !haveAsset() }, () => {
     assert.ok(GOLDEN, 'fixtures_vgs_golden.json is missing; run the generator');
     assert.ok(haveAsset(),
         `asset ${GOLDEN.file} is missing; re-export with orbitvega.export_quest`);

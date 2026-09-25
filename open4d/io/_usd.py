@@ -11,6 +11,7 @@ from pathlib import Path
 import tempfile
 from types import MappingProxyType
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -175,7 +176,13 @@ class UsdSequenceProvider:
         self.path = Path(path).absolute()
         self._Sdf, self._Usd, self._UsdGeom, self._Vt = _pxr()
         try:
-            self._stage = self._Usd.Stage.Open(str(self.path))
+            # File-format arguments are part of Sdf's layer identity. A unique
+            # reader key bypasses its path cache while retaining the real path
+            # for relative assets and leaving existing readers undisturbed.
+            layer = self._Sdf.Layer.FindOrOpen(
+                str(self.path), {"open4d_reader": uuid4().hex}
+            )
+            self._stage = self._Usd.Stage.Open(layer) if layer is not None else None
         except Exception as error:
             raise DecodeError(f"USD could not open {self.path}: {error}") from error
         if self._stage is None:
@@ -492,6 +499,8 @@ def _preflight(sequence: Sequence) -> tuple[dict[str, Any], list[dict[str, Any]]
         if frame.frame_index > np.iinfo(np.int64).max:
             raise EncodeError("USD frame indices must fit a signed 64-bit integer")
         mesh = frame.geometry
+        if not isinstance(mesh, TriangleMesh):
+            raise UnsupportedFeatureError("OpenUSD export currently requires triangle-mesh geometry")
         attributes = []
         for name, array in mesh.attributes.items():
             kind = _attribute_kind(array)

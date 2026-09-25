@@ -8,7 +8,6 @@ import math
 from numbers import Real
 import os
 from pathlib import Path
-import subprocess
 import tempfile
 from types import MappingProxyType
 from zipfile import BadZipFile, ZIP_STORED, ZipFile
@@ -21,6 +20,8 @@ from open4d.io._mesh import write_obj
 
 from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
+from ._native import run as _run
+from ._v3c import pack_vmesh, probe_codec, unpack_vmesh
 
 _SCHEMA = "open4d.vmesh-sequence/v1"
 _POSITION_BIT_DEPTH = 12
@@ -72,18 +73,6 @@ def _position_normalization(manifest):
     except (KeyError, TypeError, ValueError) as error:
         raise CodecError(f"invalid position normalization: {error}") from error
     return bounds, (1 << bits) - 1
-
-
-def _run(command: list[str], label: str) -> None:
-    result = subprocess.run(
-        command, shell=False, check=False, capture_output=True, text=True
-    )
-    if result.returncode:
-        detail = (result.stderr or result.stdout).strip().splitlines()
-        raise CodecError(
-            f"{label} exited {result.returncode}: "
-            f"{detail[-1] if detail else 'no diagnostic output'}"
-        )
 
 
 class _DecodedProvider:
@@ -175,7 +164,7 @@ class _RawDecodedProvider:
 class VMeshCodec:
     """Invoke one external V-Mesh process per sequence direction."""
 
-    suffixes = (".v4d",)
+    suffixes = (".v4d", ".vmesh")
     backend = "native-sequence"
     lossless = False
     preserves = ("positions", "triangles")
@@ -185,6 +174,8 @@ class VMeshCodec:
         self._environment = identifier.upper()
 
     def can_decode(self, source: Path) -> bool:
+        if Path(source).suffix.lower() == ".vmesh":
+            return probe_codec(source) == self.id
         try:
             with ZipFile(source) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
@@ -270,6 +261,16 @@ class VMeshCodec:
             _run(command, f"{self.id} encoder")
             if not stream.is_file() or not stream.stat().st_size:
                 raise CodecError(f"{self.id} encoder produced no bitstream")
+            if destination.suffix.lower() == ".vmesh":
+                # Preserve native V3C bytes plus the timing and normalization
+                # previously available only in the .v4d ZIP wrapper.
+                native_manifest = {k: v for k, v in manifest.items() if k != "schema"}
+                native_manifest.update(version=1, native={"profile": f"{self.id}/1", "decoder_config": bool(decoder_config)})
+                (work / "metadata.json").write_text(json.dumps(native_manifest), encoding="utf-8")
+                if decoder_config:
+                    import shutil
+                    shutil.copyfile(Path(decoder_config).absolute(), work / "decoder.cfg")
+                return pack_vmesh(work, destination, overwrite=overwrite)
             with tempfile.NamedTemporaryFile(
                 prefix=f".{destination.name}.", suffix=".tmp",
                 dir=destination.parent, delete=False,
@@ -296,7 +297,10 @@ class VMeshCodec:
         fps: float | None = None,
     ) -> Sequence:
         source = Path(source).absolute()
-        raw = source.suffix.lower() == ".vmesh"
+        carried = probe_codec(source) if source.suffix.lower() == ".vmesh" else None
+        if carried is not None and carried != self.id:
+            raise CodecError(f".vmesh contains {carried}, not {self.id}")
+        raw = source.suffix.lower() == ".vmesh" and carried is None
         if not raw and fps is not None:
             raise TypeError("fps applies only to manifest-free .vmesh bitstreams")
         raw_rate = _raw_fps(fps) if raw else None
@@ -311,7 +315,13 @@ class VMeshCodec:
         work = Path(temporary.name)
         decoded = None
         try:
-            if raw:
+            if carried:
+                native = unpack_vmesh(source, work / "native")
+                manifest = json.loads((native / "metadata.json").read_text())
+                _validate_manifest(manifest, schema=None, codec=self.id)
+                _position_normalization(manifest)
+                stream = native / "sequence.vmesh"
+            elif raw:
                 stream = source
                 manifest = None
             else:
@@ -327,7 +337,7 @@ class VMeshCodec:
             output.mkdir()
             # The pinned V-DMC decoder parses decTex even with zero attributes.
             command = [str(executable)]
-            embedded_config = work / "decoder.cfg"
+            embedded_config = (work / "native" if carried else work) / "decoder.cfg"
             config = configured or (
                 embedded_config
                 if embedded_config.is_file()

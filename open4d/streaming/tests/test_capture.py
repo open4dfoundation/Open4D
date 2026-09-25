@@ -5,9 +5,36 @@ import socket
 import sys
 import time
 import zlib
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+def test_browser_start_failure_closes_receiver_and_mesh_worker(fusion, tmp_path, save_fails):
+    module = importlib.import_module("live_two_camera_webrtc")
+    app = module.BrowserFusion.__new__(module.BrowserFusion)
+    closed = []
+
+    def start():
+        raise RuntimeError("port already in use")
+
+    def save():
+        if save_fails:
+            raise RuntimeError("save failed")
+
+    app.args = SimpleNamespace(output_dir=tmp_path)
+    app.server = SimpleNamespace(start=start, close=lambda: closed.append("server"), report=lambda: {})
+    app.mesh_worker = SimpleNamespace(close=lambda: closed.append("worker"), device="cpu",
+                                      fusion_mode="shared-tsdf", merge_mode="concatenate")
+    app.processor = None
+    app.save = save
+    app.processed = app.latest_pair = app.mesh_updates = 0
+    app.processor_error = None
+    with pytest.raises(RuntimeError, match="save failed" if save_fails else "port already in use"):
+        app.run()
+    assert closed == ["server", "worker"]
 
 
 @pytest.fixture

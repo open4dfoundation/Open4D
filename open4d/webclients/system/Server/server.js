@@ -276,6 +276,7 @@ app.get("/api/geometry-bundle", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || "127.0.0.1";
 
 function numberFromEnv(name, fallback) {
   const value = Number(process.env[name]);
@@ -2526,7 +2527,7 @@ if (require.main === module) {
     process.exit(1);
   }
   if (COMPRESSED_ROOT) logInfo("SERVER", `corpus ${COMPRESSED_ROOT}`);
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, HOST, () => {
     bootstrap().catch((e) => {
       logError("SERVER", `Bootstrap failed: ${e.message}`);
     });

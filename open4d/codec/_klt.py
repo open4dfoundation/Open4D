@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+from importlib import import_module
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ from ._npz import _json_value, _publish_file, _validate_manifest
 from ._protocol import CodecError
 from ._research import research_module
 from ._tsdf import write_tsdf_sequence
+from ._torch import torch_device
 
 _SCHEMA = "open4d.klt-sequence/v1"
 
@@ -155,6 +157,8 @@ class KLTCodec:
         return destination
 
     def decode(self, source: Path, *, device=None) -> Sequence:
+        if device == "auto":
+            device = str(torch_device(import_module("torch"), device))
         source = Path(source).absolute()
         temporary = tempfile.TemporaryDirectory(prefix="open4d-klt-decode-")
         work = Path(temporary.name)

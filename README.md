@@ -73,19 +73,34 @@ with open4d.decode("wave.v4d") as decoded:
 
 The [notebook](examples/open4d_sequence_codec.ipynb) walks through these calls,
 reconstruction and streaming in separate short cells.
+Short `.vmesh` examples:
+
+- [Preserve compressed state through USDC](examples/vmesh/01_container_and_usdc.ipynb)
+- [TVMC, TSMC, V-DMC, faster V-DMC and N4MC](examples/vmesh/02_mesh_codecs.ipynb)
+- [Vega, QUEEN and 3DGStream](examples/vmesh/03_gaussian_codecs.ipynb)
+- [ReRF](examples/vmesh/04_rerf.ipynb)
 
 | Codec | Input | Output | Backend setup |
 | --- | --- | --- | --- |
-| `vdmc` | Mesh sequence | `.v4d` | Build the V-DMC submodule and configure its encoder and decoder |
-| `faster_vdmc` | Mesh sequence | `.v4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
-| `tvmc` | Mesh sequence | `.tvmc` directory | [TVMC setup](open4d/codecs/tvmc/README.md) |
-| `tsmc` | Mesh sequence | `.tsmc` directory | [TSMC setup](open4d/codecs/tsmc/README.md) |
+| `vdmc` | Mesh sequence | `.vmesh` or `.v4d` | Build the V-DMC submodule and configure its encoder and decoder |
+| `faster_vdmc` | Mesh sequence | `.vmesh` or `.v4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
+| `tvmc` | Mesh sequence | `.vmesh` file or `.tvmc` directory | [TVMC setup](open4d/codecs/tvmc/README.md) |
+| `tsmc` | Mesh sequence | `.vmesh` file or `.tsmc` directory | [TSMC setup](open4d/codecs/tsmc/README.md) |
 | `klt` | Mesh sequence converted to TSDF volumes | `.k4d` | Research source and `.[klt]` |
-| `n4mc` | Mesh sequence converted to TSDF volumes | `.n4d` | Research source and `.[n4mc]` |
+| `n4mc` | Mesh sequence converted to TSDF volumes | `.vmesh` or `.n4d` | Research source and `.[n4mc]` |
 | `qndf`, `qndf-int8` | Mesh frames | `.q4d`, `.qi4d` | Research source and `.[qndf]` |
-| `vega` | Gaussian splat frames | `.vega` directory | [Vega CUDA environment](open4d/reconstruction/vega/README.md) |
+| `vega` | Gaussian splat frames or native run | `.vmesh` or `.vega` directory | [Vega CUDA environment](open4d/reconstruction/vega/README.md) |
+| `queen`, `3dgstream`, `rerf` | Native temporal research output | `.vmesh`, with native USDC interchange | Method-specific CUDA runtime for evaluation |
 
 QNDF-int8 now writes version 2 artifacts. Version 1 artifacts must be encoded again.
+
+TVMC, TSMC, V-DMC, Vega, QUEEN, 3DGStream, ReRF and N4MC support
+[native `.vmesh` carriage](examples/vmesh/01_container_and_usdc.ipynb). Mesh codecs support mesh USDC
+import/export; neural methods preserve their compressed temporal state in an
+O4D native USDC schema. Existing native outputs can be packed without recompression.
+N4MC carries a shared model and independent frame latents as an explicit
+exception to the temporal-dependency requirement.
+This experimental O4D V3C application format requires O4D decoding support.
 
 KLT, N4MC and QNDF run in Python. TVMC, TSMC, V-DMC and Gaussian methods use
 separate research runtimes. N4MC and QNDF currently process frames independently;
@@ -163,7 +178,7 @@ send(mesh_sequence(frames=30))
 ```
 
 This sends decoded mesh arrays over TCP, at their recorded frame timing. It is
-not a compression method. Both calls default to this computer on port 7000.
+not a compression method. Both calls default to this computer on port 47004.
 Pass `host=` and `port=` for another address. Remote transport needs a trusted
 network or SSH tunnel; this protocol has no authentication or encryption.
 Use `realtime=False` to transfer a recorded sequence as fast as possible.

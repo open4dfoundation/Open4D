@@ -118,7 +118,6 @@ def stream(
         out_dir,
         title=title,
         source=None if loaded else source,
-        fps=int(fps) if fps else 30,
     )
     with session:
         if loaded:

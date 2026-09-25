@@ -162,7 +162,7 @@ def run(
                 assert len(actual.geometry.positions) and len(actual.geometry.triangles)
                 exact &= _geometry_exact(actual.geometry, expected.geometry)
                 if (actual.geometry.positions.shape == expected.geometry.positions.shape
-                        and (info.lossless or sequence.has_vertex_correspondence is True)):
+                        and (info.lossless or decoded.has_vertex_correspondence is True)):
                     error = (actual.geometry.positions.astype(np.float64)
                              - expected.geometry.positions.astype(np.float64))
                     squared_error += float(np.square(error).sum())
@@ -185,14 +185,17 @@ def run(
                 surface_rms, surface_maximum,
             )
 
-        result, validate_s = timed(lambda: decode_and_validate(decoded))
+        frames, consume_s = timed(lambda: tuple(decoded))
+        validation_started = time.perf_counter()
+        result = decode_and_validate(frames)
+        validate_s = time.perf_counter() - validation_started
         (
             vertices, triangles, exact, rms_error, maximum_error,
             surface_rms_error, surface_max_error,
         ) = result
     finally:
         decoded.close()
-    decode_s = open_s + validate_s
+    decode_s = open_s + consume_s
 
     def decode_consume_close():
         measured_sequence = decode_sequence(artifact, codec=selected, **(decode_options or {}))

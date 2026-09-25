@@ -29,7 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable, Iterable
 
 from . import bundle
@@ -91,6 +91,10 @@ def _download(url: str, destination: Path, timeout: float) -> int:
     written = 0
     with urllib.request.urlopen(request, timeout=timeout) as response:
         resuming = have > 0 and response.status == 206
+        if resuming:
+            content_range = response.headers.get("Content-Range", "")
+            if not content_range.startswith(f"bytes {have}-"):
+                raise ValueError("invalid Content-Range for resumed download")
         if have and not resuming:
             # The server sent the whole file despite the range. Start over
             # rather than append: the alternative is a corrupt file that is
@@ -122,9 +126,26 @@ def frame_paths(index: dict) -> tuple[str, ...]:
     """Every frame path a manifest names, in order, without duplicates."""
     seen: dict[str, None] = {}
     for clip in index.get("clips", []):
-        for path in clip.get("frames", []):
+        packed = clip.get("sequence")
+        paths = [packed["url"]] if packed else clip.get("frames", [])
+        for variant in clip.get("variants", []):
+            paths = [*paths, *variant.get("frames", [])]
+        for path in paths:
             seen.setdefault(path, None)
     return tuple(seen)
+
+
+def _safe_target(root: Path, path: str) -> Path:
+    if (not isinstance(path, str) or not path or "\\" in path or "\x00" in path
+            or PurePosixPath(path).is_absolute() or PureWindowsPath(path).drive
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or path == bundle.INDEX_NAME or path.endswith(".partial")):
+        raise ValueError(f"unsafe bundle path: {path!r}")
+    target = root / path
+    for candidate in (target, target.with_name(target.name + ".partial")):
+        if root not in candidate.resolve().parents or candidate.is_symlink():
+            raise ValueError(f"unsafe bundle path: {path!r}")
+    return target
 
 
 def fetch(
@@ -157,17 +178,16 @@ def fetch(
         if missing:
             raise KeyError(f"no clip named {', '.join(sorted(missing))} in {base}")
 
-    # Written first and last: first so the directory is recognisable as a bundle
-    # while frames arrive, last so a `--only` subset's manifest is the filtered
-    # one rather than the whole thing.
-    (root / bundle.INDEX_NAME).write_text(json.dumps(index, indent=2) + "\n")
-
     paths = frame_paths(index)
+    targets = {path: _safe_target(root, path) for path in paths}
+    index_path = root / bundle.INDEX_NAME
+    if index_path.is_symlink():
+        raise ValueError("unsafe bundle manifest path")
     fetched: list[str] = []
     skipped: list[str] = []
     total_bytes = 0
     for position, path in enumerate(paths, start=1):
-        target = root / path
+        target = targets[path]
         source = base + urllib.parse.quote(path)
         expected = _remote_size(source, timeout) if target.is_file() else None
         if target.is_file() and expected is not None and target.stat().st_size == expected:
@@ -183,6 +203,9 @@ def fetch(
                 monitor.record(path, 200, written, 0.0)
         if progress is not None:
             progress(path, position, len(paths))
+
+    # Advertise the new bundle only once every referenced file is available.
+    index_path.write_text(json.dumps(index, indent=2) + "\n")
 
     return FetchResult(
         root=root,

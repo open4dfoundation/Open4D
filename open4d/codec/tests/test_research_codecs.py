@@ -96,6 +96,7 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
         exported = write_sequence(
             first, tmp_path / f"{codec}-{input_format}-{output_format}",
             format=output_format,
+            allow_lossy=output_format == "stl",
         )
         assert len(open_sequence(exported)) == 2
     first.close()

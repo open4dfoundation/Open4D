@@ -231,7 +231,9 @@ def pack_bundle(
         if skip:
             changed.append(clip)
             continue
-        entry = pack_clip(root, clip, keep_frames=keep_frames)
+        # Do not remove inputs until every clip is packed and the manifest
+        # has committed. A later codec or filesystem failure must be retryable.
+        entry = pack_clip(root, clip, keep_frames=True)
         changed.append(dataclasses.replace(clip, sequence=entry))
         packed.append((clip.name, entry))
 
@@ -245,6 +247,18 @@ def pack_bundle(
             scenes=index.get("scenes") or {},
             detail=index.get("detail"),
         )
+        if not keep_frames:
+            from .transfer import frame_paths
+
+            retained = set(frame_paths({"clips": [dataclasses.asdict(c) for c in changed]}))
+            packed_names = {name for name, _ in packed}
+            removable = {path for clip in clips if clip.name in packed_names
+                         for path in clip.frames} - retained
+            for path in removable:
+                (root / path).unlink(missing_ok=True)
+            for directory in {root / Path(path).parts[0] for path in removable}:
+                if directory.is_dir() and not any(directory.iterdir()):
+                    directory.rmdir()
     return packed
 
 

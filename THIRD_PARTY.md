@@ -82,6 +82,11 @@ boundaries; they do not resolve any release block above:
   frame on longer clips, use the last available frame on short clips, and
   remove unused alignment work that also accessed an unavailable sixth frame.
 
+Additional local patches (2026-09-23): N4MC restores SSIM loss; ReRF validates
+inputs before native loading and makes test data configurable; webclients use
+a local tile record and default to loopback. Licenses and release boundaries
+are unchanged.
+
 ## Required record for new material
 
 Any copied source, submodule, binary, model, dataset, paper, image, archive, or

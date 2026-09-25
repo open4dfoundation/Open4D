@@ -35,6 +35,9 @@ servers (`baselines/`) and the corpora live in `4DVideoStreaming`, so
 `run_web_demo.sh` expects a checkout of it. Without one you can still build the
 clients and run the tests.
 
+The Node control server binds to `127.0.0.1` by default. Set `HOST` explicitly
+when remote clients need access; it provides no authentication.
+
 ## Adding a method
 
 Write a page, then add one line to `DESCRIPTION` in `src/chooser.js`, one entry

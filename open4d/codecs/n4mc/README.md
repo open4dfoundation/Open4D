@@ -128,3 +128,22 @@ python -m evaluation.restore_sequence \
   --normalization datasets/basketball_normalized/normalization.npz \
   --output-dir outputs/basketball_sequence_n4mc/original_scale
 ```
+
+## O4D `.vmesh` carriage
+
+The public N4MC adapter can write `.vmesh` as well as `.n4d`:
+
+```python
+import open4d
+from open4d.codec import pack_vmesh
+
+open4d.encode("input.usdc", "output.vmesh", codec="n4mc", device="cpu")
+with open4d.load("output.vmesh", options={"device": "cpu"}) as decoded:
+    open4d.save(decoded, "reconstructed.usdc")
+pack_vmesh("existing.n4d", "migrated.vmesh")
+```
+
+This carries the shared checkpoint and independent quantized TSDF latents,
+including normalization and timing. It does not add temporal prediction.
+See the [mesh codec notebook](../../../examples/vmesh/02_mesh_codecs.ipynb) for the explicit native USDC
+route that preserves compressed bytes without neural evaluation.

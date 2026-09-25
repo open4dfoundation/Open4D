@@ -58,7 +58,7 @@ def test_top_level_load_rejects_conflicting_dispatch_overrides(tmp_path):
         open4d.load(path, format="obj", codec="npz")
 
 
-def test_top_level_load_dispatches_raw_vmesh_to_the_read_only_vdmc_decoder(
+def test_top_level_load_dispatches_vmesh_to_codec_detection(
     tmp_path, monkeypatch
 ):
     import open4d._api as implementation
@@ -79,22 +79,23 @@ def test_top_level_load_dispatches_raw_vmesh_to_the_read_only_vdmc_decoder(
     ) is expected
     assert received == {
         "source": path,
-        "codec": "vdmc",
+        "codec": None,
         "options": {"decoder": "/native/decoder", "fps": 24},
     }
 
 
 @pytest.mark.parametrize(
-    "name", ("capture", "frame.obj", "capture.unknown", "capture.vmesh")
+    "name", ("capture", "frame.obj", "capture.unknown")
 )
 def test_top_level_save_requires_a_sequence_file_extension(tmp_path, name):
     with pytest.raises(ValueError, match="sequence-file extension"):
         open4d.save(sequence(), tmp_path / name)
 
 
-def test_top_level_save_requires_a_codec_for_ambiguous_codec_suffix(tmp_path):
-    with pytest.raises(ValueError, match=r"ambiguous.*\.v4d.*codec"):
-        open4d.save(sequence(), tmp_path / "capture.v4d")
+@pytest.mark.parametrize("suffix", [".v4d", ".vmesh"])
+def test_top_level_save_requires_a_codec_for_ambiguous_codec_suffix(tmp_path, suffix):
+    with pytest.raises(ValueError, match="ambiguous.*codec"):
+        open4d.save(sequence(), tmp_path / f"capture{suffix}")
 
 
 def test_top_level_api_exports_visualize():

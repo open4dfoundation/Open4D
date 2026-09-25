@@ -10,9 +10,10 @@ from .codec import Codec, available_codecs, decode_sequence, encode_sequence
 from .core import Sequence
 from .gaussians import NeuralGaussianFrame
 from .io import open_sequence, write_sequence
+from .native import NativeSequence, save_native
 
 _USD_SUFFIXES = frozenset((".usd", ".usda", ".usdc", ".usdz"))
-_RAW_VMESH_SUFFIX = ".vmesh"
+_VMESH_SUFFIX = ".vmesh"
 
 
 def _options(value: Mapping[str, object] | None) -> dict[str, object]:
@@ -46,33 +47,39 @@ def load(
     codec: str | Codec | None = None,
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
-) -> Sequence | tuple[NeuralGaussianFrame, ...]:
-    """Open a sequence artifact, raw V-DMC bitstream, or geometry source."""
+) -> Sequence | NativeSequence | tuple[NeuralGaussianFrame, ...]:
+    """Open a sequence artifact, V3C .vmesh bitstream, or geometry source."""
     if format is not None and codec is not None:
         raise TypeError("format and codec are mutually exclusive")
     values = _options(options)
     path = Path(source)
     if codec is not None:
-        if fps is not None and path.suffix.lower() != _RAW_VMESH_SUFFIX:
+        if fps is not None and path.suffix.lower() != _VMESH_SUFFIX:
             raise TypeError("fps applies to I/O sources, not codec artifacts")
         _set_raw_fps(values, fps)
         return decode_sequence(path, codec=codec, **values)
-    if not path.is_dir() and path.suffix.lower() == _RAW_VMESH_SUFFIX:
+    if not path.is_dir() and path.suffix.lower() == _VMESH_SUFFIX:
         if format is not None:
-            raise TypeError("format cannot select a raw V-DMC bitstream")
+            raise TypeError("format cannot select a .vmesh bitstream")
         _set_raw_fps(values, fps)
-        return decode_sequence(path, codec="vdmc", **values)
+        return decode_sequence(path, **values)
     if path.suffix.lower() in _codec_suffixes():
         if format is not None:
             raise TypeError("format cannot select a codec artifact")
         if fps is not None:
             raise TypeError("fps applies to I/O sources, not codec artifacts")
         return decode_sequence(path, **values)
+    if path.suffix.lower() in (".usd", ".usda", ".usdc"):
+        from .io._native_usd import is_native_usd, read_native_usd
+        if is_native_usd(path):
+            if fps is not None or format is not None:
+                raise TypeError("native USD has its own representation and timestamps")
+            return read_native_usd(path, **values)
     return open_sequence(path, format=format, fps=fps, options=values)
 
 
 def save(
-    sequence: Sequence,
+    sequence: Sequence | NativeSequence,
     destination: str | os.PathLike[str],
     *,
     codec: str | Codec | None = None,
@@ -82,8 +89,14 @@ def save(
     options: Mapping[str, object] | None = None,
 ) -> Path:
     """Write a sequence to an OpenUSD file or a research codec artifact."""
+    if isinstance(sequence, NativeSequence):
+        if fps is not None or up_axis is not None or options:
+            raise TypeError("native repacking preserves its configuration/timeline and accepts no geometry options")
+        if codec is not None and (codec if isinstance(codec, str) else codec.id) != sequence.codec:
+            raise ValueError("codec does not match the native representation")
+        return save_native(sequence, destination, overwrite=overwrite)
     if not isinstance(sequence, Sequence):
-        raise TypeError("sequence must be an open4d.Sequence")
+        raise TypeError("sequence must be an open4d.Sequence or NativeSequence")
     if not isinstance(overwrite, bool):
         raise TypeError("overwrite must be bool")
     path = Path(destination)
@@ -139,8 +152,8 @@ def save(
 
 def unload(sequence: Sequence) -> None:
     """Release resources owned by a loaded sequence."""
-    if not isinstance(sequence, Sequence):
-        raise TypeError("sequence must be an open4d.Sequence")
+    if not isinstance(sequence, (Sequence, NativeSequence)):
+        raise TypeError("sequence must be an open4d.Sequence or NativeSequence")
     sequence.close()
 
 

@@ -301,13 +301,12 @@ def test_tracking_xml_escapes_user_paths(tmp_path):
 
 
 def test_worker_failure_reports_native_diagnostic(tmp_path, monkeypatch):
-    def failed(command, **kwargs):
+    def failed(command, label, **kwargs):
         assert command[1].endswith("_tracked_worker.py")
         assert kwargs["cwd"] == tmp_path
-        kwargs["stdout"].write("missing native dependency\n")
-        return SimpleNamespace(returncode=2)
+        raise CodecError("missing native dependency")
 
-    monkeypatch.setattr(_tracked.subprocess, "run", failed)
+    monkeypatch.setattr(_tracked, "_run_native", failed)
     with pytest.raises(CodecError, match="missing native dependency"):
         _tracked._run(sys.executable, "encode", tmp_path / "request.json")
 
@@ -375,7 +374,8 @@ def test_unrepresentable_entropy_input_is_rejected(tmp_path, delta):
         _tracked_worker._save_entropy_model(source, model)
 
 
-def test_tvmc_native_payload_decodes_without_original_geometry(tmp_path):
+@pytest.mark.parametrize("container", [False, True], ids=["directory", "vmesh"])
+def test_tvmc_native_payload_decodes_without_original_geometry(tmp_path, container):
     encoder = os.environ.get("OPEN4D_TEST_TVMC_ENCODER")
     decoder = os.environ.get("OPEN4D_TEST_TVMC_DECODER")
     if not encoder or not decoder:
@@ -409,10 +409,24 @@ def test_tvmc_native_payload_decodes_without_original_geometry(tmp_path):
     reference.unlink()
     for path in tmp_path.glob("*.ply"):
         path.unlink()
-    with TVMC_CODEC.decode(encoded, python=sys.executable, decoder=decoder) as decoded:
+    if container:
+        from open4d.codec import pack_vmesh
+
+        native = encoded
+        encoded = pack_vmesh(native, tmp_path / "take.vmesh")
+        shutil.rmtree(native)
+    import open4d
+
+    with open4d.decode(encoded, python=sys.executable, decoder=decoder) as decoded:
         from scipy.spatial import cKDTree
 
         for index in range(2):
             distance, _ = cKDTree(vertices + offsets[index]).query(decoded[index].geometry.positions)
             assert distance.max() < 0.001
         assert decoded.timestamps == (0.0, 1 / 24)
+        if container:
+            pytest.importorskip("pxr")
+            exported = open4d.save(decoded, tmp_path / "reconstructed.usdc")
+            with open4d.load(exported) as reopened:
+                assert reopened.timestamps == decoded.timestamps
+                np.testing.assert_array_equal(reopened[1].geometry.positions, decoded[1].geometry.positions)

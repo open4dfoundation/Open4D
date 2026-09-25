@@ -724,3 +724,34 @@ def test_a_failed_download_is_explained_in_the_pane():
     assert "_explain(" in body
     # Carries on rather than abandoning the remaining panes.
     assert "continue;" in body
+def test_failed_bundle_pack_keeps_original_frames_and_manifest(tmp_path, monkeypatch):
+    clips = []
+    for name in ("first", "second"):
+        paths = _frames(tmp_path / name, [12, 12])
+        clips.append(bundle.Clip(name=name, representation="gaussians",
+                                 frames=[str(p.relative_to(tmp_path)) for p in paths]))
+    bundle.write(tmp_path, title="test", source="test", clips=clips)
+    before = (tmp_path / "view.json").read_bytes()
+    original = sequence.pack_clip
+
+    def fail_second(root, clip, **kwargs):
+        if clip.name == "second":
+            raise OSError("simulated packing failure")
+        return original(root, clip, **kwargs)
+
+    monkeypatch.setattr(sequence, "pack_clip", fail_second)
+    with pytest.raises(OSError):
+        sequence.pack_bundle(tmp_path)
+    assert (tmp_path / "view.json").read_bytes() == before
+    assert all((tmp_path / path).is_file() for clip in clips for path in clip.frames)
+
+
+def test_packing_keeps_frames_referenced_by_variants_or_unpacked_clips(tmp_path):
+    paths = _frames(tmp_path / "shared", [12, 12])
+    frames = [str(p.relative_to(tmp_path)) for p in paths]
+    clips = [bundle.Clip(name="first", representation="gaussians", frames=frames,
+                         variants=[{"name": "original", "frames": frames}]),
+             bundle.Clip(name="second", representation="gaussians", frames=frames)]
+    bundle.write(tmp_path, title="test", source="test", clips=clips)
+    sequence.pack_bundle(tmp_path, names=["first"])
+    assert all(p.is_file() for p in paths)
