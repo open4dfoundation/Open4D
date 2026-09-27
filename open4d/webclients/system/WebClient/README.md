@@ -1,17 +1,17 @@
 # WebClient
 
-Four browser pages, served by `system/Server` at `/web`, one per system under
-comparison.
+The user study, and one browser page per system under comparison, served by
+`system/Server` at `/web`.
 
-Start at **`/web/compare.html`** — the chooser. It asks `/api/systems` which
-systems have their assets present, and for our own system it lists each
-object's published ladder cost so you can pick a scene the link can actually
-carry before launching. Every page carries a `switch` link back to it.
+Start at **`/web/`** — the study (`public/index.html`, `src/study/`). It asks
+`/api/systems` which systems have their assets present and which objects each
+has, says why any it cannot run is unavailable, and runs each method's page in
+a frame for its trials. Every method page carries a `study` link back to it.
 
 | Page | System | Runs the ABR? |
 |---|---|---|
-| `/web/compare.html` | the chooser — availability, scene picker, and which systems adapt | — |
-| `/web/` | **ours** — adaptive mesh ladder | yes, in the browser |
+| `/web/` | the user study — setup, practice, blinded trials, ratings, CSV | — |
+| `/web/mesh.html` | **ours** — adaptive mesh ladder | yes, in the browser |
 | `/web/baseline.html` | ViVo / NAVA point clouds (`?bridge=` selects which) | yes, server-side |
 | `/web/vega.html` | Vega (3D Gaussian splatting) | no, fixed quality |
 | `/web/nevo.html` | NeVo (ReRF neural volumetric) | no, pre-rendered |
@@ -36,7 +36,7 @@ cd ../.. && PYTHON_BIN=<env-python> scripts/run_web_demo.sh
 
 That starts everything — the server on the **H.264** corpus plus a supervised
 ViVo and NAVA — and prints the URLs. Start at
-`http://<host>:3000/web/compare.html`. Ctrl-C stops all of it.
+`http://<host>:3000/web/`. Ctrl-C stops all of it.
 
 Two defaults in that script are deliberate. It serves H.264 because HEVC is
 Firefox-no and Chrome-only-with-hardware, and it sets 300 segments because the
@@ -54,7 +54,7 @@ sudo scripts/shape_web_demo.sh cascade-20
 
 Query strings, mirroring how the Node client takes environment variables.
 
-**`/web/` (ours)**
+**`/web/mesh.html` (ours)**
 
 | parameter | default | meaning |
 |---|---|---|
@@ -88,7 +88,7 @@ Which point-cloud baselines can actually run depends on the corpus, and the two
 cases need opposite responses:
 
 `?bridge=` is what selects the baseline: the page is identical either way, and
-`/api/systems` probes each port so the chooser marks a baseline ready only when
+`/api/systems` probes each port so the study marks a baseline ready only when
 something is actually listening on it (which is different from the tile corpus
 merely existing -- the two need opposite fixes). Override the port map with
 `VS4D_POINTCLOUD_PORTS=vivo:8790:12345,nava:8791:12346`.
@@ -110,8 +110,8 @@ The Vega page **loads the whole clip before playing** and then loops it from
 memory; expect ~15 s of visible progress on a 35 Mbps link for the 64 MB
 two-object export. It is not streamed, and cannot be: a frame is ~1.1 MB at
 30 fps, so two objects in real time would need **509 Mbps**. The full
-nine-object export is ~345 MB, so use `?objects=` (or the chooser's picker,
-which defaults to the two smallest clips) rather than opening all of them. The earlier
+nine-object export is ~345 MB, so use `?objects=` (the study passes the
+session's objects) rather than opening all of them. The earlier
 sliding-window prefetch only worked when served from the same machine — over a
 real link it issued requests faster than they completed and, because it checked
 only the decoded cache, re-issued each pending frame every 33 ms tick until
@@ -131,7 +131,7 @@ rather than retried.
 # connection from frame zero and then exits -- correct for a measured trial,
 # but it means an unsupervised server survives exactly one page load.
 # Run both: they take different default ports (vivo 8790, nava 8791), so the
-# chooser offers either and switching is a click rather than a restart.
+# study can run either and switching is a click rather than a restart.
 PYTHON_BIN=<env-python> scripts/serve_pointcloud_baseline.sh vivo dancer,thomas &
 PYTHON_BIN=<env-python> scripts/serve_pointcloud_baseline.sh nava dancer,thomas &
 # -> /web/baseline.html?bridge=ws://<host>:8790   (vivo)
@@ -158,7 +158,9 @@ python -m baselines.Vega.orbitvega.export_quest \
 | `src/draco-worker.js` | Draco mesh and point-cloud decode, off the main thread |
 | `src/camera-pose.js` | Three.js camera → Open3D `PinholeCameraParameters` |
 | `src/main.js` | Entry point for `/web/` |
-| `src/chooser.js` | The chooser: `/api/systems`, the scene picker, and the floor-vs-capacity check |
+| `src/study/study-page.js` | The study: setup, practice pass, blinded trials, results |
+| `src/study/questionnaire-form.js` | The two-page C1–C5 questionnaire, as on the Quest |
+| `src/study/driver.js`, `camera.js`, `harness.js` | Trial clock, start pose and camera path, and the page-side glue |
 | `bridge/v4ds-bridge.js` | WebSocket ↔ TCP proxy for the point-cloud baselines; reframes only |
 | `src/v4ds-protocol.js` | V4DS CONNECTION/FRAME decode, FEEDBACK encode |
 | `src/point-reconstruction.js` | MetaStream/DeltaStream delta reconstruction |

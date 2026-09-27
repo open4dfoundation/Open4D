@@ -103,6 +103,13 @@ function privacySafeObject(value) {
 const redactIpAddresses = value => String(value ?? "")
   .replace(/(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])/g, "[ip-redacted]");
 
+// The browser study's link: a trace-driven bucket that `/files` passes through
+// while a trial is armed, and steps aside from otherwise. See study/shaper.js
+// for why this is in-process rather than tc.
+const { TraceShaper } = require("./study/shaper");
+const { createStudyRouter, shapedStatic } = require("./study/routes");
+const studyShaper = new TraceShaper();
+app.use("/files", shapedStatic(FILES_ROOT, studyShaper));
 app.use("/files", express.static(FILES_ROOT));
 
 // Browser client. Serves system/WebClient/dist, which `node build.js` in that
@@ -136,6 +143,9 @@ const VIVO_TILES_ROOT = process.env.VS4D_VIVO_TILES_ROOT
 
 const VEGA_ASSETS_ROOT = process.env.VS4D_VEGA_WEB_ROOT
   || path.join(REPO_ROOT, "results/vega-web");
+// Shaped during a study trial like /files: Vega's clip is the bytes its trial
+// startup is waiting on, so an unshaped path here would let it skip the trace.
+app.use("/vega-assets", shapedStatic(VEGA_ASSETS_ROOT, studyShaper));
 app.use("/vega-assets", express.static(VEGA_ASSETS_ROOT, {
   setHeaders: res => res.set("Cache-Control", "no-store")
 }));
@@ -276,6 +286,10 @@ app.get("/api/geometry-bundle", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Point-cloud bridges this server spawns (via /api/pointcloud/start) inherit
+// the environment; this is how they find the study trace to follow, so a ViVo
+// or NAVA trial is shaped exactly as a mesh trial is. See study/follower.js.
+process.env.VS4D_STUDY_SERVER ||= `http://127.0.0.1:${PORT}`;
 
 function numberFromEnv(name, fallback) {
   const value = Number(process.env[name]);
@@ -491,6 +505,12 @@ const STATE_DIR = FILES_ROOT;
 // media tree. This mount makes the generated PNGs viewable without exposing
 // arbitrary host paths returned by the debugging API.
 app.use("/server-results", express.static(SERVER_RESULTS_DIR));
+app.use("/api/study", createStudyRouter({
+  resultsRoot: path.join(SERVER_RESULTS_DIR, "study"),
+  shaper: studyShaper,
+  tracesDir: path.resolve(__dirname, "../Client/traces"),
+  layoutFile: path.resolve(__dirname, "../../scene_layout.json"),
+}));
 
 // All per-run artifacts (metrics, bitrate counts, QoE, download telemetry)
 // live in server_results/<broadcastId>/ so each run stays self-contained.
@@ -910,7 +930,33 @@ app.get("/api/manifest", async (req, res) => {
 // request. `?dir=` selects a sibling set (the directory holds several).
 // Is something listening? Used to tell "the corpus exists" from "a server is
 // actually up", which need opposite responses from whoever is reading the
-// chooser. Short timeout: this runs inline in a request handler.
+// study page. Short timeout: this runs inline in a request handler.
+/**
+ * Whether something is listening on `port`, found WITHOUT connecting to it.
+ *
+ * The point-cloud baselines accept exactly one connection and exit when it
+ * closes. Probing one with a connect is therefore not a probe: the baseline
+ * serves the probe as its session, exits, and is restarting a second later
+ * when the real client dials -- ECONNREFUSED for a page that navigates
+ * straight away. Reading the kernel's listening-socket table consumes nothing.
+ * Returns null where there is no /proc to read, so callers can fall back.
+ */
+function isListeningQuietly(port) {
+  const suffix = `:${port.toString(16).toUpperCase().padStart(4, "0")}`;
+  let readable = false;
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text;
+    try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
+    readable = true;
+    for (const line of text.split("\n").slice(1)) {
+      const columns = line.trim().split(/\s+/);
+      // local_address is column 1, st is column 3; 0A is TCP_LISTEN.
+      if (columns[3] === "0A" && columns[1]?.endsWith(suffix)) return true;
+    }
+  }
+  return readable ? false : null;
+}
+
 function portIsOpen(port, host = "127.0.0.1", timeoutMs = 250) {
   return new Promise(resolve => {
     const socket = new net.Socket();
@@ -930,7 +976,7 @@ function portIsOpen(port, host = "127.0.0.1", timeoutMs = 250) {
 // They index the real capture rig while serving (`obj.cameras[camera_index]`)
 // and read the source RGB-D frames, so the prepared tiles cannot substitute
 // and the absent corpus is missing data rather than missing metadata. Listing
-// them as permanently unavailable was noise in a chooser whose job is to say
+// them as permanently unavailable was noise on a setup page whose job is to say
 // what you can look at.
 //
 // The point-cloud baselines that can run from the prepared tiles, and the
@@ -1040,8 +1086,11 @@ app.post("/api/pointcloud/start", async (req, res) => {
     // crashed and is being restarted in a loop, so probing it alone reports
     // "serving" over a dead baseline -- observed when the spawned process had
     // the wrong interpreter.
-    if (await portIsOpen(entry.bridgePort)
-        && await portIsOpen(entry.serverPort)) {
+    // The baseline's port is checked quietly (see isListeningQuietly): a
+    // connect would spend the one session it is waiting to give the page.
+    const serverListening = isListeningQuietly(entry.serverPort)
+      ?? await portIsOpen(entry.serverPort);
+    if (await portIsOpen(entry.bridgePort) && serverListening) {
       logInfo(id.toUpperCase(), `serving ${requested.join(", ")}`);
       return res.json({
         id, objects: requested, bridgePort: entry.bridgePort,
@@ -1073,6 +1122,16 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 app.get("/api/shaping", (req, res) => {
+  // A study trial owns the link: report the rate it is enforcing, not tc's.
+  if (studyShaper.armed) {
+    res.set("Cache-Control", "no-store");
+    const status = studyShaper.status();
+    return res.json({
+      interface: "in-process", shaped: status.shaped, rateMbps: status.rateMbps,
+      detail: `study trial ${status.label}: in-process token bucket, `
+        + `${status.elapsedSeconds}s into a ${status.traceSeconds}s trace`,
+    });
+  }
   execFile("tc", ["qdisc", "show", "dev", SHAPED_INTERFACE],
     { timeout: 2000 }, (error, stdout) => {
       res.set("Cache-Control", "no-store");
@@ -1113,7 +1172,7 @@ app.get("/api/shaping", (req, res) => {
 // needs an export, NeVo needs pre-rendered frames, the point-cloud baselines
 // need a Python server plus a WebSocket bridge. Without this the pages fail at
 // fetch time with a 404, which reads as a bug in the viewer rather than as
-// missing input. The chooser asks here first and says which is which.
+// missing input. The study page asks here first and says which is which.
 //
 // The mesh entry also carries the per-object ladder cost, because the scene
 // size sets an irreducible bitrate floor (the ladder must publish at least one
@@ -1158,7 +1217,7 @@ app.get("/api/systems", async (req, res) => {
   const priced = objects.filter(o => o.floorMbps !== null);
   const floorMbps = priced.reduce((sum, o) => sum + o.floorMbps, 0);
 
-  // Vega's own catalogue, read for the same reason: so the chooser can offer
+  // Vega's own catalogue, read for the same reason: so the study page can offer
   // its objects instead of the page taking all of them by default.
   const vega = (() => {
     try {
@@ -1181,7 +1240,7 @@ app.get("/api/systems", async (req, res) => {
   // be up at once on different ports, so choosing between ViVo and NAVA is a
   // click rather than a server restart.
   const haveTiles = fs.existsSync(path.join(VIVO_TILES_ROOT, "catalog.json"));
-  // The tile catalogue's object list, so the chooser can offer a selection.
+  // The tile catalogue's object list, so the study page can offer a selection.
   // Unlike the other systems this is not a URL parameter: a baseline fixes its
   // object set at startup, so choosing one means restarting the process.
   const tileObjects = (() => {
@@ -1211,7 +1270,7 @@ app.get("/api/systems", async (req, res) => {
       adaptsServerSide: true,
       ready: live,
       objects: tileObjects,
-      // What the running process was started with, so the chooser can tell a
+      // What the running process was started with, so the study page can tell a
       // restart is needed rather than silently connecting to the wrong scene.
       servingObjects: runningPointcloud.get(entry.id) || null,
       restartable: haveTiles,
@@ -1232,7 +1291,7 @@ app.get("/api/systems", async (req, res) => {
       {
         id: "mesh",
         name: "Ours",
-        page: "/web/",
+        page: "/web/mesh.html",
         adaptive: true,
         ready: objects.length > 0,
         detail: objects.length

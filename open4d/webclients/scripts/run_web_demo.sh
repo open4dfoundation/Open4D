@@ -81,12 +81,12 @@ fi
 HOST="$(hostname -I | awk '{print $1}')"
 cat <<EOF
 
-  Demo is up. Start here:
+  Demo is up. The user study (setup, practice, blinded trials, ratings):
 
-    http://$HOST:$PORT/web/compare.html
+    http://$HOST:$PORT/web/
 
-  Direct links:
-    ours    http://$HOST:$PORT/web/
+  Each method on its own:
+    ours    http://$HOST:$PORT/web/mesh.html
     vivo    http://$HOST:$PORT/web/baseline.html?bridge=ws://$HOST:8790
     nava    http://$HOST:$PORT/web/baseline.html?bridge=ws://$HOST:8791
     vega    http://$HOST:$PORT/web/vega.html

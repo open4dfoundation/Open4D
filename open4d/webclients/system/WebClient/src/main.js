@@ -9,7 +9,7 @@
  * Configuration comes from the query string so a run can be launched from a URL
  * without a rebuild, mirroring how the Node client takes environment variables:
  *
- *   /web/?server=http://host:3000&mode=interactive&segments=20
+ *   /web/mesh.html?server=http://host:3000&mode=interactive&segments=20
  *
  * | parameter    | default              | meaning                              |
  * |--------------|----------------------|--------------------------------------|
@@ -35,6 +35,7 @@ const { StreamingClient } = require('../../ClientCore/streaming-client');
 const { mountLinkRate } = require('./link-rate');
 const { createBrowserPlatform } = require('./browser-platform');
 const { WebGLRenderer } = require('./webgl-renderer');
+const study = require('./study/harness');
 
 function readConfig() {
     const params = new URLSearchParams(window.location.search);
@@ -105,6 +106,20 @@ function createUi() {
 async function main() {
     const config = readConfig();
     const ui = createUi();
+    // A study pass (see src/study/harness.js): the session fixes the object
+    // subset and the trial length, and a driver owns the camera.
+    const studyParams = study.studyParams();
+    const studyContext = studyParams
+        ? await study.loadStudyContext({ serverUrl: config.serverUrl, params: studyParams })
+        : null;
+    if (studyContext && studyContext.session.objects.length) {
+        config.sceneObjects = studyContext.session.objects;
+    }
+    if (studyContext) study.enterStudyChrome('view');
+    if (studyContext && config.mode !== 'interactive') {
+        throw new Error('a study pass needs ?mode=interactive: it drives the live camera');
+    }
+    let nativeMetrics = null;
     // Kept so it can be stopped: a poller that outlives the run keeps hitting
     // /api/shaping after Stop, and in a test harness the live interval stops
     // the process exiting at all.
@@ -137,7 +152,10 @@ async function main() {
         // needed; the renderer's own pose is adopted immediately after start.
         initialPose: interactive && !config.viewpointIndexPath
             ? { objects: {} } : null,
-        onArtifact: (name, text) => ui.offerArtifact(name, text),
+        onArtifact: (name, text) => {
+            if (name === 'metrics.json') nativeMetrics = text;
+            ui.offerArtifact(name, text);
+        },
         onLogLine: entry => ui.appendLog(entry)
     });
 
@@ -145,9 +163,25 @@ async function main() {
         renderer = new WebGLRenderer({
             canvas: document.getElementById('view'),
             readAsset: handle => platform.assetStore.get(handle),
-            decodeBudgetBytes: config.decodeBudgetBytes
+            decodeBudgetBytes: config.decodeBudgetBytes,
+            autoFrame: !studyContext
         });
         platform.renderer = renderer;
+    }
+
+    let driver = null;
+    if (studyContext) {
+        driver = study.createStudyDriver({
+            context: studyContext,
+            method: 'mesh',
+            // The trial ends on the study clock, not when the server runs out of
+            // segments: every method gets the same playback time.
+            onEnded: () => {
+                ui.setStatus('trial complete — finishing …');
+                platform.lifecycle.requestShutdown();
+            }
+        });
+        renderer.setCameraDriver(driver);
     }
 
     const client = new StreamingClient({
@@ -175,7 +209,7 @@ async function main() {
     // state (what is on screen, where the camera is) is exactly what you need
     // when the page looks wrong but every log line looks right.
     window.__vs4d = {
-        client, platform, renderer,
+        client, platform, renderer, study: driver,
         inspect() {
             const scene = renderer?._three?.scene;
             const camera = renderer?._three?.camera;
@@ -206,8 +240,20 @@ async function main() {
 
     await client.run();
     ui.setStatus(`streaming · broadcast ${client.broadcastId ?? '(none)'}`);
+    if (driver) study.post('ready', { method: 'mesh', mode: driver.mode });
 
     const code = await platform.lifecycle.done;
+    if (driver) {
+        let native = null;
+        try {
+            const parsed = JSON.parse(nativeMetrics || 'null');
+            native = parsed && { summary: parsed.summary, renderSummary: parsed.renderSummary };
+        } catch { /* reported as absent rather than guessed at */ }
+        study.post('ended', {
+            method: 'mesh', exitCode: code, broadcastId: client.broadcastId ?? null,
+            summary: driver.summary(), native, trajectory: driver.trajectory()
+        });
+    }
     ui.setStatus(code === 0
         ? 'run complete — metrics.json is ready below'
         : `run failed (exit ${code}) — see the log`);
@@ -219,6 +265,7 @@ async function main() {
 main().catch(err => {
     const status = document.getElementById('status');
     if (status) status.textContent = `fatal: ${err.message}`;
+    study.post('error', { method: 'mesh', message: err.message });
     // eslint-disable-next-line no-console
     console.error(err);
 });

@@ -43,6 +43,7 @@
 
 const net = require('net');
 const { WebSocketServer } = require('ws');
+const { ShapingFollower } = require('../../Server/study/follower');
 
 const MAGIC = Buffer.from('V4DS');
 const PREFIX_BYTES = 4;
@@ -55,7 +56,10 @@ function parseArgs(argv) {
         baselineHost: '127.0.0.1',
         baselinePort: null,
         maxMessageBytes: DEFAULT_MAX_MESSAGE_BYTES,
-        verbose: false
+        verbose: false,
+        // Follow a browser study's network trace; see follower.js. The env var
+        // is how a bridge the server spawns inherits it without new arguments.
+        studyServer: process.env.VS4D_STUDY_SERVER || null
     };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -72,6 +76,7 @@ function parseArgs(argv) {
             case '--max-message-bytes':
                 options.maxMessageBytes = Number(next()); break;
             case '--verbose': options.verbose = true; break;
+            case '--study-server': options.studyServer = next(); break;
             case '--help': case '-h': options.help = true; break;
             default: throw new Error(`unknown argument: ${arg}`);
         }
@@ -139,12 +144,24 @@ function log(level, message) {
     else console.log(line);
 }
 
+/** Above this much waiting to cross the shaped link, stop reading the baseline. */
+const SHAPED_QUEUE_HIGH_BYTES = 4 * 1024 * 1024;
+const SHAPED_QUEUE_LOW_BYTES = 1024 * 1024;
+
 function createBridge(options) {
     const server = new WebSocketServer({
         host: options.listenHost,
         port: options.listenPort
     });
     let active = null;
+    // Shared by every connection: it is one link. Unarmed it passes everything
+    // straight through, so outside a study trial the bridge is the dumb proxy
+    // it always was.
+    const follower = options.shaper ? { shaper: options.shaper, stop() {} }
+        : options.studyServer
+            ? new ShapingFollower({ serverUrl: options.studyServer, log }).start()
+            : null;
+    server.on('close', () => follower?.stop());
 
     server.on('listening', () => {
         log('INFO', `WebSocket on ws://${options.listenHost}:${options.listenPort}`
@@ -171,6 +188,28 @@ function createBridge(options) {
 
         let fromBaseline = 0;
         let toBaseline = 0;
+        // Downstream messages waiting to cross the shaped link, in order.
+        const queue = [];
+        let queued = 0;
+        let draining = false;
+        const deliver = message => {
+            if (socket.readyState === socket.OPEN) socket.send(message);
+        };
+        const drain = async () => {
+            if (draining) return;
+            draining = true;
+            while (queue.length && active?.socket === socket) {
+                const message = queue.shift();
+                queued -= message.length;
+                // Held until the trace says the link can carry it. That delay
+                // backs up into the baseline's own TCP send, which is the
+                // pressure its adaptation reacts to -- as it would behind tc.
+                await follower.shaper.take(message.length);
+                deliver(message);
+                if (tcp.isPaused() && queued < SHAPED_QUEUE_LOW_BYTES) tcp.resume();
+            }
+            draining = false;
+        };
 
         const shutdown = (reason, code = 1000) => {
             if (active?.socket !== socket) return;
@@ -201,7 +240,12 @@ function createBridge(options) {
                         + `${looksLikeV4ds(message) ? message.readUInt8(6) : '?'}`
                         + ` ${message.length}B`);
                 }
-                if (socket.readyState === socket.OPEN) socket.send(message);
+                if (follower) { queue.push(message); queued += message.length; }
+                else deliver(message);
+            }
+            if (follower) {
+                if (queued > SHAPED_QUEUE_HIGH_BYTES) tcp.pause();
+                drain();
             }
             // Backpressure: if the browser cannot keep up, stop reading from the
             // baseline rather than growing an unbounded buffer in this process.

@@ -86,7 +86,11 @@ class WebGLRenderer {
         // corpus is metres but Open3D extrinsics are millimetres, and a mismatch
         // makes every server-side raycast miss.
         unitsPerMeter = 1000,
-        scene: sceneOptions = {}
+        scene: sceneOptions = {},
+        // Off for a study trial: auto-framing points the camera at whatever
+        // content has arrived, which differs by method and by network, so every
+        // method would start from a different view.
+        autoFrame = true
     }) {
         this.canvas = canvas;
         this._readAsset = readAsset;
@@ -94,6 +98,8 @@ class WebGLRenderer {
         this._vendorBase = vendorBase;
         this._sceneOptions = sceneOptions;
         this._unitsPerMeter = unitsPerMeter;
+        this._autoFrame = autoFrame;
+        this._cameraDriver = null;
 
         this.callbacks = {};
         this.latestCamera = null;
@@ -126,6 +132,13 @@ class WebGLRenderer {
     // ------------------------------------------------------------ contract
 
     setCallbacks(callbacks) { this.callbacks = callbacks || {}; }
+
+    /**
+     * Hand the camera to a study driver (see src/study/driver.js). It is
+     * called every loop just before the orbit controls update, with what the
+     * loop presented, and owns the pose from then on.
+     */
+    setCameraDriver(driver) { this._cameraDriver = driver; }
 
     async start({ fps, frameCount, initialCamera }) {
         this._fps = fps || 30;
@@ -381,7 +394,7 @@ class WebGLRenderer {
      * Only runs until the viewer touches the camera.
      */
     _frameScene() {
-        if (this._userMovedCamera || !this._three) return;
+        if (!this._autoFrame || this._userMovedCamera || !this._three) return;
         const box = new THREE.Box3();
         let any = false;
         for (const entry of this._objects.values()) {
@@ -479,27 +492,31 @@ class WebGLRenderer {
         const elapsed = now - this._lastAdvance;
         let advanced = false;
         let dropped = 0;
+        let steps = 0;
 
         if (elapsed >= frameInterval) {
             // Content runs at a fixed rate; if the display fell behind by more
             // than one content frame, count the skipped ones rather than
             // silently slowing playback down.
-            const steps = Math.floor(elapsed / frameInterval);
+            steps = Math.floor(elapsed / frameInterval);
             dropped = Math.max(0, steps - 1);
             this._frameIndex += steps;
             this._lastAdvance += steps * frameInterval;
             advanced = true;
         }
 
-        let presentedAny = false;
+        let presentedCount = 0;
+        let visibleCount = 0;
         for (const [objectName, entry] of this._objects) {
             const state = this._visibleState(objectName);
             entry.mesh.visible = state !== 'MISSING';
+            if (entry.mesh.visible && entry.mesh.geometry.attributes.position) visibleCount++;
             if (advanced && state === 'OK') {
                 this._presentFrame(objectName, entry);
-                presentedAny = true;
+                presentedCount++;
             }
         }
+        const presentedAny = presentedCount > 0;
         // Re-frame while the object set is still growing; objects arrive over
         // several segments under a bandwidth deficit.
         if (presentedAny && !this._userMovedCamera
@@ -508,6 +525,14 @@ class WebGLRenderer {
             this._frameScene();
         }
 
+        if (this._cameraDriver) {
+            // Replay ignores the participant's input; recording is their input.
+            this._three.controls.enabled = this._cameraDriver.interactive;
+            this._cameraDriver.apply(this._three.camera, this._three.controls, {
+                now, advanced, steps, presented: presentedCount,
+                objects: this._objects.size, visible: visibleCount
+            });
+        }
         this._three.controls.update();
         this._three.renderer.render(this._three.scene, this._three.camera);
 
