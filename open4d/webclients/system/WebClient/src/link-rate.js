@@ -33,7 +33,11 @@ function mountLinkRate(element, { fetchImpl = fetch, intervalMs = 2000 } = {}) {
         element.textContent = state.rateMbps === null
             ? 'link: shaped'
             : `link: ${state.rateMbps.toFixed(1)} Mbps`;
-        element.title = `enforced by tc on ${state.interface}`;
+        // The study server shapes in-process, not with tc; say which, so the
+        // readout never claims a kernel queue that is not there.
+        element.title = state.interface === 'in-process'
+            ? (state.detail || 'enforced in-process by the study server')
+            : `enforced by tc on ${state.interface}`;
         element.className = 'link shaped';
     };
 

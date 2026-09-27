@@ -1,0 +1,291 @@
+{
+  "_comment": [
+    "World frame for the composed ORBIT scene: metres, Y-up, right-handed.",
+    "The background GLB is already metric and defines the frame, so it is placed at identity;",
+    "every human sequence is native millimetre and is scaled by 0.001.",
+    "",
+    "The stage faces +Z (backdrop wall sits at -Z, lighting truss and access stairs at +Z),",
+    "so performers on the deck face yaw~0 and the audience on the ground faces yaw~180.",
+    "",
+    "yaw_deg is the WORLD direction the subject should face, measured from +Z, turning toward +X.",
+    "native_facing_deg is the direction the subject faces in its OWN raw coordinates, same",
+    "convention. The composer rotates each subject by (yaw_deg - native_facing_deg).",
+    "native_facing_deg values were read off rendered orbit sheets, not computed - these subjects",
+    "turn while they move, so they are a best-fit starting orientation, not an exact quantity.",
+    "",
+    "anchor_* come from scripts/calibrate_sequences.py: floor_y_mm is the 10th percentile of",
+    "per-frame min-Y over the sequence (its contact-with-floor level) and center_x/z_mm is the",
+    "mean horizontal bbox centre over the sequence. Subtracting the anchor puts the subject's",
+    "feet at the origin while preserving its motion relative to that anchor."
+  ],
+  "world_units": "meters",
+  "mm_to_world": 0.001,
+  "background": {
+    "path": "Background/outdoor_music_stage_venue.glb",
+    "units": "meters",
+    "front_axis": "+Z"
+  },
+  "surfaces": {
+    "_comment": "Measured from upward-facing horizontal faces in the background GLB.",
+    "ground": {
+      "y": 0.0,
+      "note": "truss feet / venue base plane; no floor mesh is modelled at this height"
+    },
+    "stage": {
+      "y": 1.55,
+      "x_range": [
+        -6.54,
+        6.54
+      ],
+      "z_range": [
+        -4.47,
+        4.47
+      ],
+      "area_m2": 117.1,
+      "note": "main deck"
+    },
+    "riser": {
+      "y": 2.11,
+      "x_range": [
+        -1.82,
+        1.84
+      ],
+      "z_range": [
+        -3.2,
+        0.16
+      ],
+      "area_m2": 12.35,
+      "note": "raised platform at back-centre of the deck"
+    }
+  },
+  "objects": [
+    {
+      "name": "dancer",
+      "glob": "dancer/dancer_fr*.obj",
+      "anchor_floor_y_mm": -483.7,
+      "anchor_center_x_mm": -110.3,
+      "anchor_center_z_mm": 84.2,
+      "native_facing_deg": 180.0,
+      "surface": "riser",
+      "x": 0,
+      "z": -1.5,
+      "yaw_deg": 10.0
+    },
+    {
+      "name": "mitch",
+      "glob": "mitch/mitch_fr*.obj",
+      "anchor_floor_y_mm": 7.1,
+      "anchor_center_x_mm": 67.3,
+      "anchor_center_z_mm": 81.2,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -11,
+      "z": -2.5,
+      "yaw_deg": 0
+    },
+    {
+      "name": "thomas",
+      "glob": "thomas/thomas_fr*.obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": 0.2,
+      "z": 8.2,
+      "yaw_deg": 180
+    },
+    {
+      "name": "basketball",
+      "glob": "basketball/basketball_player_fr*.obj",
+      "anchor_floor_y_mm": -481.0,
+      "anchor_center_x_mm": 1.6,
+      "anchor_center_z_mm": 79.6,
+      "native_facing_deg": 180.0,
+      "surface": "ground",
+      "x": 3,
+      "z": 15,
+      "yaw_deg": 175.0
+    },
+    {
+      "name": "UMA_0",
+      "glob": "UMA_0/meshes_60k/UMA0_*.obj",
+      "anchor_floor_y_mm": -15.0,
+      "anchor_center_x_mm": 571.3,
+      "anchor_center_z_mm": 537.5,
+      "native_facing_deg": 90.0,
+      "surface": "stage",
+      "x": 0,
+      "z": 3.5,
+      "yaw_deg": 185.0
+    },
+    {
+      "name": "UMA_1",
+      "glob": "UMA_1/meshes_60k/UMA1_*.obj",
+      "anchor_floor_y_mm": -16.1,
+      "anchor_center_x_mm": 633.2,
+      "anchor_center_z_mm": 537.1,
+      "native_facing_deg": 0.0,
+      "surface": "stage",
+      "x": 4.5,
+      "z": 3,
+      "yaw_deg": 0.0
+    },
+    {
+      "name": "UMA_2",
+      "glob": "UMA_2/meshes_60k/UMA2_*.obj",
+      "anchor_floor_y_mm": -15.1,
+      "anchor_center_x_mm": 607.8,
+      "anchor_center_z_mm": 539.6,
+      "native_facing_deg": 315.0,
+      "surface": "stage",
+      "x": -4.6,
+      "z": 2.4,
+      "yaw_deg": 0
+    },
+    {
+      "name": "UMA_3",
+      "glob": "UMA_3/meshes_60k/UMA3_*.obj",
+      "anchor_floor_y_mm": -14.4,
+      "anchor_center_x_mm": 590.5,
+      "anchor_center_z_mm": 623.0,
+      "native_facing_deg": 0.0,
+      "surface": "stage",
+      "x": 2.4,
+      "z": 3.1,
+      "yaw_deg": 0
+    },
+    {
+      "name": "UMA_4",
+      "glob": "UMA_4/meshes_60k/UMA4_*.obj",
+      "anchor_floor_y_mm": -16.1,
+      "anchor_center_x_mm": 626.5,
+      "anchor_center_z_mm": 503.6,
+      "native_facing_deg": 0.0,
+      "surface": "stage",
+      "x": -2.2,
+      "z": 2.8,
+      "yaw_deg": 0
+    },
+    {
+      "name": "thomas_01",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -6.0,
+      "z": 8.0,
+      "yaw_deg": 143.1
+    },
+    {
+      "name": "thomas_02",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -3.5,
+      "z": 8.0,
+      "yaw_deg": 156.4
+    },
+    {
+      "name": "thomas_03",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -1.5,
+      "z": 8.0,
+      "yaw_deg": 169.4
+    },
+    {
+      "name": "thomas_04",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": 2.0,
+      "z": 8.0,
+      "yaw_deg": 194.0
+    },
+    {
+      "name": "thomas_05",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": 4.5,
+      "z": 8.0,
+      "yaw_deg": 209.4
+    },
+    {
+      "name": "thomas_06",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -5.0,
+      "z": 10.5,
+      "yaw_deg": 154.5
+    },
+    {
+      "name": "thomas_07",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -2.5,
+      "z": 10.5,
+      "yaw_deg": 166.6
+    },
+    {
+      "name": "thomas_08",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": 0.0,
+      "z": 10.5,
+      "yaw_deg": 180.0
+    },
+    {
+      "name": "thomas_09",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": 2.5,
+      "z": 10.5,
+      "yaw_deg": 193.4
+    },
+    {
+      "name": "thomas_10",
+      "glob": "thomas/thomas_fr06[2-7][0-9].obj",
+      "anchor_floor_y_mm": -3.2,
+      "anchor_center_x_mm": 21.4,
+      "anchor_center_z_mm": 6.4,
+      "native_facing_deg": 0.0,
+      "surface": "ground",
+      "x": -1.0,
+      "z": 13.0,
+      "yaw_deg": 175.6
+    }
+  ]
+}

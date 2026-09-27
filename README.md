@@ -171,6 +171,23 @@ Use `realtime=False` to transfer a recorded sequence as fast as possible.
 The camera capture and native reconstruction programs are in
 [open4d/streaming](open4d/streaming/README.md), formerly `reconstruction/rgbd`.
 
+## Compare methods in a user study
+
+[open4d/webclients](open4d/webclients/README.md) is a browser app that runs one
+participant through several streaming methods — Ours, ViVo, NAVA and Vega —
+under the same network trace, from the same start view, along the same camera
+path, and asks them to rate each clip. The trace can be uploaded in the browser;
+the results export as CSV.
+
+```bash
+cd open4d/webclients/system/WebClient && npm install && node build.js
+cd ../.. && PYTHONPATH=/path/to/4DVideoStreaming PYTHON_BIN=<env-python> scripts/run_web_demo.sh
+# then open http://<host>:3000/web/
+```
+
+It needs a checkout of the 4DVideoStreaming research repo for the ladder solver
+and the baseline servers.
+
 ## Gaussian splats
 
 Read splat frames, then encode them with the local Vega adaptation:

@@ -28,6 +28,7 @@ hardware requirements to the shared Python baseline. See
 | [**ReRF**](../open4d/reconstruction/rerf/README.md) | Neural residual radiance fields (CVPR 2023) as a streamable compression method |
 | [**gs-tools**](../open4d/reconstruction/gs_tools/README.md) | The one environment, rasterizers, and viewer the Gaussian methods share, plus `gs-tools view` for putting several methods under one camera |
 | [**streamer**](../open4d/streamer/README.md) | Streaming and playback for 4D reconstructions, whatever their representation. Producers import it to describe and serve their output; it imports none of them |
+| [**webclients**](../open4d/webclients/README.md) | A browser user study: one participant, several streaming methods, the same network trace and camera path for each, then a questionnaire and CSV export. Runs Ours, ViVo, NAVA and Vega; needs the 4DVideoStreaming research repo at run time |
 
 ## Integrations
 
