@@ -169,7 +169,7 @@ network or SSH tunnel; this protocol has no authentication or encryption.
 Use `realtime=False` to transfer a recorded sequence as fast as possible.
 
 The camera capture and native reconstruction programs are in
-[open4d/streaming](open4d/streaming/README.md), formerly `reconstruction/rgbd`.
+[open4d/rgbd](open4d/rgbd/README.md).
 
 ## Gaussian splats
 

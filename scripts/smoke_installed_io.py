@@ -89,7 +89,7 @@ with tempfile.TemporaryDirectory() as directory:
 
     with mesh_sequence(side=3, frames=2) as source:
         with open4d.receive(port=0, timeout=5) as receiver, ThreadPoolExecutor(1) as pool:
-            transfer = pool.submit(open4d.stream, source, *receiver.address, realtime=False)
+            transfer = pool.submit(open4d.send, source, *receiver.address, realtime=False)
             restored = list(receiver)
             assert transfer.result() == 2
         for expected, actual in zip(source, restored):

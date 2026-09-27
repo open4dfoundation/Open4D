@@ -1,11 +1,13 @@
-# RGB-D streaming
+# RGB-D
 
 Two synchronized RGB-D cameras stream to an Ubuntu GPU machine for live
 point-cloud fusion and CUDA mesh reconstruction. The result is viewed in a web
 browser.
 
-This module was formerly named `MeshReduce`. The original C++ reconstruction
-applications are still included.
+This module was formerly named `MeshReduce`, and then `open4d/streaming`. The
+original C++ reconstruction applications are still included. In Python it is
+`open4d.reconstruct(method="rgbd")`; the TCP frame protocol that sends its
+output is `open4d.send`/`open4d.receive`, in [`open4d/transport`](../transport).
 
 ## Data path
 
@@ -81,7 +83,7 @@ Start these components in order.
 ### 1. Ubuntu receiver
 
 ```bash
-cd /path/to/Open4D/open4d/streaming
+cd /path/to/Open4D/open4d/rgbd
 
 export FOURD_CALIBRATION_DIR=/absolute/path/to/calibration
 export PYTHON=/path/to/python-with-open3d
@@ -279,7 +281,7 @@ counts.
 Start the Ubuntu browser receiver as above. In a second Ubuntu terminal:
 
 ```bash
-cd /path/to/Open4D/open4d/streaming
+cd /path/to/Open4D/open4d/rgbd
 
 "$PYTHON" \
   tools/replay_obp1_sender.py \

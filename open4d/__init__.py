@@ -23,10 +23,10 @@ from .core import (
     TriangleMesh,
     dtypes,
 )
-from ._api import load, save, unload, reconstruct, stream
-from ._streamer import StreamerDependencyError
+from ._api import load, save, unload, reconstruct
+from ._streamer import StreamerDependencyError, stream
 from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode
-from .streaming import receive, send
+from .transport import receive, send
 from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
 from .metrics import compare_meshes, compare_sequences
 from .visualization import visualize

@@ -19,7 +19,7 @@ Windows synchronized RGB-D capture
 Run a bounded reconstruction:
 
 ```bash
-cd /home/ryan/Open4D/open4d/streaming
+cd /home/ryan/Open4D/open4d/rgbd
 MAX_PAIRS=30 ./tools/run_remote_two_camera_fusion.sh
 ```
 
