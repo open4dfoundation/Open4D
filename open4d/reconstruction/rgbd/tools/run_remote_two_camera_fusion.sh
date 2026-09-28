@@ -2,7 +2,7 @@
 # Bounded two-camera reconstruction from a live remote capture host.
 #
 # Requires the capture host's sender to be running and its data tunnel to map
-# the sender's 127.0.0.1:17000 to this machine. See REMOTE_TWO_CAMERA.md.
+# the sender's 127.0.0.1:17000 to this machine. See README.md.
 #
 # Configuration (all overridable):
 #   FOURD_CAPTURE_ROOT   directory holding your calibration set (required)

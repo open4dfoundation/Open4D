@@ -1,336 +1,132 @@
 # RGB-D reconstruction
 
-Two synchronized RGB-D cameras stream to an Ubuntu GPU machine for live
-point-cloud fusion and CUDA mesh reconstruction. The result is viewed in a web
-browser.
-
-This module was formerly named `MeshReduce`. The original C++ reconstruction
-applications are still included.
-
-## Data path
+Two synchronized RGB-D cameras send frames to an Ubuntu GPU machine. That
+machine fuses them into a live point cloud and CUDA meshes, and you watch the
+result in a browser. This module was formerly called `MeshReduce`.
 
 ```text
-Camera 1 + Camera 2
-  -> capture host (RGB JPEG + compressed depth)
-  -> SSH tunnel
-  -> Ubuntu receiver
-       - decode both frames
-       - transform camera 2 into camera 1 coordinates
-       - display a live fused point cloud
-       - reconstruct and merge CUDA meshes
-  -> Open3D WebRTC
-  -> browser
+2 cameras -> Windows capture host -> SSH tunnel -> Ubuntu receiver (fuse + CUDA TSDF) -> Open3D WebRTC -> browser
 ```
 
-The point cloud updates for every processed camera pair. The mesh is rebuilt
-periodically and is not a video stream.
-
-Networking and frame preparation run on the CPU. CUDA handles TSDF integration
-and mesh extraction. This is not a GPUDirect or RDMA pipeline.
+The point cloud updates on every camera pair; the mesh is rebuilt
+periodically. From Python, `open4d.reconstruct(source, method="rgbd")` runs
+the same reconstruction on saved captures.
 
 ## Setup
 
-Hardware, operating systems, and the tested configuration are in the repository
-[README](../../../README.md). Any camera works if the sender
-produces the same RGB-D packet format and the receiver constants match its
-resolutions.
-
-Create a Python environment on the reconstruction host:
+Hardware and the tested configuration are in the [repository README](../../../README.md).
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 python -m pip install numpy opencv-python zstandard
+# plus a CUDA-enabled Open3D build (the pip wheel may not include CUDA)
+python -c "import open3d as o3d; print(o3d.__version__, o3d.core.cuda.is_available())"   # want True
 ```
 
-Install a CUDA-enabled Open3D build in that environment. The standard pip wheel
-may not include CUDA. Verify the installation:
-
-```bash
-python -c \
-  "import open3d as o3d; print(o3d.__version__, o3d.core.cuda.is_available())"
-```
-
-The second value should be `True` for GPU meshes.
-
-## Use your own cameras
-
-1. Choose camera 1 as the reference coordinate system.
-2. Configure the sender with your two serial numbers and sync roles.
-3. Export the depth/color factory calibration for each camera.
-4. Calibrate camera 2 relative to camera 1.
-5. Store the files in this layout:
+**Calibration.** Camera 1 is the reference frame. Export each camera's
+factory calibration, calibrate camera 2 against camera 1, and lay out the files
+like this (`EY` = camera 1 and `J3` = camera 2, legacy names). This module only
+reads calibration; it doesn't create it. Recalibrate if you move either camera.
 
 ```text
 <calibration-dir>/
-├── source/work/calibration_stepwise/factory/
-│   ├── ey_factory_calibration.json
-│   └── j3_factory_calibration.json
-└── final_validated_fusion/
-    └── j3_depth_to_ey_depth_refined.txt
+├── source/work/calibration_stepwise/factory/{ey,j3}_factory_calibration.json
+└── final_validated_fusion/j3_depth_to_ey_depth_refined.txt
 ```
 
-`EY` and `J3` are legacy labels for camera 1 and camera 2. They do not need to
-match your serial numbers. This module consumes calibration files but does not
-currently generate them. Recalibrate after moving either camera.
+## Run a live session
 
-## Start a live session
+Start these in order.
 
-Start these components in order.
-
-### 1. Ubuntu receiver
+**1. Ubuntu receiver**, run from this directory:
 
 ```bash
-cd /path/to/Open4D/open4d/reconstruction/rgbd
-
-export FOURD_CALIBRATION_DIR=/absolute/path/to/calibration
+export FOURD_CALIBRATION_DIR=/abs/path/to/calibration
 export PYTHON=/path/to/python-with-open3d
 export FOURD_CUDA_DEVICE=0
-export FOURD_CAMERA1_SERIAL=your-camera-1-serial
-export FOURD_CAMERA2_SERIAL=your-camera-2-serial
-
-DISPLAY_MODE=pointcloud \
-MESH_WINDOW=1 \
-./tools/run_browser_viewer.sh
-```
-
-Expected:
-
-```text
-Live fusion receiver listening on 127.0.0.1:17000
-Browser viewer ready through Ubuntu 127.0.0.1:8888
-```
-
-Leave this terminal open.
-
-### 2. Windows data tunnel
-
-Close Orbbec Viewer and anything else using the cameras. In PowerShell:
-
-```powershell
-$GpuUser = "your-user"
-$GpuHost = "192.168.1.50"
-
-ssh -o ExitOnForwardFailure=yes `
-  -o ServerAliveInterval=30 `
-  -o ServerAliveCountMax=3 `
-  -N `
-  -L 127.0.0.1:17000:127.0.0.1:17000 `
-  "$GpuUser@$GpuHost"
-```
-
-The command stays quiet after login. Leave it running.
-
-In another PowerShell window, check the tunnel:
-
-```powershell
-Test-NetConnection 127.0.0.1 -Port 17000
-```
-
-Expected:
-
-```text
-TcpTestSucceeded : True
-```
-
-### 3. Windows camera sender
-
-Start an OBP1-compatible sender and point it at the local end of the tunnel.
-The receiver and protocol are included in this module; the tested Windows
-capture sender is currently a separate companion script. Copy that script and
-`protocol.py` to the capture host, or provide another sender that implements
-OBP1. For the tested Python sender:
-
-```powershell
-$Python = "C:\path\to\python.exe"
-$Sender = "C:\path\to\windows_sender.py"
-$Report = "C:\path\to\sender_report.json"
-
-& $Python $Sender `
-  --sdk-bin "C:\path\to\OrbbecSDK-K4A-Wrapper\bin" `
-  --host 127.0.0.1 `
-  --port 17000 `
-  --fps 5 `
-  --report $Report
-```
-
-The companion sender must be configured with your camera serial numbers before
-use. A healthy sender prints:
-
-```text
-{"produced_pairs": 30, "sync_error_us": ..., "queue_dropped": 0, ...}
-```
-
-Expected on Ubuntu:
-
-```text
-Sender connected from 127.0.0.1
-{"processed_pairs": 10, "latest_pair": 10, "live_points": ...}
-```
-
-The sender defaults to 5 FPS. Higher input rates currently cause frame
-replacement during CPU point-cloud preparation.
-
-### 4. Browser tunnel
-
-On the viewing machine:
-
-```bash
-GPU_USER=your-user
-GPU_HOST=192.168.1.50
-
-ssh -N \
-  -o ExitOnForwardFailure=yes \
-  -L 127.0.0.1:18888:127.0.0.1:8888 \
-  "$GPU_USER@$GPU_HOST"
-```
-
-Open [http://127.0.0.1:18888/](http://127.0.0.1:18888/).
-
-If the page opens but the scene does not move, the Windows sender is not
-connected. The Ubuntu log must show `Sender connected` and increasing
-`processed_pairs`.
-
-To stop, press `Ctrl+C` in the Windows sender first. Then stop the Windows data
-tunnel and Ubuntu receiver.
-
-If capture, reconstruction, and viewing all run on the same host, skip both SSH
-tunnels. Send to `127.0.0.1:17000` and open
-`http://127.0.0.1:8888/`.
-
-## Viewer modes
-
-Set `DISPLAY_MODE` when starting the browser viewer:
-
-| Value | Display |
-|---|---|
-| `pointcloud` | Latest fused point cloud; use this for motion |
-| `auto` | Point cloud until the first mesh, then mesh only |
-| `mesh` | Mesh only; use this for stationary scenes |
-| `both` | Point cloud and mesh together; useful for debugging but can look doubled |
-
-Recommended live view:
-
-```bash
+export FOURD_CAMERA1_SERIAL=... FOURD_CAMERA2_SERIAL=...
 DISPLAY_MODE=pointcloud MESH_WINDOW=1 ./tools/run_browser_viewer.sh
+# -> listening on 127.0.0.1:17000, viewer on 127.0.0.1:8888
 ```
 
-Recommended stationary mesh:
+**2. Windows data tunnel.** Close Orbbec Viewer first.
+
+```powershell
+ssh -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -N `
+  -L 127.0.0.1:17000:127.0.0.1:17000 user@gpu-host
+Test-NetConnection 127.0.0.1 -Port 17000     # TcpTestSucceeded : True
+```
+
+**3. Windows camera sender.** Use any sender that speaks OBP1 (packet format
+in `python/protocol.py`). The tested sender is a separate companion script, so
+copy it to the capture host and set your camera serials in it.
+
+```powershell
+& C:\path\to\python.exe C:\path\to\windows_sender.py `
+  --sdk-bin "C:\path\to\OrbbecSDK-K4A-Wrapper\bin" `
+  --host 127.0.0.1 --port 17000 --fps 5 --report sender_report.json
+```
+
+Keep the default 5 FPS: at higher rates the receiver can't prepare point clouds
+fast enough and replaces frames. The Ubuntu log should show `Sender connected`
+and a rising `processed_pairs`.
+
+**4. Browser tunnel**, from the machine you're watching on:
 
 ```bash
-DISPLAY_MODE=mesh MESH_WINDOW=7 ./tools/run_browser_viewer.sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18888:127.0.0.1:8888 user@gpu-host
 ```
 
-## Fusion modes
+Then open <http://127.0.0.1:18888/>. If the page loads but nothing moves, the
+sender isn't connected. To stop, press Ctrl+C in the sender first, then close
+the tunnels and the receiver. If everything runs on one machine, skip both
+tunnels and open <http://127.0.0.1:8888/>.
 
-The live point cloud always transforms J3 points into EY coordinates and
-concatenates the two aligned point sets.
+## Options
 
-The default mesh path is `independent-merge`:
-
-1. Reconstruct EY in its own CUDA TSDF volume.
-2. Reconstruct J3 in a second CUDA TSDF volume.
-3. Transform the J3 mesh into EY coordinates.
-4. Merge the partial meshes.
-
-Controls:
-
-```bash
-MESH_FUSION_MODE=independent-merge  # separate per-camera meshes
-MESH_FUSION_MODE=shared-tsdf        # both cameras in one TSDF volume
-
-MESH_MERGE_MODE=concatenate         # keep every triangle
-MESH_MERGE_MODE=weld                # merge nearby vertices
-MESH_WELD_RADIUS=0.003              # metres
-```
-
-`concatenate` does not crop, decimate, remove components, or fill holes. It can
-show two nearby surfaces where the camera views overlap. `shared-tsdf` usually
-looks cleaner.
-
-The full MeshReduce paper merger removes redundant overlap with raycasting and
-then stitches boundaries. That step is not implemented yet.
-
-## Output
-
-The browser launcher writes to `output/two-camera-fusion/`:
-
-| File | Contents |
+| Variable | Values |
 |---|---|
-| `latest_live_full_scene_pointcloud.ply` | latest fused point cloud |
-| `latest_live_full_scene_mesh.ply` | latest mesh |
-| `live_fusion_report.json` | receiver and synchronization summary |
-| `live_browser.log` | startup, frame, and mesh logs |
+| `DISPLAY_MODE` | `pointcloud` (motion), `mesh` (still scenes), `auto` (points until the first mesh), `both` (debugging) |
+| `MESH_WINDOW` | how many recent camera pairs go into each mesh: `1` for live, `7` for a still scene |
+| `MESH_FUSION_MODE` | `independent-merge` (default; one TSDF per camera, then merge) or `shared-tsdf` (one volume; usually cleaner) |
+| `MESH_MERGE_MODE` | `concatenate` (keep every triangle) or `weld` (merge vertices within `MESH_WELD_RADIUS`, metres) |
 
-A successful mesh log includes:
+Merging does no cropping, decimation or hole filling, so overlapping views can
+show doubled surfaces. The MeshReduce paper's overlap removal and stitching
+step isn't implemented yet.
 
-```text
-"backend": "CUDA:0"
-"fusion_mode": "independent-merge"
-"partial_vertices": [<camera-1>, <camera-2>]
-"vertices": <sum-of-partials>
-```
+Output goes to `output/two-camera-fusion/`:
+`latest_live_full_scene_{pointcloud,mesh}.ply`, `live_fusion_report.json` and
+`live_browser.log`. A healthy mesh log shows `"backend": "CUDA:0"`.
 
-For `concatenate`, the final vertex count equals the sum of the two partial
-counts.
-
-## Replay without cameras
-
-Start the Ubuntu browser receiver as above. In a second Ubuntu terminal:
+## Without the live cameras
 
 ```bash
-cd /path/to/Open4D/open4d/reconstruction/rgbd
+# replay saved pairs through the live receiver (start step 1 first)
+"$PYTHON" tools/replay_obp1_sender.py --captures-root /abs/path/to/saved-pairs --fps 2
 
-"$PYTHON" \
-  tools/replay_obp1_sender.py \
-  --captures-root /absolute/path/to/saved-pairs \
-  --fps 2
+# bounded run from the remote sender, or one-shot reconstruction of a saved sequence
+MAX_PAIRS=30 ./tools/run_remote_two_camera_fusion.sh
+FOURD_CAPTURE_ROOT=/path/to/capture-data ./tools/reconstruct_saved_two_camera.py
 ```
 
-This exercises transport, reconstruction, and browser rendering with recorded
-frames. It is not a live camera feed.
+## Native C++ pipeline
 
-For a one-shot saved reconstruction:
-
-```bash
-export FOURD_CAPTURE_ROOT=/path/to/capture-data
-./tools/reconstruct_saved_two_camera.py
-```
-
-## Original C++ pipeline
-
-The original application accepts a live K4A-compatible camera or recorded
-`.mkv`, then writes PLY, textured OBJ, Draco geometry, and stage metrics.
+For K4A-compatible cameras plugged directly into this machine, or recorded
+`.mkv` files. It writes PLY, textured OBJ, Draco and stage metrics.
 
 ```bash
 sudo apt install -y build-essential cmake ninja-build git \
   libopencv-dev libeigen3-dev libjsoncpp-dev libdraco-dev draco
-
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target rgbd_streamer -j"$(nproc)"
-./build/app/rgbd_streamer config.playback.json
-```
-
-Expected final output:
-
-```text
-mesh faces before_qem=... after_qem=... vertices=...
-wrote output/playback/mesh.ply, .obj, .mtl, and _texture.png
-MESHREDUCE_METRICS {...}
-```
-
-Run tests:
-
-```bash
+cmake --build build --target rgbd_streamer dual_camera_fusion -j"$(nproc)"
+./build/app/rgbd_streamer <config>.json        # one camera or .mkv
+./build/app/dual_camera_fusion config.dual.json
 ctest --test-dir build --output-on-failure
 ```
 
+## Files
 
-## Related files
-
-- [`docs/artifacts.md`](../../../docs/artifacts.md): generated-data policy
 - `python/protocol.py`: OBP1 packet definitions
-- `tools/receive_mesh_frame.py`: MRD1/MRD2 reference receiver
-- `tools/receive_live_stream.py`: MRD3 reference receiver
-
-Generated datasets and output directories are git-ignored.
+- `tools/receive_mesh_frame.py`, `tools/receive_live_stream.py`: reference receivers for MRD1/2 and MRD3
+- [`docs/artifacts.md`](../../../docs/artifacts.md): generated-data policy (outputs are git-ignored)
