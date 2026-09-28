@@ -1,11 +1,11 @@
-# webclients
+# study
 
 A browser user study for volumetric streaming methods, and the clients it
-runs them in. [`../reconstruction`](../reconstruction) holds the methods; this
-holds the app that delivers them to a participant under one network trace and
-one camera path, and asks them to rate each. Not to be confused with
-[`../streamer`](../streamer), the Python bundle server, or
-[`../streaming`](../streaming), RGB-D reconstruction sent over TCP.
+runs them in. [`../../reconstruction`](../../reconstruction) holds the methods;
+this holds the app that delivers them to a participant under one network trace
+and one camera path, and asks them to rate each. It is a separate Node app: it
+does not use the `streamer` Python package beside it and is not part of its
+wheel.
 
 The methods it knows:
 

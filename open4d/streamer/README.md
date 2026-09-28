@@ -20,6 +20,9 @@ streamer/
   client/              playback, the scheduler, and the decode worker
 ```
 
+[`study/`](study/README.md) beside the package is the browser user study, a
+separate Node app that compares delivery methods under one network trace.
+
 ## Building one
 
 `export.from_sequence` writes one clip and hands it back; `bundle.write` turns

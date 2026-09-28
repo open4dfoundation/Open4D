@@ -1,4 +1,4 @@
-# RGB-D streaming
+# RGB-D reconstruction
 
 Two synchronized RGB-D cameras stream to an Ubuntu GPU machine for live
 point-cloud fusion and CUDA mesh reconstruction. The result is viewed in a web
@@ -31,7 +31,7 @@ and mesh extraction. This is not a GPUDirect or RDMA pipeline.
 ## Setup
 
 Hardware, operating systems, and the tested configuration are in the repository
-[README](../../README.md). Any camera works if the sender
+[README](../../../README.md). Any camera works if the sender
 produces the same RGB-D packet format and the receiver constants match its
 resolutions.
 
@@ -81,7 +81,7 @@ Start these components in order.
 ### 1. Ubuntu receiver
 
 ```bash
-cd /path/to/Open4D/open4d/streaming
+cd /path/to/Open4D/open4d/reconstruction/rgbd
 
 export FOURD_CALIBRATION_DIR=/absolute/path/to/calibration
 export PYTHON=/path/to/python-with-open3d
@@ -279,7 +279,7 @@ counts.
 Start the Ubuntu browser receiver as above. In a second Ubuntu terminal:
 
 ```bash
-cd /path/to/Open4D/open4d/streaming
+cd /path/to/Open4D/open4d/reconstruction/rgbd
 
 "$PYTHON" \
   tools/replay_obp1_sender.py \
@@ -328,7 +328,7 @@ ctest --test-dir build --output-on-failure
 
 ## Related files
 
-- [`docs/artifacts.md`](../../docs/artifacts.md): generated-data policy
+- [`docs/artifacts.md`](../../../docs/artifacts.md): generated-data policy
 - `python/protocol.py`: OBP1 packet definitions
 - `tools/receive_mesh_frame.py`: MRD1/MRD2 reference receiver
 - `tools/receive_live_stream.py`: MRD3 reference receiver

@@ -21,14 +21,14 @@ hardware requirements to the shared Python baseline. See
 
 | Module | |
 |---|---|
-| [**RGB-D**](../open4d/streaming/README.md) | Synchronized multi-camera RGB-D ingestion, calibrated point-cloud fusion, CUDA TSDF mesh reconstruction, and live browser playback. Includes both the original native reconstruction code and the Python two-camera streaming pipeline |
+| [**RGB-D**](../open4d/reconstruction/rgbd/README.md) | Synchronized multi-camera RGB-D ingestion, calibrated point-cloud fusion, CUDA TSDF mesh reconstruction, and live browser playback. Includes both the original native reconstruction code and the Python two-camera streaming pipeline |
 | [**QUEEN**](../open4d/reconstruction/queen/README.md) | Quantized efficient encoding of dynamic Gaussians for streaming free-viewpoint video (NeurIPS 2024) |
 | [**3DGStream**](../open4d/reconstruction/3dgstream/README.md) | On-the-fly training of 3D Gaussians for streaming photo-realistic free-viewpoint video (CVPR 2024) |
 | [**Vega**](../open4d/reconstruction/vega/README.md) | An ORBIT adaptation of Vega (MobiCom 2025): mobile volumetric video streaming with 3D Gaussian splatting |
 | [**ReRF**](../open4d/reconstruction/rerf/README.md) | Neural residual radiance fields (CVPR 2023) as a streamable compression method |
 | [**gs-tools**](../open4d/reconstruction/gs_tools/README.md) | The one environment, rasterizers, and viewer the Gaussian methods share, plus `gs-tools view` for putting several methods under one camera |
 | [**streamer**](../open4d/streamer/README.md) | Streaming and playback for 4D reconstructions, whatever their representation. Producers import it to describe and serve their output; it imports none of them |
-| [**webclients**](../open4d/webclients/README.md) | A browser user study: one participant, several streaming methods, the same network trace and camera path for each, then a questionnaire and CSV export. Runs Ours, ViVo, NAVA and Vega; needs the 4DVideoStreaming research repo at run time |
+| [**streamer/study**](../open4d/streamer/study/README.md) | A browser user study: one participant, several streaming methods, the same network trace and camera path for each, then a questionnaire and CSV export. Runs Ours, ViVo, NAVA and Vega; needs the 4DVideoStreaming research repo at run time |
 
 ## Integrations
 

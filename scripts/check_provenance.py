@@ -20,14 +20,15 @@ AUDITED_DIRECTORY_ROOTS = (
 )
 EXPLICIT_REQUIRED_LEDGER_PATHS = (
     "integrations/unity",
-    "open4d/streaming",
 )
 ALLOWED_PACKAGES = {
     "open4d",
     "open4d.codec",
     "open4d.core",
     "open4d.io",
-    "open4d.streaming",
+    "open4d.reconstruction",
+    "open4d.reconstruction.rgbd",
+    "open4d.transport",
     "open4d.torch_ops",
     "open4d.visualization",
     "integrations",
@@ -156,8 +157,9 @@ def main() -> int:
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     for path in (
         "open4d/codecs", "open4d/reconstruction", "integrations/unity",
-        "open4d/streaming/app", "open4d/streaming/src", "open4d/streaming/include",
-        "open4d/streaming/python", "open4d/streaming/tools",
+        "open4d/reconstruction/rgbd/app", "open4d/reconstruction/rgbd/src",
+        "open4d/reconstruction/rgbd/include", "open4d/reconstruction/rgbd/python",
+        "open4d/reconstruction/rgbd/tools",
     ):
         if f"prune {path}" not in manifest:
             errors.append(f"MANIFEST.in must prune {path}")

@@ -153,7 +153,7 @@ def reconstruct(source, output=None, *, method="rgbd", **options):
     if method == "rgbd":
         if output is not None:
             raise TypeError("RGB-D reconstruction returns a Sequence; omit output")
-        from .streaming import reconstruct as reconstruct_rgbd
+        from .reconstruction.rgbd import reconstruct as reconstruct_rgbd
 
         return reconstruct_rgbd(source, **options)
     if method in ("queen", "3dgstream"):
@@ -176,7 +176,7 @@ def stream(source, *address, **options):
     browser_options = {"out_dir", "name", "title", "rungs", "fps", "open_browser", "block"}
     if address or (not isinstance(source, (str, os.PathLike))
                    and not browser_options.intersection(options)):
-        from .streaming import send
+        from .transport import send
 
         return send(source, *address, **options)
     from ._streamer import stream as stream_to_browser

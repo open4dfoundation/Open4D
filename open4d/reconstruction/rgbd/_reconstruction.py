@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from ..core import Frame, Sequence, TopologyMode, TriangleMesh
+from ...core import Frame, Sequence, TopologyMode, TriangleMesh
 
 
 def _positive(value, name):
