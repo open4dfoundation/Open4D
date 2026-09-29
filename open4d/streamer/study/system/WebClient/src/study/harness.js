@@ -5,6 +5,8 @@
  *
  *   ?study=<session>&trial=<position>   replay the shared path, as trial n
  *   ?study=<session>&record=1           the unrated pass that records the path
+ *   ...&preload=1                       load the whole clip, say 'preloaded',
+ *                                       and play only when the host says 'go'
  *
  * Everything the page needs comes from the server by session id -- the object
  * subset, the trial length, the path -- so a trial URL is complete on its own
@@ -34,7 +36,8 @@ function studyParams(search = globalThis.location?.search || '') {
         throw new Error('?study needs either &trial=<position> or &record=1');
     }
     // Which method the recording pass runs on, so the path records it.
-    return { session, record, trial: record ? null : Number(trial), method: params.get('method') };
+    return { session, record, trial: record ? null : Number(trial), method: params.get('method'),
+             preload: !record && params.get('preload') === '1' };
 }
 
 async function getJson(serverUrl, route) {
@@ -62,6 +65,7 @@ async function loadStudyContext({ serverUrl, params }) {
         mode: params.record ? 'record' : 'replay',
         method: params.record ? params.method : trial.method,
         durationSeconds: session.durationSeconds,
+        preload: Boolean(params.preload),
         startPose: stagePose(layout, session.objects, { aspect: STUDY_ASPECT })
     };
 }
@@ -88,6 +92,23 @@ function post(type, payload = {}) {
     if (!globalThis.parent || globalThis.parent === globalThis) return;
     globalThis.parent.postMessage({ source: MESSAGE_SOURCE, type, ...payload },
         globalThis.location.origin);
+}
+
+/**
+ * Resolve when the hosting study page says 'go'. A preloading page waits on
+ * this between loading its clip and playing it: the host arms the trace in
+ * between, so the load is not shaped and the trial starts at playback.
+ */
+function awaitGo() {
+    return new Promise(resolve => {
+        const listener = event => {
+            if (event.origin !== globalThis.location.origin) return;
+            if (event.data?.source !== MESSAGE_SOURCE || event.data.type !== 'go') return;
+            globalThis.removeEventListener('message', listener);
+            resolve();
+        };
+        globalThis.addEventListener('message', listener);
+    });
 }
 
 /**
@@ -134,6 +155,6 @@ function createStudyDriver({ context, method, onEnded }) {
 }
 
 module.exports = {
-    studyParams, loadStudyContext, createStudyDriver, post, enterStudyChrome,
+    studyParams, loadStudyContext, createStudyDriver, post, awaitGo, enterStudyChrome,
     STUDY_ASPECT, MESSAGE_SOURCE
 };

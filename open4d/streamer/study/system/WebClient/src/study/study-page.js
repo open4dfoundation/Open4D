@@ -31,6 +31,15 @@ const STUDY_PAGES = new Set(['mesh', 'vivo', 'nava', 'vega']);
 /** Baselines served by a restartable Python process, with its own object set. */
 const POINTCLOUD = new Set(['vivo', 'nava']);
 /**
+ * Methods that load their whole clip before playing. Loaded before the trace
+ * is armed, behind the same cover as everything else: under the trace, Vega's
+ * 64 MB took 41 s at 12.5 Mbps, which made its trial the one with a long
+ * wait -- identifiable, and several times longer than the rest.
+ */
+const PRELOAD = new Set(['vega']);
+/** How long a preload may take before the trial is declared stuck. */
+const PRELOAD_TIMEOUT_SECONDS = 300;
+/**
  * Why a method that speaks the same protocol still cannot take part here.
  * Stated rather than leaving it off the list, so a missing method reads as a
  * known gap with a known fix, not as an oversight.
@@ -41,6 +50,24 @@ const UNAVAILABLE = {
     deltastream: 'needs the RGB-D dataset from baselines.DeltaStream.orbitstream.converter'
 };
 
+/**
+ * WebGL implementations that rasterise on the CPU. Headless Chrome falls back
+ * to SwiftShader, where the splat and mesh pages run at 2-9 fps; a trial
+ * rendered that way measures the machine, not the method.
+ */
+const SOFTWARE_GL = /swiftshader|llvmpipe|softpipe|software rasterizer|microsoft basic render/i;
+
+/** The GPU this browser renders WebGL with, as the driver names it. */
+function glRenderer() {
+    try {
+        const gl = document.createElement('canvas').getContext('webgl2');
+        const info = gl.getExtension('WEBGL_debug_renderer_info');
+        return String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+    } catch {
+        return null;
+    }
+}
+
 /** How long past its length a trial may run before it is declared stuck. */
 const TRIAL_GRACE_SECONDS = 180;
 
@@ -48,7 +75,7 @@ const $ = id => document.getElementById(id);
 
 const state = {
     config: null, systems: [], session: null, trajectory: null,
-    traceText: null, traceName: null, listener: null
+    traceText: null, traceName: null, listener: null, glRenderer: null
 };
 
 // ------------------------------------------------------------------- http ---
@@ -153,12 +180,34 @@ function awaitPass(durationSeconds, onProgress, onLoading) {
     });
 }
 
+/** Wait for one message of `type` from the hosted page; rejects on its error. */
+function awaitMessage(type, timeoutSeconds) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error(`the method page did not report ${type} within ${timeoutSeconds} s`));
+        }, timeoutSeconds * 1000);
+        const listener = event => {
+            if (event.origin !== window.location.origin) return;
+            const data = event.data;
+            if (!data || data.source !== MESSAGE_SOURCE) return;
+            if (data.type === type) { cleanup(); resolve(data); }
+            else if (data.type === 'error') { cleanup(); reject(new Error(data.message)); }
+        };
+        const cleanup = () => {
+            clearTimeout(timeout);
+            window.removeEventListener('message', listener);
+        };
+        window.addEventListener('message', listener);
+    });
+}
+
 function progress(barId, fraction) {
     $(barId).style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
 }
 
 /** Where a method's page lives, carrying what it needs to run one pass. */
-function methodUrl(method, { trial = null, record = false, bridge = null } = {}) {
+function methodUrl(method, { trial = null, record = false, bridge = null, preload = false } = {}) {
     const system = state.systems.find(entry => entry.id === method);
     if (!system) throw new Error(`the server does not offer ${method}`);
     const url = new URL(system.page, window.location.origin);
@@ -170,6 +219,7 @@ function methodUrl(method, { trial = null, record = false, bridge = null } = {})
         url.searchParams.set('method', method);
     }
     else url.searchParams.set('trial', String(trial));
+    if (preload) url.searchParams.set('preload', '1');
     return url.toString();
 }
 
@@ -306,6 +356,12 @@ async function boot() {
     ]);
     state.config = config;
     state.systems = systems;
+    state.glRenderer = glRenderer();
+    if (state.glRenderer && SOFTWARE_GL.test(state.glRenderer)) {
+        fail(new Error(`This browser renders WebGL in software (${state.glRenderer}), so `
+            + 'methods will play far below their frame rate. Use a browser with GPU '
+            + 'acceleration for real sessions; trials run here are flagged.'));
+    }
     renderMethods();
 
     const select = $('trace-builtin');
@@ -482,6 +538,19 @@ async function runTrial(trial) {
             { id: trial.method, objects: session.objects });
         bridge = started.bridge;
     }
+    // A preloading method loads its clip now, unshaped and untimed, like the
+    // point-cloud restart above; its trial starts when it can play.
+    let frame = null;
+    let preload = null;
+    if (PRELOAD.has(trial.method)) {
+        $('trial-status').textContent = 'preparing…';
+        const loaded = awaitMessage('preloaded', PRELOAD_TIMEOUT_SECONDS);
+        const began = performance.now();
+        frame = mount('trial-stage', methodUrl(trial.method, { trial: trial.position, preload: true }));
+        const report = await loaded;
+        preload = { seconds: Number(((performance.now() - began) / 1000).toFixed(2)),
+                    bytes: report.bytes ?? null };
+    }
     // Arming the trace is the trial's t=0: every method is shaped by the same
     // stretch of it, startup included.
     await api('POST', `/api/study/sessions/${encodeURIComponent(session.id)}/trials/${trial.position}/start`);
@@ -490,7 +559,11 @@ async function runTrial(trial) {
         progress('trial-bar', fraction);
         $('trial-status').textContent = 'playing';
     }, ({ seconds }) => cover('trial-stage', `Loading… ${seconds} s`));
-    mount('trial-stage', methodUrl(trial.method, { trial: trial.position, bridge }));
+    if (frame) {
+        frame.contentWindow.postMessage({ source: MESSAGE_SOURCE, type: 'go' }, window.location.origin);
+    } else {
+        mount('trial-stage', methodUrl(trial.method, { trial: trial.position, bridge }));
+    }
     const result = await done;
     unmount('trial-stage', 'Clip finished.');
     $('trial-status').textContent = '';
@@ -501,7 +574,12 @@ async function runTrial(trial) {
         ...scalars(result.summary),
         ...flatten('native_', result.native),
         broadcastId: result.broadcastId ?? null,
-        exitCode: result.exitCode ?? null
+        exitCode: result.exitCode ?? null,
+        glRenderer: state.glRenderer ?? null,
+        softwareRendering: state.glRenderer ? SOFTWARE_GL.test(state.glRenderer) : null,
+        preloadedBeforeTrial: preload !== null,
+        preloadSeconds: preload?.seconds ?? null,
+        preloadBytes: preload?.bytes ?? null
     };
     const finished = await api('POST',
         `/api/study/sessions/${encodeURIComponent(session.id)}/trials/${trial.position}/finish`,

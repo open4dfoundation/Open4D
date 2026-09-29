@@ -156,26 +156,36 @@ async function main() {
         ].join('\n');
     }, 500);
 
+    // A preloading trial builds its driver only at 'go', so the trial clock and
+    // the startup delay start at playback, not at the unshaped load before it.
+    const makeDriver = () => {
+        driver = study.createStudyDriver({
+            context: studyContext, method: 'vega',
+            onEnded: () => {
+                if (studyOver) return;
+                studyOver = true;
+                client.stop();
+                const native = Object.fromEntries(Object.entries(client.stats).filter(([, value]) =>
+                    value === null || ['number', 'string', 'boolean'].includes(typeof value)));
+                study.post('ended', { method: 'vega', exitCode: 0, broadcastId: null,
+                    summary: driver.summary(), native: { stats: native },
+                    trajectory: driver.trajectory() });
+            }
+        });
+        client.setCameraDriver(driver);
+    };
     try {
-        if (studyContext) {
-            driver = study.createStudyDriver({
-                context: studyContext, method: 'vega',
-                onEnded: () => {
-                    if (studyOver) return;
-                    studyOver = true;
-                    client.stop();
-                    const native = Object.fromEntries(Object.entries(client.stats).filter(([, value]) =>
-                        value === null || ['number', 'string', 'boolean'].includes(typeof value)));
-                    study.post('ended', { method: 'vega', exitCode: 0, broadcastId: null,
-                        summary: driver.summary(), native: { stats: native },
-                        trajectory: driver.trajectory() });
-                }
-            });
-            client.setCameraDriver(driver);
-        }
-        await client.start(config.objects);
+        if (studyContext && !studyContext.preload) makeDriver();
+        await client.start(config.objects, !studyContext?.preload ? {} : {
+            beforePlay: async () => {
+                study.post('preloaded', { method: 'vega', frames: client.frameCount,
+                                          bytes: client.stats.bytesFetched });
+                await study.awaitGo();
+                makeDriver();
+            }
+        });
     } catch (error) {
-        if (driver) study.post('error', { method: 'vega', message: error.message });
+        if (studyContext) study.post('error', { method: 'vega', message: error.message });
         status.textContent = `could not start: ${error.message}`;
         log('error', error.message);
         log('info', 'Export assets first: python -m baselines.Vega.orbitvega.'

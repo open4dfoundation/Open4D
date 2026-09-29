@@ -44,12 +44,20 @@ only plays in Safari and hardware-enabled Chrome.
 4. **Questionnaire:** C1–C4 on five stars, plus up to two artifacts.
 5. **Results:** a table and `export.csv`, one row per trial.
 
+Each trial also records the GPU the browser rendered with. The setup page
+warns if that's a software renderer (for example, headless Chrome's
+SwiftShader), because methods play far below their frame rate there. Vega
+loads its whole clip *before* the trace starts, so its trial starts at
+playback like every other method (`preloadSeconds` records the load time).
+
 Sessions are saved in `system/Server/server_results/study/`. That directory
 holds participant data and is git-ignored.
 
 The trace is applied inside the server (`system/Server/study/shaper.js`, and
 `follower.js` for the ViVo/NAVA bridge), so it needs no root and doesn't
-throttle anything else on the machine. Outside the study,
+throttle anything else on the machine. The CSV's `shaped_by` and
+`shaped_bytes` columns show which shaper carried each trial's bytes and how
+many; the bridge reports its own at `GET /shaping`. Outside the study,
 `sudo scripts/shape_web_demo.sh <trace>` shapes the method pages with `tc`,
 which throttles the whole machine.
 
@@ -62,6 +70,9 @@ which throttles the whole machine.
 2. **Register it** in `METHODS` (`system/Server/study/store.js`), in
    `STUDY_PAGES` (`src/study/study-page.js`), in `build.js` and in `public/`.
 3. **Shape its traffic:** every download must go through the study's shaper.
+4. **If it loads a whole clip before playing**, add it to `PRELOAD` in
+   `src/study/study-page.js`. With `?preload=1`, the page posts `preloaded`,
+   then waits for `study.awaitGo()` before it starts its driver.
 
 If the method adapts in the browser, implement the
 [`ClientPlatform`](system/ClientCore/README.md) contract and use

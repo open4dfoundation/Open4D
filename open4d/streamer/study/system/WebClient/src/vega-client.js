@@ -69,7 +69,13 @@ class VegaClient {
 
     _emit(type, detail = {}) { this._onEvent?.({ type, ...detail }); }
 
-    async start(objectNames = null) {
+    /**
+     * @param {string[]} [objectNames]
+     * @param {object} [options]
+     * @param {() => Promise<void>} [options.beforePlay] awaited between the
+     *   preload and the first frame advance; a study trial arms its trace here
+     */
+    async start(objectNames = null, { beforePlay = null } = {}) {
         this._three = this._buildScene();
         this._loop();
 
@@ -118,6 +124,11 @@ class VegaClient {
             this._three.scene.add(splat.mesh);
             this.objects.set(entry.name, { entry, splat, frames: new Map() });
         }
+        // The objects exist only now, after the scene applied its viewport, and
+        // a study pass never auto-frames (which applies it again). Left at its
+        // (1, 1) placeholder, every splat is drawn hundreds of times too large:
+        // 70% of the canvas covered instead of 3%, at 8 fps instead of 60.
+        this._applyViewport();
 
         this._emit('catalog', {
             fps: this.catalog.fps,
@@ -149,6 +160,7 @@ class VegaClient {
         // does with its renders.
         await this._preload();
         this._showFrame(0);
+        if (beforePlay) await beforePlay();
         this.playing = true;
         this._lastAdvance = performance.now();
     }
