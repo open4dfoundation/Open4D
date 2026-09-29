@@ -1,85 +1,200 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>4DVideoStreaming — browser client</title>
+<title>Open4D — user study</title>
 <style>
-  :root { color-scheme: dark; --bg:#0d0d11; --panel:#16161c; --line:#26262f;
-          --text:#e6e6ea; --muted:#8b8b98; --warn:#e0a33e; --err:#e05c5c; }
+  :root {
+    --bg: #0f1115; --panel: #181b21; --line: #2a2f38; --text: #e7e9ee; --dim: #9aa3b2;
+    --accent: #5b9dff; --good: #3fb97a; --bad: #e5484d; --star: #f5b83d;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
   * { box-sizing: border-box; }
-  /* grid-template-rows is REQUIRED, not decorative. With an implicit auto row
-     the row grows to the tallest item, so an accumulating log pane pushed the
-     row past the viewport and #view's height:100% stretched with it -- while
-     the WebGL drawing buffer stayed at its original size. The result was a
-     vertically stretched render that got worse the longer the run went on. */
-  html, body { height:100%; }
-  body { margin:0; display:grid; grid-template-columns: 1fr 420px;
-         grid-template-rows: 100%; overflow:hidden;
-         background:var(--bg); color:var(--text);
-         font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  /* The canvas must not participate in sizing its own grid area, or it and the
-     area feed back on each other. min-width/height:0 lets the area shrink. */
-  #view { width:100%; height:100%; display:block; background:#101014;
-          min-width:0; min-height:0; }
-  aside { border-left:1px solid var(--line); display:flex; flex-direction:column;
-          min-width:0; min-height:0; overflow:hidden; background:var(--panel); }
-  header { padding:12px 14px; border-bottom:1px solid var(--line); }
-  h1 { margin:0 0 6px; font-size:13px; font-weight:600; letter-spacing:.04em;
-       text-transform:uppercase; color:var(--muted); }
-  #status { color:var(--text); word-break:break-word; }
-  .controls { padding:10px 14px; border-bottom:1px solid var(--line);
-              display:flex; gap:8px; align-items:center; }
-  button { font:inherit; padding:5px 12px; border-radius:5px;
-           border:1px solid var(--line); background:#20202a; color:var(--text);
-           cursor:pointer; }
-  button:hover:not(:disabled) { background:#2a2a36; }
-  button:disabled { opacity:.45; cursor:default; }
-  #artifacts { padding:8px 14px; border-bottom:1px solid var(--line);
-               display:flex; flex-wrap:wrap; gap:10px; min-height:34px; }
-  #artifacts a { color:#7ab6f0; }
-  /* flex:1 alone is not enough: a flex item's automatic minimum size is its
-     content, so the log refused to shrink and grew the whole column instead of
-     scrolling. min-height:0 is what makes overflow:auto actually apply. */
-  #log { flex:1 1 0; min-height:0; overflow:auto; padding:8px 14px;
-         font-size:11.5px; }
-  .log-line { white-space:pre-wrap; word-break:break-word; color:var(--muted); }
-  .log-info { color:var(--text); }
-  .log-warn { color:var(--warn); }
-  .log-error { color:var(--err); }
-  .hint { padding:8px 14px; color:var(--muted); border-top:1px solid var(--line);
-          font-size:11.5px; }
-  /* Every page is one system; the chooser is how you get to the
-     others, so the link is on all of them rather than only on a
-     landing page you may not have come through. */
-  h1 a.switch { float:right; color:#7ab6f0; text-decoration:none;
-                text-transform:none; letter-spacing:0;
-                font-weight:400; }
-  h1 a.switch:hover { text-decoration:underline; }
-  /* The shaped link rate sits beside the status because adaptation only
-     reads as cause and effect when both are visible at once. */
-  #link { margin-top:4px; font-size:11.5px; color:var(--muted); }
-  #link.shaped { color:#7ab6f0; }
-  #link.unshaped { color:var(--warn); }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 14px 22px;
+           border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .where { color: var(--dim); font-size: 13px; }
+  main { max-width: 1320px; margin: 0 auto; padding: 22px; }
+  section[hidden] { display: none !important; }
+  h2 { font-size: 20px; margin: 0 0 6px; }
+  p.lead { color: var(--dim); margin: 0 0 20px; max-width: 72ch; line-height: 1.5; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+             margin: 0 0 12px; font-weight: 600; }
+  label { display: block; margin: 10px 0 4px; color: var(--dim); font-size: 13px; }
+  input[type=text], input[type=number], select {
+    width: 100%; background: #0c0e12; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 10px; font-size: 14px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .methods label { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin: 6px 0; }
+  .methods .why { color: var(--dim); font-size: 12px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 7px; padding: 10px 18px;
+           font-size: 14px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .actions { display: flex; gap: 10px; margin-top: 18px; align-items: center; }
+  .note { color: var(--dim); font-size: 13px; }
+  .error { background: #2a1416; border: 1px solid #5c2226; color: #ffb4b6; border-radius: 8px;
+           padding: 10px 14px; margin: 0 0 16px; }
+  canvas.spark { width: 100%; height: 56px; display: block; margin-top: 8px; }
+
+  .stage { position: relative; width: 100%; aspect-ratio: 16 / 9;
+           max-height: calc(100vh - 190px); margin: 0 auto; background: #000;
+           border-radius: 8px; overflow: hidden; }
+  .stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .stage .veil { position: absolute; inset: 0; display: grid; place-items: center;
+                 color: var(--dim); background: #000; font-size: 15px; }
+  /* Once anything is on screen the cover shrinks to a banner, so the stage can
+     be watched filling in -- that is what the practice pass is for. */
+  .stage .veil.banner { inset: 0 0 auto 0; padding: 10px 16px; color: var(--text);
+                        background: rgba(0, 0, 0, .6); font-size: 14px; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 12px 0 0; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s linear; }
+  .trial-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+  .trial-head .label { font-size: 20px; font-weight: 600; }
+
+  .q { max-width: 760px; margin: 0 auto; }
+  .rating { display: grid; grid-template-columns: 1fr auto; gap: 10px 22px; align-items: center;
+            padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .rating .title { font-weight: 600; }
+  .rating .prompt { color: var(--dim); font-size: 14px; margin-top: 3px; line-height: 1.4; }
+  .stars { display: flex; gap: 4px; }
+  .stars button { background: transparent; border: 0; padding: 2px 3px; font-size: 30px; line-height: 1;
+                  color: #3a404b; cursor: pointer; }
+  .stars button.on { color: var(--star); }
+  .scale { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .artifacts label { display: flex; gap: 10px; align-items: flex-start; color: var(--text); font-size: 15px;
+                     padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; cursor: pointer; }
+  .artifacts label.off { opacity: .45; cursor: not-allowed; }
+  .artifacts input { margin-top: 3px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
-<canvas id="view"></canvas>
-<aside>
-  <header>
-    <h1>Browser client <a class="switch" href="compare.html">switch</a></h1>
-    <div id="status">loading …</div>
-    <div id="link">link: …</div>
-  </header>
-  <div class="controls">
-    <button id="stop">Stop &amp; finalize</button>
-  </div>
-  <div id="artifacts"></div>
-  <div id="log"></div>
-  <div class="hint">
-    Drag to orbit, scroll to zoom. Stop finalizes the run; it does not navigate away.
-  </div>
-</aside>
-<script src="./main.js"></script>
+<header>
+  <h1>User study</h1>
+  <span class="where" id="where"></span>
+</header>
+<main>
+  <div class="error" id="error" hidden></div>
+
+  <!-- 1. setup: operator-facing -->
+  <section id="setup">
+    <h2>New session</h2>
+    <p class="lead">Every method plays the same stretch of network trace, from the same start view,
+      along the same camera path. The path is recorded once, then replayed for every trial.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Participant</h3>
+        <label for="participant">Pseudonymous code — never a name</label>
+        <input type="text" id="participant" placeholder="p07" autocomplete="off">
+        <div class="row">
+          <div><label for="duration">Trial length (s)</label><input type="number" id="duration" value="20" min="1" max="600"></div>
+          <div><label for="objects">Objects on stage</label><input type="text" id="objects" value="UMA0,UMA1,UMA2,UMA3,UMA4"></div>
+        </div>
+        <h3 style="margin-top:18px">Methods</h3>
+        <div class="methods" id="methods"></div>
+      </div>
+      <div class="card">
+        <h3>Network trace</h3>
+        <label for="trace-builtin">Built-in</label>
+        <select id="trace-builtin"></select>
+        <label for="trace-file">…or upload a CSV (<code>time,bandwidth</code> in s, Mbps)</label>
+        <input type="file" id="trace-file" accept=".csv,text/csv">
+        <div class="row">
+          <div><label for="trace-start">Window start (s)</label><input type="number" id="trace-start" value="0" min="0" step="0.5"></div>
+          <div><label for="trace-end">Window end (s)</label><input type="number" id="trace-end" placeholder="trial length" min="0" step="0.5"></div>
+          <div><label for="trace-scale">Scale</label><input type="number" id="trace-scale" value="1" min="0.01" step="0.05"></div>
+        </div>
+        <canvas class="spark" id="trace-spark"></canvas>
+        <div class="note" id="trace-summary"></div>
+        <h3 style="margin-top:18px">Camera path</h3>
+        <label for="practice-method">Practice and record the path on</label>
+        <select id="practice-method"></select>
+        <label for="trajectory-file">Reuse a recorded path (optional) — otherwise one is recorded first</label>
+        <input type="file" id="trajectory-file" accept=".json,application/json">
+      </div>
+    </div>
+    <div class="actions">
+      <button id="create">Create session</button>
+      <span class="note">or resume</span>
+      <select id="resume" style="max-width:320px"><option value="">—</option></select>
+      <button class="secondary" id="resume-go">Resume</button>
+    </div>
+  </section>
+
+  <!-- 2. the unrated recording pass -->
+  <section id="record" hidden>
+    <div class="trial-head">
+      <div><div class="label">Practice and path recording</div>
+        <div class="note">Drag to look around the stage, scroll to move closer. This pass is not rated —
+          the view you choose here is replayed for every trial.</div></div>
+      <button class="secondary" id="record-again" hidden>Record again</button>
+    </div>
+    <div class="stage" id="record-stage"><div class="veil">loading…</div></div>
+    <div class="bar"><div id="record-bar"></div></div>
+    <div class="actions">
+      <button id="record-start">Start recording</button>
+      <button id="record-accept" hidden>Use this path and begin trials</button>
+      <a id="record-download" class="note" hidden download>download path</a>
+    </div>
+  </section>
+
+  <!-- 3. a trial: participant-facing, blinded -->
+  <section id="trial" hidden>
+    <div class="trial-head">
+      <div><span class="label" id="trial-label"></span> <span class="note" id="trial-count"></span></div>
+      <span class="note" id="trial-status"></span>
+    </div>
+    <div class="stage" id="trial-stage"><div class="veil" id="trial-veil">Press Start when you are ready.</div></div>
+    <div class="bar"><div id="trial-bar"></div></div>
+    <div class="actions">
+      <button id="trial-start">Start</button>
+      <button class="secondary" id="trial-retry" hidden>Retry this trial</button>
+    </div>
+  </section>
+
+  <!-- 4. the questionnaire -->
+  <section id="questionnaire" hidden>
+    <div class="q">
+      <div id="q-ratings">
+        <h2 id="q-title">How was clip A?</h2>
+        <p class="lead">Rate each from one to five stars.</p>
+        <div id="q-rating-rows"></div>
+        <div class="actions"><button id="q-continue" disabled>Continue</button>
+          <span class="note" id="q-ratings-hint">Select one to five stars for every row.</span></div>
+      </div>
+      <div id="q-artifacts" hidden>
+        <h2>What did you notice?</h2>
+        <p class="lead" id="q-artifact-prompt"></p>
+        <div class="artifacts" id="q-artifact-rows"></div>
+        <div class="actions"><button class="secondary" id="q-back">Back</button>
+          <button id="q-submit" disabled>Submit</button>
+          <span class="note" id="q-submit-hint"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. results: operator-facing -->
+  <section id="done" hidden>
+    <h2>Session complete</h2>
+    <p class="lead" id="done-lead"></p>
+    <div class="card"><table id="done-table"></table></div>
+    <div class="actions">
+      <a id="done-csv" download><button>Download CSV</button></a>
+      <a id="done-path" download><button class="secondary">Download camera path</button></a>
+      <button class="secondary" id="done-new">New session</button>
+    </div>
+  </section>
+</main>
+<script src="./study.js"></script>
 </body>
 </html>

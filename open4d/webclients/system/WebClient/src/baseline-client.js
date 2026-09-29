@@ -73,7 +73,9 @@ class BaselineClient {
     constructor({
         bridgeUrl, canvas, workerUrl = '/web/draco-worker.js',
         vendorBase = '/web/vendor/draco', feedbackIntervalMs = 200,
-        strictOrder = false, onEvent = null, pointSize = 0.012
+        strictOrder = false, onEvent = null, pointSize = 0.012,
+        // A study trial frames nothing itself: the study driver owns the camera.
+        autoFrame = true
     }) {
         this.bridgeUrl = bridgeUrl;
         this.workerUrl = workerUrl;
@@ -82,7 +84,7 @@ class BaselineClient {
         this.strictOrder = strictOrder;
         this._onEvent = onEvent;
 
-        this.renderer = new PointRenderer({ canvas, pointSize });
+        this.renderer = new PointRenderer({ canvas, pointSize, autoFrame });
         this.header = null;
         this.state = null;
         this.mode = null;
@@ -198,6 +200,7 @@ class BaselineClient {
         }
         this.mode = this.header.mode;
         this.state = new ReconstructionState(this.header);
+        this.renderer.setContentFps(this.header.fps);
         this._emit('header', {
             mode: this.header.mode,
             objects: this.header.objects.map(o => ({

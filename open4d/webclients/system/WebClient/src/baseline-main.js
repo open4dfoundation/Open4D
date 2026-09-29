@@ -19,6 +19,7 @@
 
 const { BaselineClient } = require('./baseline-client');
 const { mountLinkRate } = require('./link-rate');
+const study = require('./study/harness');
 
 function readConfig() {
     const params = new URLSearchParams(window.location.search);
@@ -57,15 +58,48 @@ function createUi() {
 async function main() {
     const config = readConfig();
     const ui = createUi();
+    // A study pass (see src/study/harness.js). Which baseline this is -- ViVo
+    // or NAVA -- is the session's to say; the page is the same for both.
+    const studyParams = study.studyParams();
+    const studyContext = studyParams
+        ? await study.loadStudyContext({ serverUrl: window.location.origin, params: studyParams })
+        : null;
+    if (studyContext) study.enterStudyChrome('view');
+    const method = studyContext?.method || 'baseline';
+    let driver = null;
+    let studyOver = false;
+    let client = null;
+    const finishStudy = () => {
+        if (studyOver) return;
+        studyOver = true;
+        client?.stop();
+        const stats = client ? client.inspect().stats : {};
+        const native = Object.fromEntries(Object.entries(stats).filter(([, value]) =>
+            value === null || ['number', 'string', 'boolean'].includes(typeof value)));
+        study.post('ended', {
+            method, exitCode: 0, broadcastId: null,
+            summary: driver.summary(), native: { stats: native }, trajectory: driver.trajectory()
+        });
+    };
     const stopLinkRate = mountLinkRate(document.getElementById('link'));
     ui.setStatus(`connecting to ${config.bridgeUrl} …`);
 
-    const client = new BaselineClient({
+    client = new BaselineClient({
         bridgeUrl: config.bridgeUrl,
         canvas: document.getElementById('view'),
         pointSize: config.pointSize,
         strictOrder: config.strictOrder,
+        autoFrame: !studyContext,
         onEvent: event => {
+            if (driver && event.type === 'header') study.post('ready', { method, mode: driver.mode });
+            // The trial runs on its own clock: a baseline that closes early is
+            // measured as the freeze it is, not allowed to end the trial. Only
+            // closing before anything arrived is a failure to start.
+            if (driver && event.type === 'closed' && driver.firstContentAt === null && !studyOver) {
+                studyOver = true;
+                study.post('error', { method,
+                    message: `${method} closed before any content (${event.code}: ${event.reason})` });
+            }
             switch (event.type) {
                 case 'open':
                     ui.log('info', `bridge connected: ${event.url}`);
@@ -101,7 +135,12 @@ async function main() {
         }
     });
 
+    if (studyContext) {
+        driver = study.createStudyDriver({ context: studyContext, method, onEnded: finishStudy });
+        client.renderer.setCameraDriver(driver);
+    }
     window.__vs4dBaseline = client;
+    window.__vs4dBaseline.study = driver;
 
     document.getElementById('stop').addEventListener('click', () => {
         stopLinkRate();
@@ -135,6 +174,7 @@ async function main() {
     try {
         await client.start();
     } catch (err) {
+        if (driver) study.post('error', { method, message: `could not connect: ${err.message}` });
         ui.setStatus(`could not connect: ${err.message}`);
         ui.log('error', 'Is the bridge running? '
             + 'node system/WebClient/bridge/v4ds-bridge.js --baseline-port <port>');
@@ -143,5 +183,6 @@ async function main() {
 
 main().catch(err => {
     document.getElementById('status').textContent = `fatal: ${err.message}`;
+    study.post('error', { method: 'baseline', message: err.message });
     console.error(err);
 });

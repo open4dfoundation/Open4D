@@ -1,11 +1,17 @@
-# Where this directory came from, so drift is detectable.
-# Check with: VS4D_REPO=/path/to/4DVideoStreaming scripts/check-sync.sh
-vendored-from: c3df4f9b2ef4ce04af8a0ea08dce94441c9bafde
-source-repo: github.com/frozzzen3/4DVideoStreaming
-source-paths:
+# Where this directory came from. It is developed in Open4D now and is not
+# kept in sync with its origin; this records the starting point for licensing
+# and for anyone tracing a file back.
+origin-repo: github.com/frozzzen3/4DVideoStreaming
+origin-commit: c3df4f9b2ef4ce04af8a0ea08dce94441c9bafde
+origin-paths:
   system/ClientCore              -> system/ClientCore
   system/WebClient               -> system/WebClient
   system/Server                  -> system/Server
   baselines/ViVo/orbitvivo/tile_ladder.py -> tile_ladder.py
   tests/                         -> tests/
   scripts/{run_web_demo,serve_pointcloud_baseline,shape_web_demo}.sh -> scripts/
+  scene_layout.json              -> scene_layout.json
+  system/Client/traces           -> system/Client/traces
+# Added in Open4D after that commit: the browser user study (system/Server/study,
+# system/WebClient/src/study, public/index.html) and the study hooks in each
+# method page and renderer.

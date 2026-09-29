@@ -2,3 +2,14 @@
 # Scoped here rather than in the repo root so this directory stays self-contained.
 node_modules/
 dist/
+
+# Written by the server at run time: per-broadcast results (including every
+# study session and its questionnaires), the viewpoints clients post, and the
+# ladder's selections. Mirrors the research repo's root .gitignore; these hold
+# participant data and must never be committed.
+system/Server/server_results/
+system/Server/server_viewpoints/
+system/Server/server_selections/
+# Per-corpus packaged media caches, as upstream.
+files/
+files-*/

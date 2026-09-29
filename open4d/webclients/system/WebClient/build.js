@@ -29,7 +29,7 @@ const options = {
         baseline: path.join(ROOT, 'src/baseline-main.js'),
         vega: path.join(ROOT, 'src/vega-main.js'),
         nevo: path.join(ROOT, 'src/nevo-main.js'),
-        chooser: path.join(ROOT, 'src/chooser.js')
+        study: path.join(ROOT, 'src/study/study-page.js')
     },
     outdir: OUT,
     bundle: true,
@@ -46,8 +46,10 @@ const options = {
 
 function copyStatic() {
     fs.mkdirSync(OUT, { recursive: true });
-    for (const page of ['index.html', 'baseline.html', 'vega.html',
-                        'nevo.html', 'compare.html']) {
+    // index.html is the user study, the app's front page; the method pages
+    // are what its trials open.
+    for (const page of ['index.html', 'mesh.html', 'baseline.html', 'vega.html',
+                        'nevo.html']) {
         fs.copyFileSync(path.join(ROOT, 'public', page), path.join(OUT, page));
     }
     const vendorOut = path.join(OUT, 'vendor/draco');

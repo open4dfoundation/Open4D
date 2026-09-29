@@ -35,8 +35,18 @@ class PointRenderer {
      * @param {number} [args.pointSize] world-space point size, metres
      * @param {object} [args.scene] { background }
      */
-    constructor({ canvas, pointSize = 0.012, scene: sceneOptions = {} }) {
+    constructor({ canvas, pointSize = 0.012, scene: sceneOptions = {}, autoFrame = true }) {
         this.canvas = canvas;
+        // Off for a study trial, as in webgl-renderer.js: framing on what has
+        // arrived would give every method and network its own first view.
+        this._autoFrame = autoFrame;
+        this._cameraDriver = null;
+        // Frames are pushed in, not paced by this loop, so a study driver needs
+        // the content rate to count presentation slots, and whether a new
+        // frame arrived since the last one.
+        this._contentFps = 30;
+        this._freshFrame = false;
+        this._lastAdvance = null;
         this.pointSize = pointSize;
         this._sceneOptions = sceneOptions;
         this._objects = new Map();      // objectId -> { points, geometry, capacity }
@@ -134,7 +144,14 @@ class PointRenderer {
      *
      * @param {Map<number, {positions: Float32Array, colors: Uint8Array, pointCount: number}>} clouds
      */
+    /** Hand the camera to a study driver; see src/study/driver.js. */
+    setCameraDriver(driver) { this._cameraDriver = driver; }
+
+    /** The stream's own frame rate, from its CONNECTION header. */
+    setContentFps(fps) { if (fps > 0) this._contentFps = fps; }
+
     update(clouds) {
+        this._freshFrame = true;
         for (const [objectId, cloud] of clouds) {
             const count = cloud.pointCount;
             const entry = this._entry(objectId, count);
@@ -170,7 +187,7 @@ class PointRenderer {
      * with raised floor tiers, so a fixed pose frames empty air.
      */
     frameScene(clouds) {
-        if (this._userMovedCamera || !this._three) return;
+        if (!this._autoFrame || this._userMovedCamera || !this._three) return;
         let minX = Infinity, minY = Infinity, minZ = Infinity;
         let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
         let total = 0;
@@ -207,9 +224,31 @@ class PointRenderer {
     _loop() {
         if (!this._running) return;
         this._rafHandle = requestAnimationFrame(() => this._loop());
+        if (this._cameraDriver) this._driveCamera(performance.now());
         this._three.controls.update();
         this._three.renderer.render(this._three.scene, this._three.camera);
         this._presented++;
+    }
+
+    /**
+     * Report one loop to the study driver in the same terms the mesh renderer
+     * does: whether content time moved on a slot, and whether the scene got a
+     * new frame for it. A baseline frame is scene-atomic -- every object
+     * advances or holds together -- so a fresh frame counts as all of them.
+     */
+    _driveCamera(now) {
+        const interval = 1000 / this._contentFps;
+        if (this._lastAdvance === null) this._lastAdvance = now;
+        const steps = Math.floor((now - this._lastAdvance) / interval);
+        const advanced = steps >= 1;
+        if (advanced) this._lastAdvance += steps * interval;
+        const objects = this._objects.size;
+        const presented = advanced && this._freshFrame ? Math.max(objects, 1) : 0;
+        if (advanced) this._freshFrame = false;
+        this._three.controls.enabled = this._cameraDriver.interactive;
+        // Every cloud received is drawn until replaced, so all of them are visible.
+        this._cameraDriver.apply(this._three.camera, this._three.controls,
+            { now, advanced, steps: Math.max(steps, 1), presented, objects, visible: objects });
     }
 
     /** Camera pose in the shape V4DS FEEDBACK wants. */

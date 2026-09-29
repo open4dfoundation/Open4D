@@ -30,8 +30,13 @@ class VegaClient {
      */
     constructor({
         assetBase, canvas, splatScale = 1.0, onEvent = null,
-        splatMode = 'isotropic', frameMode = 'object'
+        splatMode = 'isotropic', frameMode = 'object',
+        // Off for a study trial, as in the other renderers: the driver owns
+        // the camera, and framing on the clip would give Vega its own view.
+        autoFrame = true
     }) {
+        this._autoFrame = autoFrame;
+        this._cameraDriver = null;
         this.assetBase = assetBase.replace(/\/+$/, '');
         this.canvas = canvas;
         this.splatScale = splatScale;
@@ -374,8 +379,11 @@ class VegaClient {
         this._frameScene();
     }
 
+    /** Hand the camera to a study driver; see src/study/driver.js. */
+    setCameraDriver(driver) { this._cameraDriver = driver; }
+
     _frameScene() {
-        if (this._userMovedCamera || !this.catalog) return;
+        if (!this._autoFrame || this._userMovedCamera || !this.catalog) return;
         const box = this._focus ? this._boundsOf(this._focus) : this._boundsOf();
         if (box.isEmpty()) return;
         const centre = box.getCenter(new THREE.Vector3());
@@ -394,19 +402,35 @@ class VegaClient {
     _loop() {
         this._rafHandle = requestAnimationFrame(() => this._loop());
         const { renderer, scene, camera, controls } = this._three;
-        controls.update();
-        camera.updateMatrixWorld();
+        const now = performance.now();
+        let advanced = false;
+        let steps = 0;
 
         if (this.playing && this.frameCount > 0) {
             const interval = 1000 / (this.catalog.fps || 30);
-            const now = performance.now();
             if (now - this._lastAdvance >= interval) {
-                const steps = Math.floor((now - this._lastAdvance) / interval);
+                steps = Math.floor((now - this._lastAdvance) / interval);
                 this._lastAdvance += steps * interval;
                 this.frameIndex = (this.frameIndex + steps) % this.frameCount;
                 this._showFrame(this.frameIndex);
+                advanced = true;
             }
         }
+
+        // Before the orbit update, as in the other renderers. Content only
+        // counts once playback runs: the clip is preloaded whole, and a still
+        // of frame 0 during that load is startup, not playback.
+        if (this._cameraDriver) {
+            const objects = this.objects.size;
+            controls.enabled = this._cameraDriver.interactive;
+            this._cameraDriver.apply(camera, controls, {
+                now, advanced, steps: Math.max(steps, 1),
+                presented: advanced ? objects : 0, objects,
+                visible: this.playing ? objects : 0
+            });
+        }
+        controls.update();
+        camera.updateMatrixWorld();
 
         // Re-sort only when the view or the frame changed; SplatObject.sort
         // decides that from the view matrix itself.
