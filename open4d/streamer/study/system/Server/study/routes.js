@@ -77,8 +77,11 @@ function builtInTraces(directory) {
  * @param {import('./shaper').TraceShaper} args.shaper
  * @param {string} [args.tracesDir] built-in traces offered beside uploads
  * @param {string} [args.layoutFile] scene_layout.json, for the start pose
+ * @param {(method: string) => Promise<object|null>} [args.bridgeShaping] the
+ *   shaper status of the bridge carrying `method`, or null if none does
  */
-function createStudyRouter({ resultsRoot, shaper, tracesDir, layoutFile }) {
+function createStudyRouter({ resultsRoot, shaper, tracesDir, layoutFile,
+                             bridgeShaping = async () => null }) {
     const store = new StudyStore(resultsRoot);
     const router = express.Router();
     router.use(express.json({ limit: '8mb' }));
@@ -152,15 +155,28 @@ function createStudyRouter({ resultsRoot, shaper, tracesDir, layoutFile }) {
         return { trial, shaping: shaper.status(), trace: session.trace.points };
     }));
 
-    router.post('/sessions/:id/trials/:position/finish', wrap(req => {
-        const shaping = shaper.status();
-        const result = store.finishTrial(req.params.id, req.params.position, {
-            ...(req.body || {}), shaping
-        });
-        shaper.disarm();
-        live = null;
-        return result;
-    }));
+    router.post('/sessions/:id/trials/:position/finish', async (req, res) => {
+        try {
+            // Read before disarming: the bridge follows this shaper, and once
+            // it sees the link released it resets its own counters.
+            const shaping = shaper.status();
+            const trial = store.session(req.params.id).trials[Number(req.params.position)];
+            const bridge = trial && await bridgeShaping(trial.method)
+                .catch(error => ({ error: error.message }));
+            if (bridge) {
+                shaping.bridge = { ...bridge,
+                    matchesTrial: bridge.label === shaping.label && bridge.label !== null };
+            }
+            const result = store.finishTrial(req.params.id, req.params.position, {
+                ...(req.body || {}), shaping
+            });
+            shaper.disarm();
+            live = null;
+            res.set('Cache-Control', 'no-store').json(result);
+        } catch (error) {
+            res.status(error.statusCode || 400).json({ error: error.message });
+        }
+    });
 
     /** Release the link after an abandoned trial, without recording it. */
     router.post('/abort', wrap(() => {

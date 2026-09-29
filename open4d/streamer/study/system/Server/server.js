@@ -510,7 +510,19 @@ app.use("/api/study", createStudyRouter({
   shaper: studyShaper,
   tracesDir: path.resolve(__dirname, "../Client/traces"),
   layoutFile: path.resolve(__dirname, "../../scene_layout.json"),
+  bridgeShaping: readBridgeShaping,
 }));
+
+// What the bridge carrying a point-cloud baseline shaped its bytes to, read
+// from its /shaping endpoint when a trial finishes. Null for any other method.
+async function readBridgeShaping(method) {
+  const entry = POINTCLOUD_BASELINES.find(value => value.id === method);
+  if (!entry) return null;
+  const response = await fetch(`http://127.0.0.1:${entry.bridgePort}/shaping`,
+    { cache: "no-store", signal: AbortSignal.timeout(2000) });
+  if (!response.ok) throw new Error(`bridge /shaping: HTTP ${response.status}`);
+  return response.json();
+}
 
 // All per-run artifacts (metrics, bitrate counts, QoE, download telemetry)
 // live in server_results/<broadcastId>/ so each run stays self-contained.

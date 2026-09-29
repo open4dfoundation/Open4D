@@ -337,7 +337,7 @@ class StudyStore {
             'session', 'participant', 'position', 'label', 'method',
             'trace', 'trace_sha256', 'trajectory_sha256',
             ...questionnaire.RATINGS.map(rating => rating.id), 'artifacts',
-            'questionnaire_seconds',
+            'questionnaire_seconds', 'shaped_by', 'shaped_bytes', 'paced_seconds',
             ...metricKeys.map(key => `m_${key}`)
         ];
         const cell = value => {
@@ -351,10 +351,26 @@ class StudyStore {
             ...questionnaire.RATINGS.map(rating => record.questionnaire.ratings[rating.id]),
             record.questionnaire.artifacts.join(';'),
             record.questionnaire.timing.totalSeconds,
+            ...shapingCells(record.shaping),
             ...metricKeys.map(key => record.metrics[key])
         ].map(cell).join(','));
         return `${columns.join(',')}\n${rows.join('\n')}${rows.length ? '\n' : ''}`;
     }
+}
+
+/**
+ * Which shaper carried a trial's bytes, and how many. The point-cloud
+ * baselines' bytes cross the bridge's shaper, never the server's, so a trial
+ * record carries the bridge's status beside the server's own.
+ */
+function shapingCells(shaping) {
+    if (!shaping) return [null, null, null];
+    const bridge = shaping.bridge && !shaping.bridge.error ? shaping.bridge : null;
+    const bytes = (shaping.deliveredBytes || 0) + (bridge?.deliveredBytes || 0);
+    const paced = (shaping.pacedSeconds || 0) + (bridge?.pacedSeconds || 0);
+    const by = [shaping.deliveredBytes ? 'server' : null, bridge?.deliveredBytes ? 'bridge' : null]
+        .filter(Boolean).join('+') || 'none';
+    return [by, bytes, Number(paced.toFixed(3))];
 }
 
 module.exports = { StudyStore, METHODS, validateTrajectory, TRAJECTORY_SPACE, sha256 };

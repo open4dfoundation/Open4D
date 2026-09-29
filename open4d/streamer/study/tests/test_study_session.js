@@ -175,7 +175,7 @@ test('a trajectory is refused if time runs backwards', () => {
 
 // -------------------------------------------------------------- routes ---
 
-async function serve() {
+async function serve({ bridgeShaping } = {}) {
     const root = tempDir();
     const files = tempDir();
     // 2 MB at the trace's opening 40 Mbps is about 0.4 s; unshaped it is instant.
@@ -185,7 +185,7 @@ async function serve() {
     app.use(express.json({ limit: '200mb' }));
     app.use('/files', shapedStatic(files, shaper));
     app.use('/files', express.static(files));
-    app.use('/api/study', createStudyRouter({ resultsRoot: root, shaper }));
+    app.use('/api/study', createStudyRouter({ resultsRoot: root, shaper, bridgeShaping }));
     const server = await new Promise(resolve => {
         const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });
@@ -288,6 +288,75 @@ test('abort frees the link without recording a result', { skip: NO_EXPRESS }, as
         const csv = await call('GET', `/api/study/sessions/${session.id}/export.csv`);
         assert.strictEqual(csv.text.trim().split('\n').length, 1, 'header only');
     } finally {
+        server.close();
+    }
+});
+
+test('a point-cloud trial records what the bridge shaped, not the server', { skip: NO_EXPRESS }, async () => {
+    const net = require('node:net');
+    const { createBridge } = require('../system/WebClient/bridge/v4ds-bridge');
+    const MESSAGE_BYTES = 64 * 1024;
+    const MESSAGES = 16;
+    const baseline = await new Promise(resolve => {
+        const server = net.createServer(socket => {
+            for (let index = 0; index < MESSAGES; index++) {
+                const prefix = Buffer.alloc(4);
+                prefix.writeUInt32BE(MESSAGE_BYTES);
+                socket.write(Buffer.concat([prefix, Buffer.alloc(MESSAGE_BYTES, index)]));
+            }
+        });
+        server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+    let bridgePort = null;
+    const bridgeStatus = () => fetch(`http://127.0.0.1:${bridgePort}/shaping`).then(r => r.json());
+    const { server, base, call, shaper } = await serve({
+        bridgeShaping: async method => (method === 'vivo' ? bridgeStatus() : null)
+    });
+    const bridge = createBridge({
+        listenHost: '127.0.0.1', listenPort: 0, baselineHost: '127.0.0.1',
+        baselinePort: baseline.address().port, maxMessageBytes: 1 << 24,
+        verbose: false, studyServer: base
+    });
+    await new Promise(resolve => bridge.on('listening', resolve));
+    bridgePort = bridge.address().port;
+    try {
+        const session = (await call('POST', '/api/study/sessions', {
+            participant: 'p07', methods: ['vivo'], durationSeconds: 20, trace: { text: TRACE }
+        })).json;
+        await call('PUT', `/api/study/sessions/${session.id}/trajectory`, trajectory());
+        await call('POST', `/api/study/sessions/${session.id}/trials/0/start`);
+
+        // The follower polls every 500 ms; wait for it to pick the trial up.
+        for (let tries = 0; tries < 40 && !(await bridgeStatus()).shaped; tries++) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        const socket = new WebSocket(`ws://127.0.0.1:${bridgePort}`);
+        await new Promise((resolve, reject) => {
+            let got = 0;
+            socket.onmessage = () => { if (++got === MESSAGES) resolve(); };
+            socket.onerror = reject;
+        });
+        socket.close();
+
+        const finished = await call('POST', `/api/study/sessions/${session.id}/trials/0/finish`,
+            { metrics: {}, questionnaire: RESPONSE });
+        assert.strictEqual(finished.status, 200, finished.text);
+        const shaping = finished.json.record.shaping;
+        assert.strictEqual(shaping.deliveredBytes, 0, 'none of it crossed the server');
+        assert.strictEqual(shaping.bridge.following, true);
+        assert.strictEqual(shaping.bridge.matchesTrial, true);
+        assert.strictEqual(shaping.bridge.deliveredBytes, MESSAGES * MESSAGE_BYTES);
+
+        const csv = await call('GET', `/api/study/sessions/${session.id}/export.csv`);
+        const [header, row] = csv.text.trim().split('\n');
+        const columns = header.split(',');
+        const cells = row.split(',');
+        assert.strictEqual(cells[columns.indexOf('shaped_by')], 'bridge');
+        assert.strictEqual(Number(cells[columns.indexOf('shaped_bytes')]), MESSAGES * MESSAGE_BYTES);
+    } finally {
+        shaper.disarm();
+        await new Promise(resolve => bridge.close(resolve));
+        baseline.close();
         server.close();
     }
 });

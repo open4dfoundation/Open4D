@@ -30,6 +30,10 @@
  * `accept()` exactly once. A second browser is refused with a clear reason
  * rather than being silently queued behind the first.
  *
+ * `GET /shaping` on the same port reports this bridge's shaper, so the study
+ * server can record what a point-cloud trial was actually shaped to: those
+ * bytes never pass the server's own shaper.
+ *
  * Usage:
  *   node bridge/v4ds-bridge.js --baseline-port 12345 [options]
  *
@@ -41,6 +45,7 @@
  *   --verbose            log every message
  */
 
+const http = require('http');
 const net = require('net');
 const { WebSocketServer } = require('ws');
 const { ShapingFollower } = require('../../Server/study/follower');
@@ -149,11 +154,6 @@ const SHAPED_QUEUE_HIGH_BYTES = 4 * 1024 * 1024;
 const SHAPED_QUEUE_LOW_BYTES = 1024 * 1024;
 
 function createBridge(options) {
-    const server = new WebSocketServer({
-        host: options.listenHost,
-        port: options.listenPort
-    });
-    let active = null;
     // Shared by every connection: it is one link. Unarmed it passes everything
     // straight through, so outside a study trial the bridge is the dumb proxy
     // it always was.
@@ -161,7 +161,26 @@ function createBridge(options) {
         : options.studyServer
             ? new ShapingFollower({ serverUrl: options.studyServer, log }).start()
             : null;
-    server.on('close', () => follower?.stop());
+    // Our own HTTP server rather than ws's, whose only answer to a plain
+    // request is 426, so the shaper can be read on the WebSocket's port.
+    const web = http.createServer((request, response) => {
+        if (request.method === 'GET' && request.url === '/shaping') {
+            response.writeHead(200, { 'Content-Type': 'application/json',
+                'Cache-Control': 'no-store' });
+            return response.end(JSON.stringify(follower
+                ? { following: true, ...follower.shaper.status() }
+                : { following: false }));
+        }
+        response.writeHead(426, { 'Content-Type': 'text/plain' });
+        response.end('Upgrade Required');
+    });
+    const server = new WebSocketServer({ server: web });
+    web.listen(options.listenPort, options.listenHost);
+    let active = null;
+    server.on('close', () => {
+        follower?.stop();
+        web.close();
+    });
 
     server.on('listening', () => {
         log('INFO', `WebSocket on ws://${options.listenHost}:${options.listenPort}`
