@@ -57,7 +57,7 @@ texture coordinates and custom attributes.
 Choose a research codec explicitly. For example, after setting up V-DMC:
 
 ```python
-encoded = open4d.encode(sequence, "wave.v4d", codec="vdmc")
+encoded = open4d.encode(sequence, "wave.vmesh", codec="vdmc")
 decoded = open4d.decode(encoded)
 open4d.visualize(decoded)
 decoded.close()
@@ -67,25 +67,49 @@ decoded.close()
 artifact. Close a decoded mesh sequence when finished, or use `with`:
 
 ```python
-with open4d.decode("wave.v4d") as decoded:
+with open4d.decode("wave.vmesh") as decoded:
     print(len(decoded), "frames")
 ```
 
 The [notebook](examples/open4d_sequence_codec.ipynb) walks through these calls,
 reconstruction and streaming in separate short cells.
+Short `.vmesh` examples:
+
+- [Preserve compressed state through USDC](examples/vmesh/01_container_and_usdc.ipynb)
+- [The eight mesh codecs](examples/vmesh/02_mesh_codecs.ipynb)
+- [Vega, QUEEN and 3DGStream](examples/vmesh/03_gaussian_codecs.ipynb)
+- [ReRF](examples/vmesh/04_rerf.ipynb)
 
 | Codec | Input | Output | Backend setup |
 | --- | --- | --- | --- |
-| `vdmc` | Mesh sequence | `.v4d` | Build the V-DMC submodule and configure its encoder and decoder |
-| `faster_vdmc` | Mesh sequence | `.v4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
-| `tvmc` | Mesh sequence | `.tvmc` directory | [TVMC setup](open4d/codecs/tvmc/README.md) |
-| `tsmc` | Mesh sequence | `.tsmc` directory | [TSMC setup](open4d/codecs/tsmc/README.md) |
-| `klt` | Mesh sequence converted to TSDF volumes | `.k4d` | Research source and `.[klt]` |
-| `n4mc` | Mesh sequence converted to TSDF volumes | `.n4d` | Research source and `.[n4mc]` |
-| `qndf`, `qndf-int8` | Mesh frames | `.q4d`, `.qi4d` | Research source and `.[qndf]` |
-| `vega` | Gaussian splat frames | `.vega` directory | [Vega CUDA environment](open4d/reconstruction/vega/README.md) |
+| `vdmc` | Mesh sequence | `.vmesh` | Build the V-DMC submodule and configure its encoder and decoder |
+| `faster_vdmc` | Mesh sequence | `.vmesh` | Build the faster V-DMC submodule and configure its encoder and decoder |
+| `tvmc` | Mesh sequence | `.vmesh` | [TVMC setup](open4d/codecs/tvmc/README.md) |
+| `tsmc` | Mesh sequence | `.vmesh` | [TSMC setup](open4d/codecs/tsmc/README.md) |
+| `klt` | Mesh sequence converted to TSDF volumes | `.vmesh` | Research source and `.[klt]` |
+| `n4mc` | Mesh sequence converted to TSDF volumes | `.vmesh` | Research source and `.[n4mc]` |
+| `qndf`, `qndf-int8` | Mesh frames | `.vmesh` | Research source and `.[qndf]` |
+| `vega` | Gaussian splat frames or native run | `.vmesh` | [Vega CUDA environment](open4d/reconstruction/vega/README.md) |
+| `queen`, `3dgstream`, `rerf` | Native temporal research output | `.vmesh`, with native USDC interchange | Method-specific CUDA runtime for evaluation |
 
-QNDF-int8 now writes version 2 artifacts. Version 1 artifacts must be encoded again.
+All twelve public codecs write standalone `.vmesh` files. The embedded profile
+identifies the codec; there is no separate public compressed output type for each
+method. Existing native outputs can be packed without recompression. Standard
+PLY, OBJ and USD import/export remain available.
+
+Mesh codecs decode to mesh sequences for ordinary USDC geometry export.
+To preserve a compressed artifact exactly, construct `open4d.NativeSequence`
+and save it to USDC using the custom `VMESH` prim, as shown in the
+[container notebook](examples/vmesh/01_container_and_usdc.ipynb). This works with
+every VMESH profile. Gaussian and field methods load as `NativeSequence` and
+evaluate their native models explicitly. N4MC shares a model across independent
+frame latents; QNDF has independent frame models.
+[VMESH](docs/api.md#vmesh-format) is a standalone custom format: its own versioned
+header and metadata directly carry native codec payloads. It has no private
+Open4D/V3C wrapper and does not claim MPEG V-DMC interoperability. A V-DMC
+profile carries the actual encoder bitstream as a native payload. Older artifacts
+require explicit migration with `open4d.migrate_legacy`; normal load/save paths
+accept VMESH rather than silently interpreting an older compressed type.
 
 KLT, N4MC and QNDF run in Python. TVMC, TSMC, V-DMC and Gaussian methods use
 separate research runtimes. N4MC and QNDF currently process frames independently;
@@ -163,7 +187,7 @@ send(mesh_sequence(frames=30))
 ```
 
 This sends decoded mesh arrays over TCP, at their recorded frame timing. It is
-not a compression method. Both calls default to this computer on port 7000.
+not a compression method. Both calls default to this computer on port 47004.
 Pass `host=` and `port=` for another address. Remote transport needs a trusted
 network or SSH tunnel; this protocol has no authentication or encryption.
 Use `realtime=False` to transfer a recorded sequence as fast as possible.
@@ -196,8 +220,9 @@ Read splat frames, then encode them with the local Vega adaptation:
 from open4d import load_gaussians, encode, decode
 
 frames = [load_gaussians("frame_0000.ply"), load_gaussians("frame_0001.ply")]
-encoded = encode(frames, "capture.vega", codec="vega")
-decoded = decode(encoded)
+encoded = encode(frames, "capture.vmesh", codec="vega")
+native = decode(encoded)   # owned native state; inspecting it needs no CUDA
+decoded = native.decode()  # runs the Vega runtime, returning NeuralGaussianFrame values
 ```
 
 A `GaussianSplats` frame contains `positions` `(N, 3)`, positive `scales`
@@ -230,11 +255,10 @@ requires its native viewer. The Qt viewer and TCP stream currently take meshes.
 
 - `open4d demo`, `open4d inspect` and `open4d view` provide command-line access.
 - `open4d.io.write_sequence` exports mesh folders; `open4d.save` writes OpenUSD
-  or explicitly selected codec artifacts. There is no default `.o4d` encoder.
+  or `.vmesh` with an explicitly selected codec.
 - `open4d.compare_sequences` measures mesh error with the `.[metrics]` extra.
 - [Viewer examples](examples/visualization/README.md) include GIF export and comparisons.
 - [Contributor setup and tests](CONTRIBUTING.md) cover optional dependencies and packaging.
 
-The general `.o4d` format is separate work. Existing codec-specific formats
-remain in use. Publication is still blocked by the unresolved component rights
+Publication is still blocked by the unresolved component rights
 in [THIRD_PARTY.md](THIRD_PARTY.md); preparing the package does not resolve them.

@@ -521,3 +521,24 @@ def test_comparison_stride_keeps_playback_speed(folders):
     args = cli.build_parser().parse_args([str(folders[0]), str(folders[1]), "--stride", "2", "--info"])
     cli.run(args)
     assert args.fps == 15
+def test_sparse_errors_do_not_collapse_the_color_scale():
+    from types import SimpleNamespace
+    from compare_frames import resolve_clamp
+
+    distances = np.zeros(1000)
+    distances[-1] = 1
+    frames = [SimpleNamespace(decoded_distances=distances, reference_distances=distances)]
+    assert resolve_clamp(frames, None, 99) > 0
+
+
+def test_summary_psnr_uses_aggregate_error(reference_sequence, shifted_sequence):
+    from compare_frames import compare_sequences, Comparison
+    from open4d.metrics import SequenceComparison
+
+    exact = compare_sequences(reference_sequence, reference_sequence)
+    shifted = compare_sequences(reference_sequence, shifted_sequence)
+    frames = [exact.frames[0], shifted.frames[0]]
+    combined = Comparison(frames, "point", shifted.peak, shifted.clamp, 99, None)
+    expected = SequenceComparison(tuple(f.error for f in frames), (0., 1.), shifted.peak, "point")
+    assert np.isfinite(combined.summary().mean_psnr_db)
+    assert combined.summary().mean_psnr_db == pytest.approx(expected.symmetric_psnr_db)

@@ -20,13 +20,13 @@ import open4d
 pytestmark = pytest.mark.cpu
 
 
-def sequence_of(count: int = 3) -> Sequence:
+def sequence_of(count: int = 3, fps: float = 30) -> Sequence:
     geometry = TriangleMesh(
         np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
         np.asarray([[0, 1, 2]], dtype=np.uint32),
     )
     return Sequence(
-        MemoryFrameProvider([Frame(i, i / 30, geometry) for i in range(count)])
+        MemoryFrameProvider([Frame(i, i / fps, geometry) for i in range(count)])
     )
 
 
@@ -46,6 +46,21 @@ def test_a_sequence_is_exported_and_served(tmp_path):
         # The counters the server records into are what makes a playback
         # measurable; the verb must not hide them.
         assert server.monitor is not None
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize("as_path", [False, True])
+def test_browser_stream_uses_source_timestamps(tmp_path, as_path):
+    source = sequence_of(fps=23.976)
+    if as_path:
+        from open4d.io import write_sequence
+        source = write_sequence(source, tmp_path / "source")
+    server = open4d.stream(source, out_dir=tmp_path / "bundle", name="timed",
+                           fps=10, open_browser=False, block=False)
+    try:
+        index = json.loads((server.bundle_dir / "view.json").read_text())
+        assert index["fps"] == pytest.approx(23.976)
     finally:
         server.shutdown()
 

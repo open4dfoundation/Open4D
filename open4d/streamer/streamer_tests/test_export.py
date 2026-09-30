@@ -149,5 +149,14 @@ def test_from_source_round_trips_through_open4d_load(tmp_path):
     assert len(index["clips"]) == 1
     assert index["clips"][0]["representation"] == "mesh"
     assert len(index["clips"][0]["frames"]) == 2
-    assert index["fps"] == 10
+    assert index["fps"] == 30  # The source manifest's timing takes precedence.
     assert any("open4d.load" in note for note in index["clips"][0]["notes"])
+
+
+def test_export_keeps_fractional_source_rate(tmp_path):
+    from open4d.io import write_sequence
+
+    source = Sequence(MemoryFrameProvider([Frame(i, i / 23.976, mesh()) for i in range(3)]))
+    path = write_sequence(source, tmp_path / "frames")
+    out = export.from_source(path, tmp_path / "bundle", fps=10)
+    assert bundle.read(out)["fps"] == pytest.approx(23.976)

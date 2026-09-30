@@ -9,7 +9,8 @@ from pathlib import Path
 import sys
 
 from . import load
-from .codec import CodecError, available_codecs
+from .codec import CodecError
+from .codec._vmesh_format import is_mesh_profile
 from .core import Sequence
 from .demo import write_demo
 from .io import Open4DError
@@ -145,8 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         source = args.source.expanduser()
         if not source.exists():
             raise FileNotFoundError(f"sequence source does not exist: {source}")
-        if any(source.suffix.lower() in info.suffixes and info.representation != "triangle_mesh"
-               for info in available_codecs()):
+        if source.suffix.lower() == ".vmesh" and not is_mesh_profile(source):
             raise ValueError("this command takes mesh sequences; use open4d.decode for Gaussian artifacts")
         if args.command == "view":
             # Check optional dependencies before an expensive codec decode.
@@ -154,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
 
             _qt.check_available()
         with load(source, format=args.format, fps=args.input_fps) as sequence:
+            if not isinstance(sequence, Sequence):
+                raise ValueError("this command takes mesh sequences; use the native renderer for Gaussian or field data")
             if args.command == "inspect":
                 info = _inspect(sequence, source)
                 if args.json:

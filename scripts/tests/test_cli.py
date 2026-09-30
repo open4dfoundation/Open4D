@@ -56,9 +56,9 @@ def test_inspect_uses_registered_codec_loader(tmp_path, capsys, monkeypatch):
     from open4d.codec import _api
     from open4d.codec._npz import NumPyZipCodec
 
-    monkeypatch.setitem(_api._CODECS, "test-fixture", NumPyZipCodec())
+    monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
     with mesh_sequence(side=3, frames=2) as sequence:
-        path = save(sequence, tmp_path / "existing.o4d", codec="test-fixture")
+        path = save(sequence, tmp_path / "existing.vmesh", codec="npz")
     assert main(["inspect", str(path), "--json"]) == 0
     info = json.loads(capsys.readouterr().out)
     assert info["frame_count"] == 2
@@ -100,7 +100,7 @@ def test_view_passes_controls_and_closes_sequence(tmp_path, monkeypatch):
 def test_missing_player_is_reported_before_decoding(tmp_path, monkeypatch, capsys):
     from open4d.visualization import VisualizationDependencyError, _qt
 
-    path = tmp_path / "take.o4d"
+    path = tmp_path / "take.vmesh"
     path.touch()
 
     def unavailable():

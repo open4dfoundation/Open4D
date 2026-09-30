@@ -81,6 +81,10 @@ def stream(
     by default and the rest are what it can switch to, so a single-entry list
     is a fixed-quality stream and says so.
 
+    ``fps`` applies only to a path source carrying no timing of its own. A
+    loaded `Sequence` always has timestamps, so the bundle plays at their rate
+    and ``fps`` is ignored rather than allowed to contradict them.
+
     With ``out_dir`` omitted the bundle goes to a temporary directory, which is
     **not** deleted afterwards. An export is minutes of encoding and the
     directory is the artifact; removing it when the server stops would throw
@@ -118,7 +122,6 @@ def stream(
         out_dir,
         title=title,
         source=None if loaded else source,
-        fps=int(fps) if fps else 30,
     )
     with session:
         if loaded:

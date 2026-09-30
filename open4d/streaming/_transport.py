@@ -98,7 +98,7 @@ def _decode(header, payload):
         raise ValueError(f"invalid mesh stream frame: {error}") from error
 
 
-def send(frames, host="127.0.0.1", port=7000, *, realtime=True, timeout=30.0,
+def send(frames, host="127.0.0.1", port=47004, *, realtime=True, timeout=30.0,
          max_frame_bytes=_DEFAULT_LIMIT) -> int:
     """Send a Sequence or iterable of Frames to a running receiver.
 
@@ -194,7 +194,7 @@ class Receiver:
                 setattr(self, name, None)
 
 
-def receive(host="127.0.0.1", port=7000, *, timeout=30.0,
+def receive(host="127.0.0.1", port=47004, *, timeout=30.0,
             max_frame_bytes=_DEFAULT_LIMIT) -> Receiver:
     """Listen for one sender and yield Frames; use `with receive() as frames:`.
 

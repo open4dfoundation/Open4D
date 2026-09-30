@@ -18,7 +18,7 @@ from typing import Callable
 
 import numpy as np
 
-from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d.core import Frame, Representation, Sequence, TopologyMode, TriangleMesh
 from open4d._files import publish_directory, publish_file
 
 from . import _mesh, _usd
@@ -491,10 +491,20 @@ def _write_frame(
     path: Path, frame: Frame, suffix: str, *, allow_lossy: bool = False
 ) -> Path:
     mesh = frame.geometry
+    if mesh.representation is Representation.GAUSSIANS:
+        raise UnsupportedFeatureError(
+            "Gaussian scales, rotations and opacities cannot be preserved by mesh export"
+        )
     # Not every representation has connectivity: a PointCloud carries positions
     # and nothing to join them with, and `getattr` rather than attribute access
     # is what lets one writer serve both without asking which it has.
     triangles = getattr(mesh, "triangles", None)
+    if suffix in {".stl", ".glb", ".gltf"} and (triangles is None or not len(triangles)):
+        raise UnsupportedFeatureError(f"{suffix} export requires triangles")
+    if suffix == ".stl" and not allow_lossy:
+        raise UnsupportedFeatureError(
+            "STL drops unused vertices and vertex correspondence; pass allow_lossy=True"
+        )
     present = {"positions"}
     if triangles is not None:
         present.add("triangles")
@@ -611,9 +621,9 @@ def write_sequence(
                 "geometry_kind": "triangle_mesh",
                 "format": suffix.lstrip("."),
                 "metadata": _json_value(sequence.metadata, "sequence"),
-                "topology": sequence.topology.value,
-                "has_constant_vertex_count": sequence.has_constant_vertex_count,
-                "has_vertex_correspondence": sequence.has_vertex_correspondence,
+                "topology": TopologyMode.UNKNOWN.value if suffix == ".stl" else sequence.topology.value,
+                "has_constant_vertex_count": None if suffix == ".stl" else sequence.has_constant_vertex_count,
+                "has_vertex_correspondence": False if suffix == ".stl" else sequence.has_vertex_correspondence,
                 "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
                 "frames": [],
             }

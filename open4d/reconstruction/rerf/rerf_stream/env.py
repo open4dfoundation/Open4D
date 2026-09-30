@@ -89,7 +89,7 @@ def patch_dependencies() -> None:
 
     for name, builtin in (("bool", bool), ("object", object), ("int", int),
                           ("float", float), ("complex", complex), ("str", str)):
-        if not hasattr(numpy, name):
+        if name not in vars(numpy):
             setattr(numpy, name, builtin)
 
     try:
