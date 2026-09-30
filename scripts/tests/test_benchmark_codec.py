@@ -72,7 +72,7 @@ def test_decode_throughput_includes_eager_open_time(tmp_path, monkeypatch):
     monkeypatch.setattr(benchmark_codec, "peak_bytes", lambda function, cleanup=None: 0)
     source = benchmark_codec.synthetic(3, 2)
 
-    result = benchmark_codec.run(source, Path(tmp_path) / "take.o4d")
+    result = benchmark_codec.run(source, Path(tmp_path) / "take.vmesh")
 
     assert result["decode_open_ms"] == 2000
     assert result["decode_validate_s"] >= 0
@@ -100,7 +100,7 @@ def test_decode_timing_excludes_surface_validation(tmp_path, monkeypatch):
 
     monkeypatch.setattr(benchmark_codec, "timed", marked_timed)
     monkeypatch.setattr(benchmark_codec, "_surface_errors", check)
-    benchmark_codec.run(benchmark_codec.synthetic(3, 2), tmp_path / "test.o4d")
+    benchmark_codec.run(benchmark_codec.synthetic(3, 2), tmp_path / "test.vmesh")
 
 
 def test_decode_peak_memory_excludes_surface_validation(tmp_path, monkeypatch):
@@ -124,7 +124,7 @@ def test_decode_peak_memory_excludes_surface_validation(tmp_path, monkeypatch):
     monkeypatch.setattr(benchmark_codec, "_surface_errors", checked_surface_errors)
 
     result = benchmark_codec.run(
-        benchmark_codec.synthetic(3, 2), Path(tmp_path) / "take.o4d"
+        benchmark_codec.synthetic(3, 2), Path(tmp_path) / "take.vmesh"
     )
 
     assert result["decode_all_peak_bytes"] > 0
@@ -150,7 +150,7 @@ def test_benchmark_does_not_compare_unrelated_vertex_indices(tmp_path, monkeypat
                                             has_vertex_correspondence=False))
 
     monkeypatch.setattr(benchmark_codec, "decode_sequence", decode)
-    result = benchmark_codec.run(source, tmp_path / "test.o4d", codec="reordered")
+    result = benchmark_codec.run(source, tmp_path / "test.vmesh", codec="reordered")
     assert result["position_rms_error"] is None
     assert result["position_max_error"] is None
     assert result["surface_rms_error"] == 0
@@ -169,7 +169,7 @@ def test_benchmark_closes_decoders_after_validation_failure(tmp_path, monkeypatc
 
     monkeypatch.setattr(benchmark_codec, "decode_sequence", decode)
     with pytest.raises(AssertionError):
-        benchmark_codec.run(source, tmp_path / "test.o4d")
+        benchmark_codec.run(source, tmp_path / "test.vmesh")
     assert all(value.closed for value in opened)
     assert not source.closed
 

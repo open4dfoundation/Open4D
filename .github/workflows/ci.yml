@@ -84,16 +84,46 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install research codec dependencies
-        run: python -m pip install -e '.[dev,klt,n4mc,qndf]'
-      - name: Run real in-process encode and fresh-decode contracts on CPU
+        run: python -m pip install -e '.[dev,klt,n4mc,qndf,usd,gaussians]' constriction 'DracoPy>=2,<3'
+      - name: Run default suite with research dependencies
+        run: python -m pytest
+      - name: Run native N4MC model and loss contracts
         run: >-
           python -m pytest
-          open4d/codec/tests/test_research_cpu.py
-          open4d/codec/tests/test_qndf_preprocess.py
-          open4d/codec/tests/test_qndf_entrypoints.py
-          open4d/codec/tests/test_codec_review.py
           open4d/codecs/n4mc/tests/test_codec.py
           open4d/codecs/n4mc/tests/test_losses.py
+
+  native-numerics:
+    name: Native tracker and editor / .NET 10
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    env:
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      OPEN4D_TEST_DOTNET: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Install native regression test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Build and execute native numerical contracts
+        run: |
+          dotnet --info
+          python -m pytest open4d/codec/tests/test_tracker_numerics.py open4d/codec/tests/test_editor_numerics.py --junitxml="${RUNNER_TEMP}/native-numerics.xml"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+          report = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "native-numerics.xml")
+          cases = report.findall(".//testcase")
+          assert cases and not any(case.find("skipped") is not None for case in cases), "native numerical contracts must execute"
+          PY
 
   io-tools:
     name: I/O / real optional formats and benchmark smoke
@@ -155,6 +185,37 @@ jobs:
           path: ${{ runner.temp }}/open4d-render/**/*.gif
           if-no-files-found: ignore
           retention-days: 7
+
+  browser:
+    name: Browser / streamer and web clients
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            open4d/webclients/system/Server/package-lock.json
+            open4d/webclients/system/WebClient/package-lock.json
+      - name: Install browser test dependencies and standalone streamer
+        run: python -m pip install -e '.[dev]' -e open4d/streamer 'DracoPy>=2,<3' scikit-image
+      - name: Check installed streamer and run its headless tests
+        run: |
+          python -I -c "import streamer; print(streamer.__file__)"
+          python -m pytest open4d/streamer/streamer_tests
+      - name: Install and build browser clients
+        run: |
+          npm ci --prefix open4d/webclients/system/Server
+          npm ci --prefix open4d/webclients/system/WebClient
+          npm run build --prefix open4d/webclients/system/WebClient
+      - name: Run web client and server JavaScript tests
+        run: node --test open4d/webclients/tests/*.js open4d/webclients/system/Server/test_*.js
 
   package:
     name: Install / ${{ matrix.os }} / Python ${{ matrix.python-version }}

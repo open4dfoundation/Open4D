@@ -10,15 +10,14 @@ import sys
 import tempfile
 from types import MappingProxyType
 
-from open4d._files import publish_directory
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import open_sequence
 from open4d.io._mesh import write_obj
 
-from ._npz import _json_value, _validate_manifest
+from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
 from ._protocol import CodecError
 from ._native import run as _run_native
-from ._v3c import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
 
 
 def _executable(value, label: str) -> str:
@@ -95,17 +94,10 @@ class TrackedMeshCodec:
 
     def __init__(self, identifier):
         self.id = identifier
-        self.suffixes = (f".{identifier}", ".vmesh")
+        self.suffixes = (".vmesh",)
 
     def can_decode(self, source: Path) -> bool:
-        source = Path(source)
-        if source.is_file() and source.suffix.lower() == ".vmesh":
-            return probe_codec(source) == self.id
-        try:
-            _manifest(source, self.id)
-        except CodecError:
-            return False
-        return True
+        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
 
     def _settings(self, backend, python, encoder, decoder, *, encoding):
         variable = f"OPEN4D_{self.id.upper()}_ROOT"
@@ -143,15 +135,12 @@ class TrackedMeshCodec:
         grid_resolution=512, key_frame=None, components=None, quantization=None,
         overwrite=False,
     ) -> Path:
-        """Encode native payloads to a .vmesh file or legacy codec directory."""
-        destination = Path(destination).absolute()
-        container = destination.suffix.lower() == ".vmesh"
+        """Encode direct native payloads to VMESH."""
+        destination = require_vmesh_destination(destination)
         if destination.exists() and not overwrite:
             raise FileExistsError(f"destination already exists: {destination}")
-        if container and destination.is_dir():
+        if destination.is_dir():
             raise IsADirectoryError(destination)
-        if not container and destination.exists() and not destination.is_dir():
-            raise NotADirectoryError(destination)
         if len(sequence) < 2:
             raise CodecError(f"{self.id} requires at least two frames")
         _positive_integer(num_centers, "num_centers")
@@ -226,49 +215,18 @@ class TrackedMeshCodec:
                 if not (result / name).is_file() or not (result / name).stat().st_size:
                     raise CodecError(f"{self.id} encoder produced no {name}")
             (result / "metadata.json").write_text(json.dumps(manifest), encoding="utf-8")
-            if container:
-                return pack_vmesh(result, destination, overwrite=overwrite)
-            previous = None
-            if destination.exists():
-                if not overwrite:
-                    raise FileExistsError(f"destination already exists: {destination}")
-                previous = Path(tempfile.mkdtemp(
-                    prefix=f".{destination.name}.backup.", dir=destination.parent,
-                ))
-                previous.rmdir()
-                destination.rename(previous)
-            try:
-                if overwrite:
-                    result.rename(destination)
-                else:
-                    publish_directory(result, destination)
-            except BaseException:
-                if previous is not None:
-                    try:
-                        previous.rename(destination)
-                    except OSError as error:
-                        raise OSError(
-                            f"Could not restore {destination}; original output remains at {previous}"
-                        ) from error
-                raise
-            if previous is not None:
-                if previous.is_symlink():
-                    previous.unlink()
-                else:
-                    shutil.rmtree(previous)
-        return destination
+            return pack_vmesh(result, destination, overwrite=overwrite)
 
     def decode(self, source: Path, *, backend=None, python=None, decoder=None) -> Sequence:
-        """Reconstruct frames from a .vmesh file or native codec directory."""
+        """Reconstruct frames from VMESH."""
         source = Path(source).absolute()
         temporary = tempfile.TemporaryDirectory(prefix=f"open4d-{self.id}-decode-")
         decoded = None
         try:
             work = Path(temporary.name)
-            if source.is_file() and source.suffix.lower() == ".vmesh":
-                if probe_codec(source) != self.id:
-                    raise CodecError(f".vmesh does not contain {self.id} payloads")
-                source = unpack_vmesh(source, work / "native")
+            if source.suffix.lower() != ".vmesh" or probe_codec(source) != self.id:
+                raise CodecError(f"{self.id} decode requires VMESH; import native directories explicitly")
+            source = unpack_vmesh(source, work / "native")
             manifest = _manifest(source, self.id)
             settings = self._settings(backend, python, None, decoder, encoding=False)
             output = work / "decoded"

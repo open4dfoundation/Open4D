@@ -467,42 +467,35 @@ def decode_gaussians(
 
 class _VegaCodec:
     id = "vega"
-    suffixes = (".vega", ".vmesh")
+    suffixes = (".vmesh",)
     representation = "gaussian_splats"
     backend = "research-subprocess"
     lossless = False
     preserves = ("positions", "scales", "rotations", "opacities", "neural_appearance")
 
     def can_decode(self, source):
-        if Path(source).suffix.lower() == ".vmesh":
-            from .codec._v3c import probe_codec
-            return probe_codec(source) == self.id
-        return Path(source).is_dir() and (Path(source) / "manifest.json").is_file()
+        from .codec._vmesh_format import probe_codec
+        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
 
     def encode(self, sequence, destination: Path, **options) -> Path:
-        if destination.suffix.lower() == ".vmesh":
-            from .native import NativeSequence, import_native, save_native
-            from .codec._native_temporal import encode_native
-            if isinstance(sequence, (NativeSequence, VegaRun, str, os.PathLike)):
-                return encode_native(sequence, destination, codec="vega", **options)
-            overwrite = options.pop("overwrite", False)
-            if destination.exists() and not overwrite:
-                raise FileExistsError(destination)
-            timeline = {key: options.pop(key) for key in ("fps", "timestamps", "frame_indices", "metadata", "frame_metadata") if key in options}
-            with tempfile.TemporaryDirectory(prefix="open4d-vega-encode-") as folder:
-                encoded = encode_gaussians(sequence, Path(folder) / "native", **options)
-                with import_native(encoded, **timeline) as native:
-                    return save_native(native, destination, overwrite=overwrite)
-        if "overwrite" in options:
-            if options.pop("overwrite"):
-                raise ValueError("Vega directory encoding does not support overwrite; use a new directory or .vmesh")
-        return encode_gaussians(sequence, destination, **options).path
+        from .codec._metadata import require_vmesh_destination
+        from .native import NativeSequence, import_native, save_native
+        from .codec._native_temporal import encode_native
+        destination = require_vmesh_destination(destination)
+        if isinstance(sequence, (NativeSequence, VegaRun, str, os.PathLike)):
+            return encode_native(sequence, destination, codec="vega", **options)
+        overwrite = options.pop("overwrite", False)
+        if destination.exists() and not overwrite:
+            raise FileExistsError(destination)
+        timeline = {key: options.pop(key) for key in ("fps", "timestamps", "frame_indices", "metadata", "frame_metadata") if key in options}
+        with tempfile.TemporaryDirectory(prefix="open4d-vega-encode-") as folder:
+            encoded = encode_gaussians(sequence, Path(folder) / "native", **options)
+            with import_native(encoded, **timeline) as native:
+                return save_native(native, destination, overwrite=overwrite)
 
-    def decode(self, source: Path, **options) -> tuple[NeuralGaussianFrame, ...]:
-        if source.suffix.lower() == ".vmesh":
-            from .codec._native_temporal import NativeTemporalCodec
-            return NativeTemporalCodec("vega").decode(source, **options)
-        return decode_gaussians(source, **options)
+    def decode(self, source: Path, **options):
+        from .codec._native_temporal import NativeTemporalCodec
+        return NativeTemporalCodec("vega").decode(source, **options)
 
 
 VEGA_CODEC = _VegaCodec()

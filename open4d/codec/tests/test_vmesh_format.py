@@ -11,7 +11,7 @@ import pytest
 
 import open4d
 from open4d.codec import CodecError, decode_sequence, inspect_vmesh, pack_vmesh, unpack_vmesh
-from open4d.codec import _api, _tracked, _v3c
+from open4d.codec import _api, _tracked, _vmesh_format
 from open4d.io._mesh import write_obj
 
 pytestmark = pytest.mark.cpu
@@ -42,18 +42,18 @@ def native_directory(root, codec, *, large=False):
 
 def records(path):
     with path.open("rb") as stream:
-        stream.seek(len(_v3c._BOOTSTRAP))
+        stream.seek(len(_vmesh_format._MAGIC))
         result = []
         while stream.peek(1):
-            result.append(_v3c._read_record(stream))
+            result.append(_vmesh_format._read_record(stream))
         return result
 
 
 def rewrite(path, items):
     with path.open("wb") as stream:
-        stream.write(_v3c._BOOTSTRAP)
+        stream.write(_vmesh_format._MAGIC)
         for item in items:
-            _v3c._write_record(stream, *item)
+            _vmesh_format._write_record(stream, *item)
 
 
 @pytest.mark.parametrize("codec", ["tvmc", "tsmc"])
@@ -64,7 +64,7 @@ def test_native_bytes_and_irregular_timing_survive_single_file_carriage(tmp_path
     path = pack_vmesh(source, tmp_path / "take.vmesh")
     shutil.rmtree(source)
     assert path.is_file()
-    assert _v3c.probe_codec(path) == codec
+    assert _vmesh_format.probe_codec(path) == codec
     manifest = inspect_vmesh(path)
     assert manifest["sequence"] == metadata
     assert manifest["frame_count"] == 2
@@ -72,55 +72,43 @@ def test_native_bytes_and_irregular_timing_survive_single_file_carriage(tmp_path
     for record in manifest["files"]:
         assert hashlib.sha256(expected[record["name"]]).hexdigest() == record["sha256"]
     recovered = unpack_vmesh(path, tmp_path / "recovered")
-    assert {p.name: p.read_bytes() for p in recovered.iterdir()} == expected
+    assert json.loads((recovered / "metadata.json").read_text()) == metadata
+    assert {p.name: p.read_bytes() for p in recovered.iterdir() if p.name != "metadata.json"} == {
+        k: v for k, v in expected.items() if k != "metadata.json"}
     with pytest.raises(FileExistsError):
         unpack_vmesh(path, recovered)
 
 
-def test_wire_is_v3c_atlas_sei_with_no_private_top_level_units(tmp_path):
-    source, _ = native_directory(tmp_path, "tvmc")
+def test_wire_is_standalone_vmesh_with_direct_native_payloads(tmp_path):
+    source, metadata = native_directory(tmp_path, "tvmc")
     data = pack_vmesh(source, tmp_path / "take.vmesh").read_bytes()
-    # Independent framing walk: V3C four-byte lengths; VPS then AD; each AD
-    # has an atlas NAL sample stream containing user_data_unregistered SEI.
-    assert data[0] == 0x60
-    pos, types, messages = 1, [], []
+    assert data[:8] == b"VMESH\x00\x01\x00"
+    pos, messages = 8, []
     while pos < len(data):
         size = int.from_bytes(data[pos:pos + 4], "big")
         unit = data[pos + 4:pos + 4 + size]
         assert len(unit) == size
+        assert unit[0] == 1  # record version
+        messages.append(unit[1])
         pos += 4 + size
-        kind = int.from_bytes(unit[:4], "big") >> 27
-        types.append(kind)
-        if kind == 0:
-            assert len(types) == 1
-            assert unit[:4] == bytes(4)
-            assert b"O4D\x01" in unit
-            continue
-        assert unit[:5] == b"\x08\x00\x00\x00\x60"
-        assert int.from_bytes(unit[5:9], "big") == len(unit) - 9
-        assert unit[9:12] == b"\x56\x01\x04"
-        index, length = 12, 0
-        while unit[index] == 255:
-            length += 255
-            index += 1
-        length += unit[index]
-        payload = unit[index + 1:-1]
-        assert len(payload) == length and unit[-1] == 128
-        assert payload[:16].hex() == "e23b8c4791354e3490ad421c6c57b63a"
-        assert payload[16] == 1
-        messages.append(payload[17])
-    assert pos == len(data) and types == [0] + [1] * (len(types) - 1)
-    assert messages == [0] + [1] * 6 + [2]
-    assert b"PK\x03\x04" not in data  # TVMC fixture contains no ZIP data
+    assert pos == len(data) and messages == [0] + [1] * 5 + [2]
+    manifest = json.loads(records(tmp_path / "take.vmesh")[0][3])
+    assert manifest["schema"] == "vmesh/1"
+    assert manifest["sequence"]["frames"] == metadata["frames"]
+    assert "schema" not in manifest["sequence"]
+    assert "metadata.json" not in [f["name"] for f in manifest["files"]]
+    assert b"open4d." not in data
+    assert b"O4D\x01" not in data
+    assert bytes.fromhex("e23b8c4791354e3490ad421c6c57b63a") not in data
 
 
 @pytest.mark.parametrize("length", [224, 225, 226, 480, 481, 1024 * 1024, 1024 * 1024 + 1])
-def test_sei_extended_lengths_and_chunk_boundaries(tmp_path, length):
+def test_record_lengths_and_chunk_boundaries(tmp_path, length):
     source, _ = native_directory(tmp_path, "tvmc")
     payload = bytes(range(256)) * (length // 256) + bytes(range(length % 256))
     (source / "reference.drc").write_bytes(payload)
     path = pack_vmesh(source, tmp_path / "take.vmesh")
-    chunks = [item for item in records(path) if item[0] == 1 and item[1] == 1]
+    chunks = [item for item in records(path) if item[0] == 1 and item[1] == 0]
     assert b"".join(item[3] for item in chunks) == payload
     assert all(len(item[3]) <= 1024 * 1024 for item in chunks)
     recovered = unpack_vmesh(path, tmp_path / "native")
@@ -128,7 +116,7 @@ def test_sei_extended_lengths_and_chunk_boundaries(tmp_path, length):
 
 
 @pytest.mark.parametrize("damage", ["truncated", "no-end", "trailing", "hash", "order", "offset",
-                                    "bootstrap", "huge-unit", "wrong-nal", "wrong-end"])
+                                    "bootstrap", "huge-unit", "wrong-record", "wrong-end"])
 def test_malformed_stream_never_publishes_or_launches_native_decode(tmp_path, monkeypatch, damage):
     source, _ = native_directory(tmp_path, "tvmc")
     path = pack_vmesh(source, tmp_path / "take.vmesh")
@@ -156,9 +144,9 @@ def test_malformed_stream_never_publishes_or_launches_native_decode(tmp_path, mo
         elif damage == "bootstrap":
             data[0] ^= 1
         elif damage == "huge-unit":
-            data[len(_v3c._BOOTSTRAP):len(_v3c._BOOTSTRAP) + 4] = b"\xff" * 4
+            data[len(_vmesh_format._MAGIC):len(_vmesh_format._MAGIC) + 4] = b"\xff" * 4
         else:
-            data[len(_v3c._BOOTSTRAP) + 4 + 9] ^= 2
+            data[len(_vmesh_format._MAGIC) + 4] ^= 2
         path.write_bytes(data)
     monkeypatch.setattr(_tracked, "_run", lambda *args: pytest.fail("native worker called on corrupt input"))
     with pytest.raises(CodecError):
@@ -192,11 +180,7 @@ def test_manifest_rejects_unsafe_or_inconsistent_native_descriptions(tmp_path, c
     elif change == "mode":
         manifest["dependency_mode"] = "independent-frames"
     else:
-        sequence = json.loads(items[1][3])
-        sequence["frames"][1]["timestamp"] = float("nan")
-        payload = json.dumps(sequence).encode()
-        items[1] = (1, 0, 0, payload)
-        manifest["files"][0].update(size=len(payload), sha256=hashlib.sha256(payload).hexdigest())
+        manifest["sequence"]["frames"][1]["timestamp"] = float("nan")
     blob = json.dumps(manifest).encode()
     items[0], items[-1] = (0, 0, 0, blob), (2, 0, 0, hashlib.sha256(blob).digest())
     rewrite(path, items)
@@ -211,19 +195,19 @@ def test_pack_preserves_existing_file_on_failure_and_requires_explicit_overwrite
     path.write_bytes(b"original")
     with pytest.raises(FileExistsError):
         pack_vmesh(source, path)
-    original_writer = _v3c._write_record
+    original_writer = _vmesh_format._write_record
 
     def failing_writer(stream, kind, file_id, offset, data):
         if kind == 1:
             raise OSError("disk full")
         original_writer(stream, kind, file_id, offset, data)
 
-    monkeypatch.setattr(_v3c, "_write_record", failing_writer)
+    monkeypatch.setattr(_vmesh_format, "_write_record", failing_writer)
     with pytest.raises(OSError, match="disk full"):
         pack_vmesh(source, path, overwrite=True)
     assert path.read_bytes() == b"original"
     assert not list(tmp_path.glob(".take.vmesh-*"))
-    monkeypatch.setattr(_v3c, "_write_record", original_writer)
+    monkeypatch.setattr(_vmesh_format, "_write_record", original_writer)
     pack_vmesh(source, path, overwrite=True)
     assert inspect_vmesh(path)["codec"] == "tsmc"
 
@@ -340,3 +324,76 @@ def test_usdc_vmesh_usdc_api_round_trip_with_native_worker_stub(tmp_path, monkey
     with open4d.load(reconstructed) as result:
         assert result.timestamps == timestamps
         np.testing.assert_allclose(result[1].geometry.positions, sequence[1].geometry.positions)
+
+
+def test_retired_o4d_wrapper_is_rejected_before_native_decode(tmp_path):
+    path = tmp_path / 'old.vmesh'
+    path.write_bytes(b'\x60' + bytes(20) + bytes.fromhex('e23b8c4791354e3490ad421c6c57b63a') + b'O4D\x01')
+    with pytest.raises(CodecError, match='retired O4D/V3C'):
+        decode_sequence(path)
+
+
+def test_nested_open4d_schema_is_not_a_vmesh_metadata_type(tmp_path):
+    source, _ = native_directory(tmp_path, 'tvmc')
+    metadata = json.loads((source / 'metadata.json').read_text())
+    metadata['schema'] = 'open4d.some-custom-type/1'
+    (source / 'metadata.json').write_text(json.dumps(metadata))
+    with pytest.raises(CodecError):
+        pack_vmesh(source, tmp_path / 'bad.vmesh')
+
+
+def test_profile_expansion_is_bounded_before_allocating_payload_names():
+    from open4d.codec._native_profiles import layout
+    with pytest.raises(CodecError, match='outside limits'):
+        layout('tvmc', 65536)
+    # Sixteen small JSON frame records could otherwise expand to 131k names.
+    profile = dict(profile='rerf/1', group_size=1, pca=False,
+                   pca_channels=[7, 13], frames=[dict(id=i, quality=90, motion=False,
+                   channels=[4096]) for i in range(16)])
+    with pytest.raises(CodecError, match='file count outside limits'):
+        layout('rerf', 16, profile)
+
+
+@pytest.mark.parametrize('data', [b'{"x":1e999}', b'{"x":NaN}', b'{"x":1,"x":2}'])
+def test_json_rejects_overflow_and_ambiguous_values(data):
+    with pytest.raises(CodecError):
+        _vmesh_format._json(data)
+
+
+@pytest.mark.parametrize('codec', ['vdmc', 'faster_vdmc'])
+def test_vdmc_adapter_carries_actual_backend_bytes_and_restores_timing(tmp_path, monkeypatch, codec):
+    from open4d.codec import _vmesh
+    frames = [open4d.Frame(i + 7, t, open4d.TriangleMesh(
+        [[float(i), 0, 0], [i + 1., 0, 0], [float(i), 1, 0]], [[0, 1, 2]]))
+        for i, t in enumerate((.125, .875))]
+    sequence = open4d.Sequence(open4d.MemoryFrameProvider(frames))
+    native_bytes = b'\x60native encoder-produced bitstream fixture'
+    config = tmp_path / 'decoder.cfg'
+    config.write_text('native decoder configuration')
+    normalized = []
+
+    def run(command, label):
+        options = dict(item[2:].split('=', 1) for item in command[1:] if item.startswith('--'))
+        stream = Path(options['compressed'])
+        if label.endswith('encoder'):
+            with open4d.load(Path(options['srcMesh']).parent) as input_sequence:
+                normalized.extend(f.geometry for f in input_sequence)
+            stream.write_bytes(native_bytes)
+        else:
+            assert stream.read_bytes() == native_bytes
+            assert Path(options['config']).read_text() == config.read_text()
+            for i, mesh in enumerate(normalized):
+                write_obj(Path(options['decMesh'] % i), mesh.positions, mesh.triangles)
+
+    monkeypatch.setattr(_vmesh, '_run', run)
+    artifact = open4d.encode(sequence, tmp_path / 'take.vmesh', codec=codec,
+                             encoder=sys.executable, decoder_config=config)
+    info = inspect_vmesh(artifact)
+    assert info['codec'] == codec
+    assert [record['name'] for record in info['files']] == ['sequence.vmesh', 'decoder.cfg']
+    extracted = unpack_vmesh(artifact, tmp_path / 'native')
+    assert (extracted / 'sequence.vmesh').read_bytes() == native_bytes
+    with open4d.decode(artifact, decoder=sys.executable) as decoded:
+        assert decoded.timestamps == sequence.timestamps
+        for expected, actual in zip(sequence, decoded):
+            np.testing.assert_allclose(actual.geometry.positions, expected.geometry.positions, atol=1 / 4095)

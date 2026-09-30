@@ -143,6 +143,13 @@ def test_self_contained_usdc_restores_identical_native_bytes_without_runtime(tmp
     with open4d.import_native(source, codec=codec, timestamps=[1.125, 3.75], frame_indices=[5, 11], **options) as original:
         expected = original.path.read_bytes()
         usd = open4d.save(original, tmp_path / "take.usdc")
+    from pxr import Usd
+    stage = Usd.Stage.Open(str(usd))
+    prim = stage.GetPrimAtPath("/VMESH")
+    assert prim.GetTypeName() == "VMESH"
+    assert all(not attr.GetName().startswith("open4d:") for attr in prim.GetAttributes())
+    assert not stage.GetPrimAtPath("/Open4DNative")
+    del stage
     shutil.rmtree(source)
     with open4d.load(usd) as restored:
         assert restored.timestamps == (1.125, 3.75)
@@ -185,12 +192,12 @@ def test_usd_rejects_tampered_payload_and_timeline(tmp_path):
     with open4d.import_native(source, codec="queen", **options) as native:
         usd = open4d.save(native, tmp_path / "take.usdc")
     stage = Usd.Stage.Open(str(usd))
-    prim = stage.GetPrimAtPath("/Open4DNative")
-    prim.GetAttribute("open4d:frameIndex").Set(999, 0)
+    prim = stage.GetPrimAtPath("/VMESH")
+    prim.GetAttribute("vmesh:frameIndex").Set(999, 0)
     stage.GetRootLayer().Save()
     with pytest.raises(CodecError, match="timeline"):
         open4d.load(usd)
-    payload = prim.GetAttribute("open4d:payload:chunk000000")
+    payload = prim.GetAttribute("vmesh:payload:chunk000000")
     values = payload.Get()
     values[100] ^= 1
     payload.Set(values)

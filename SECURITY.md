@@ -28,4 +28,39 @@ private data, and identifying capture content.
   references.
 - Revoke exposed credentials before removing them from Git history.
 
+## Known limitations
+
+VMESH framing and hashes validate container integrity; they do not authenticate
+the publisher or make native payloads safe to execute. Inspection, packing,
+and compressed USD round trips do not invoke native models. Decoding can:
+
+- [QUEEN's compressed loader](open4d/reconstruction/queen/scene/gaussian_model.py)
+  uses `pickle.load`, which can execute code from a malicious residual.
+- [ReRF's player](open4d/reconstruction/rerf/rerf_stream/bitstream.py) loads
+  checkpoints with `torch.load` without explicitly selecting `weights_only`;
+  older Torch runtimes can execute serialized code. Other research entry points
+  also load executable checkpoints. A worker subprocess is not a security sandbox.
+
+The [Unity TVMC backend](integrations/unity/TVMCUnity/CPP_Backend/src) has
+unchecked OBJ face indices, a decoder access to row 100 without a minimum-row
+check, and a `FetchFrame` interface without an output-capacity argument.
+Its matrix loader also permits very large allocations before checking that all
+declared bytes exist. These are source-level memory safety and resource risks;
+runtime exploitation and sanitizer validation have not been performed here.
+
+The Node control API, decoded-frame TCP transport, and research WebSocket
+bridges have no authentication. Origin and Host checks do not authenticate
+native clients. Some bridges bind to all interfaces, and static file routes
+follow symlinks; their network exposure and asset roots must be controlled.
+
+Vendored QUEEN and 3DGStream trainer/renderer argument loaders evaluate
+`cfg_args`. Some 3DGStream conversion scripts and the ReRF LLFF loader construct
+shell commands from paths or options. Use trusted inputs for those entry points;
+the VMESH import path uses JSON instead of these evaluated configurations.
+
+Legacy ZIP/NPZ paths do not consistently bound aggregate expanded bytes.
+Repacking a legacy N4MC archive can exhaust disk before VMESH validation, and
+neural architecture or volume dimensions can trigger large allocations even
+after safe deserialization.
+
 The absence of a warning is not a claim that a component is production-ready.

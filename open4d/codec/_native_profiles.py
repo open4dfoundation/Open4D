@@ -8,6 +8,19 @@ from __future__ import annotations
 from ._protocol import CodecError
 
 PROFILES = {
+    "klt": ("tsdf", "shared-basis-independent-frames"),
+    "qndf": ("triangle_mesh", "independent"),
+    "qndf-int8": ("triangle_mesh", "independent"),
+    "frames": ("frame_payloads", "independent"),
+    "npz": ("triangle_mesh", "independent"),
+    "raw": ("triangle_mesh", "independent"),
+    "deflate": ("triangle_mesh", "independent"),
+    "bzip2": ("triangle_mesh", "independent"),
+    "lzma": ("triangle_mesh", "independent"),
+    "rle": ("triangle_mesh", "independent"),
+    "draco": ("triangle_mesh", "independent"),
+    "temporal-delta": ("triangle_mesh", "shared-reference"),
+    "temporal-pca": ("triangle_mesh", "shared-trajectory-basis"),
     "tvmc": ("triangle_mesh", "shared-reference"),
     "tsmc": ("triangle_mesh", "whole-group"),
     "vega": ("neural_gaussians", "shared-reference"),
@@ -20,6 +33,9 @@ PROFILES = {
     # prediction or residual dependency between the quantized frame latents.
     "n4mc": ("neural_tsdf", "shared-model-independent-frames"),
 }
+MAX_FILES = 65536
+MAX_FRAMES = 65536
+
 NEURAL_CODECS = frozenset(("vega", "queen", "3dgstream", "rerf"))
 
 
@@ -31,7 +47,19 @@ def _require(condition, message):
 def layout(codec, count, native=None):
     """Validate a profile and return its exact ordered filename/role pairs."""
     _require(codec in PROFILES, f"unsupported codec {codec!r}")
-    _require(type(count) is int and count > 0, "invalid frame count")
+    _require(type(count) is int and 0 < count <= MAX_FRAMES, "frame count outside limits")
+    if codec == "tvmc":
+        _require(2 + 2 * count <= MAX_FILES, "payload file count outside limits")
+    elif codec == "klt":
+        _require(2 + 2 * count <= MAX_FILES, "payload file count outside limits")
+    elif codec in ("qndf", "qndf-int8", "frames", "npz", "raw", "deflate", "bzip2", "lzma", "rle", "draco"):
+        _require(1 + count <= MAX_FILES, "payload file count outside limits")
+    elif codec == "vega":
+        _require(3 + count <= MAX_FILES, "payload file count outside limits")
+    elif codec == "n4mc":
+        _require(2 + count <= MAX_FILES, "payload file count outside limits")
+    elif codec == "queen":
+        _require(1 + count <= MAX_FILES, "payload file count outside limits")
     files = [("metadata.json", "sequence-metadata")]
     if codec in ("tvmc", "tsmc"):
         _require(native is None, "unexpected tracked-mesh profile")
@@ -51,6 +79,35 @@ def layout(codec, count, native=None):
         _require(set(native) == {"profile"}, "unexpected N4MC configuration")
         files.append(("checkpoint.pt", "shared-neural-model"))
         files += [(f"frame_{i:06d}.npz", "quantized-tsdf-latent") for i in range(count)]
+    elif codec == "klt":
+        _require(set(native) == {"profile"}, "unexpected KLT configuration")
+        files.append(("decoder_context.pt", "shared-klt-basis"))
+        files += [(f"{i:06d}_quantized_{suffix}", role) for i in range(count)
+                  for suffix, role in (("indices.zst", "quantized-tsdf-coefficients"),
+                                       ("metadata.npz", "tsdf-quantizer"))]
+    elif codec in ("qndf", "qndf-int8"):
+        _require(set(native) == {"profile"}, "unexpected QNDF configuration")
+        files += [(f"frame_{i:06d}.pt", "neural-displacement-context") for i in range(count)]
+    elif codec in ("npz", "raw", "deflate", "bzip2", "lzma", "rle"):
+        _require(set(native) == {"profile", "rle"} and type(native["rle"]) is bool,
+                 "unexpected array configuration")
+        files += [(f"frame_{i:06d}.npz", "mesh-arrays") for i in range(count)]
+    elif codec == "draco":
+        _require(set(native) == {"profile"}, "unexpected Draco configuration")
+        files += [(f"frame_{i:06d}.drc", "frame-mesh") for i in range(count)]
+    elif codec in ("temporal-delta", "temporal-pca"):
+        _require(set(native) == {"profile"}, "unexpected temporal configuration")
+        files.append(("sequence.npz", "quantized-trajectories"))
+    elif codec == "frames":
+        _require(set(native) == {"profile", "suffix", "representation"}, "unexpected frame configuration")
+        suffix = native["suffix"]
+        _require(suffix in ("ply", "drc", "splat", "jpg", "jpeg", "png"), "unsupported frame payload suffix")
+        representation = native["representation"]
+        compatible = {"pixels": ("jpg", "jpeg", "png"), "gaussians": ("ply", "splat"),
+                      "mesh": ("ply", "drc"), "points": ("ply", "drc")}
+        _require(isinstance(representation, str) and representation in compatible
+                 and suffix in compatible[representation], "incompatible frame representation/suffix")
+        files += [(f"frame_{i:06d}.{suffix}", "frame-payload") for i in range(count)]
     elif codec == "vega":
         _require(set(native) == {"profile"}, "unexpected Vega configuration")
         files += [("manifest.json", "native-frame-index"), ("color_model.pt", "shared-neural-appearance")]
@@ -72,6 +129,7 @@ def layout(codec, count, native=None):
         _require(isinstance(added, list) and len(added) == count and all(type(v) is bool for v in added) and not added[0], "invalid added-Gaussian index")
         files += [("initial.ply", "initial-gaussians"), ("ntc_config.json", "neural-transform-architecture")]
         for i in range(1, count):
+            _require(len(files) + 1 + int(added[i]) <= MAX_FILES, "payload file count outside limits")
             files.append((f"ntc_{i:06d}.pth", "neural-transform"))
             if added[i]:
                 files.append((f"added_{i:06d}.ply", "added-gaussians"))
@@ -95,6 +153,8 @@ def layout(codec, count, native=None):
             halves = frame["channels"]
             _require(isinstance(halves, list) and len(halves) == (2 if not key and pca else 1)
                      and all(type(n) is int and 0 < n <= 4096 for n in halves), "invalid ReRF entropy channels")
+            _require(len(files) + 2 + sum(halves) + int(not key and pca) + 2 * int(motion)
+                     <= MAX_FILES, "payload file count outside limits")
             files += [(f"header_{index}.json", "field-frame-header"), (f"mask_{index}.rerf", "occupancy-mask")]
             # The native ac_dc_encode2 writes one file per channel; .rerf is
             # a prefix, not an aggregate entropy file.

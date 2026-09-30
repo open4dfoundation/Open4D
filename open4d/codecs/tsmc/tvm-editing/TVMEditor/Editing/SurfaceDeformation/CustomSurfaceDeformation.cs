@@ -284,14 +284,16 @@ namespace TVMEditor.Editing.SurfaceDeformation
         {
             //return ComputeEmbeddedDeformationsWeightsForVertex(centersKdTree, vertices, vertex, affinity, affinityThreshold, oldCenters);
             // Find k-nearest center
-            var searchCount = Neighbors;
+            if (Neighbors <= 0 || centersKdTree.Count == 0)
+                throw new ArgumentException("Surface deformation requires centers and a positive neighbor count");
+            var neighborCount = System.Math.Min(Neighbors, centersKdTree.Count);
+            var searchCount = neighborCount;
             var found = 0;
             KdTreeNode<float, int>[] nearestCenters = null;
             int nearestCenter;
             do
             {
                 nearestCenters = centersKdTree.GetNearestNeighbours(new float[] { vertex.X, vertex.Y, vertex.Z }, searchCount);
-                searchCount *= 2;
                 nearestCenter = nearestCenters[0].Value;
                 found = 0;
                 for (var i = 0; i < nearestCenters.Length; i++)
@@ -306,12 +308,16 @@ namespace TVMEditor.Editing.SurfaceDeformation
                     }
                 }
 
+                if (found >= neighborCount || searchCount == centersKdTree.Count)
+                    break;
+                searchCount = searchCount > centersKdTree.Count / 2
+                    ? centersKdTree.Count : searchCount * 2;
                 if (searchCount > 200)
                     affinityThreshold = 0;
 
-            } while (found < Neighbors);
+            } while (true);
 
-            var mostAffineCenters = nearestCenters.Select(n => n.Value).Take(Neighbors).ToArray();
+            var mostAffineCenters = nearestCenters.Select(n => n.Value).Take(neighborCount).ToArray();
 
             // var nearestCenter = kdTree.Nearest(new double[] { vertices[v].X, vertices[v].Y, vertices[v].Z }).Value;
 
@@ -324,7 +330,7 @@ namespace TVMEditor.Editing.SurfaceDeformation
             var mostAffineCenters = centerAffinities.Select((a, i) => (a, i)).OrderByDescending(x => x.a).Take(Neighbors.Value).Select(x => x.i).ToArray();*/
 
             // Compute distances
-            var distances = new float[Neighbors];
+            var distances = new float[mostAffineCenters.Length];
             var distMin = float.PositiveInfinity;
             for (var i = 0; i < distances.Length; i++)
             {
@@ -334,7 +340,7 @@ namespace TVMEditor.Editing.SurfaceDeformation
             }
 
             // Compute soft minimums vector
-            var softmin = new float[Neighbors];
+            var softmin = new float[mostAffineCenters.Length];
             var softminSum = 0f;
             var softminMin = float.PositiveInfinity;
             for (var i = 0; i < softmin.Length; i++)
@@ -351,7 +357,7 @@ namespace TVMEditor.Editing.SurfaceDeformation
                 }
             }
 
-            var weights1 = new float[Neighbors];
+            var weights1 = new float[mostAffineCenters.Length];
             var weightsSum = 0f;
             for (var i = 0; i < weights1.Length; i++)
             {
@@ -372,14 +378,16 @@ namespace TVMEditor.Editing.SurfaceDeformation
         private (int[], float[]) ComputeEmbeddedDeformationsWeightsForVertex(KdTree<float, int> centersKdTree, Vector3[] vertices, Vector3 vertex, float[,] affinity, double affinityThreshold, Vector3[] oldCenters)
         {
             // Find k-nearest center
-            var searchCount = Neighbors;
+            if (Neighbors <= 0 || centersKdTree.Count == 0)
+                throw new ArgumentException("Surface deformation requires centers and a positive neighbor count");
+            var neighborCount = System.Math.Min(Neighbors, centersKdTree.Count);
+            var searchCount = neighborCount;
             var found = 0;
             KdTreeNode<float, int>[] nearestCenters = null;
             int nearestCenter;
             do
             {
                 nearestCenters = centersKdTree.GetNearestNeighbours(new float[] { vertex.X, vertex.Y, vertex.Z }, searchCount);
-                searchCount *= 2;
                 nearestCenter = nearestCenters[0].Value;
                 found = 0;
                 for (var i = 0; i < nearestCenters.Length; i++)
@@ -394,15 +402,19 @@ namespace TVMEditor.Editing.SurfaceDeformation
                     }
                 }
 
+                if (found >= neighborCount || searchCount == centersKdTree.Count)
+                    break;
+                searchCount = searchCount > centersKdTree.Count / 2
+                    ? centersKdTree.Count : searchCount * 2;
                 if (searchCount > 200)
                     affinityThreshold = 0;
 
-            } while (found < Neighbors);
+            } while (true);
 
-            var mostAffineCenters = nearestCenters.Select(n => n.Value).Take(Neighbors).ToArray();
+            var mostAffineCenters = nearestCenters.Select(n => n.Value).Take(neighborCount).ToArray();
 
             // Compute distances
-            var distances = new float[Neighbors];
+            var distances = new float[mostAffineCenters.Length];
             var distMax = float.PositiveInfinity;
             for (var i = 0; i < distances.Length; i++)
             {
@@ -411,7 +423,7 @@ namespace TVMEditor.Editing.SurfaceDeformation
                     distMax = distances[i];
             }
 
-            var weights1 = new float[Neighbors];
+            var weights1 = new float[mostAffineCenters.Length];
             var weightsSum = 0f;
             for (var i = 0; i < weights1.Length; i++)
             {

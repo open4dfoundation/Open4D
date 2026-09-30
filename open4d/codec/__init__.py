@@ -13,7 +13,8 @@ from ._protocol import Codec, CodecError
 from ._qndf import QNDFCodec
 from ._vmesh import VMeshCodec
 from ._tracked import TrackedMeshCodec
-from ._v3c import inspect_vmesh, pack_vmesh, unpack_vmesh
+from ._migration import migrate_legacy
+from ._vmesh_format import inspect_vmesh, pack_vmesh, unpack_vmesh
 
 __all__ = [
     "Codec",
@@ -30,5 +31,6 @@ __all__ = [
     "register_codec",
     "inspect_vmesh",
     "pack_vmesh",
+    "migrate_legacy",
     "unpack_vmesh",
 ]

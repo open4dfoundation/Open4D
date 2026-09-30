@@ -1,81 +1,36 @@
-"""Experimental O4D native-codec carriage in V3C sample streams.
+"""Standalone VMESH container for native codec payloads.
 
-This deliberately implements one bounded application format, not a general
-V3C parser or an ISO-conforming V-DMC geometry decoder. Usage examples are
-in examples/vmesh/.
-Native temporal payloads are carried; independent decoded frame sequences are
-not an admitted profile.
+VMESH owns its framing, sequence metadata and codec profiles. No V3C units,
+private SEI messages or serialized Open4D objects are used. Native payloads
+are copied verbatim and inspection never deserializes them.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import struct
 import tempfile
-import uuid
 
 from open4d._files import publish_directory, publish_file
 
-from ._npz import _validate_manifest
+from ._metadata import _validate_manifest
 from ._protocol import CodecError
-from ._native_profiles import PROFILES, layout as _layout
+from ._native_profiles import MAX_FRAMES, PROFILES, layout as _layout
 
-_UUID = uuid.UUID("e23b8c47-9135-4e34-90ad-421c6c57b63a").bytes
-_SCHEMA = "open4d.vmesh.native/1"
+_SCHEMA = "vmesh/1"
 _CHUNK = 1024 * 1024
 _MAX_JSON = 16 * 1024 * 1024
-_MAX_UNIT = _MAX_JSON + _MAX_JSON // 255 + 128
 _RECORD = struct.Struct(">BBIQ")  # version, kind, file ID, byte offset
 _U32 = struct.Struct(">I")
-_AD = b"\x08\x00\x00\x00"
-_NAL = b"\x56\x01"  # atlas PREFIX_NSEI (43), layer 0, temporal_id_plus1 1
-
-
-def _bootstrap() -> bytes:
-    """VPS syntax from MPEG V-DMC v14, with an unspecified (type 0) extension."""
-    bits = []
-
-    def put(value, width):
-        bits.append(f"{value:0{width}b}")
-
-    def ue(value):
-        encoded = f"{value + 1:b}"
-        bits.append("0" * (len(encoded) - 1) + encoded)
-
-    # PTL: codec group 1, toolset 0, unconstrained reconstruction. These are
-    # syntax fields, not a claim of conformance to a standardized toolset.
-    for value, width in ((0, 1), (1, 7), (0, 8), (255, 8), (0, 1), (0, 8),
-                         (0, 7), (15, 4), (0xfff, 12), (0, 8), (0, 6),
-                         (0, 1), (0, 1)):
-        put(value, width)
-    for value, width in ((0, 4), (0, 8), (0, 6), (0, 6)):
-        put(value, width)  # VPS 0, reserved, one atlas, atlas ID 0
-    ue(1)  # placeholder width/height; no atlas pictures or video components
-    ue(1)
-    put(0, 4)  # one map
-    put(0, 4)  # auxiliary, occupancy, geometry, attribute video absent
-    put(1, 1)
-    put(1, 8)  # one extension
-    extension = _UUID + b"O4D\x01"
-    ue(3 + len(extension) - 1)
-    put(0, 8)  # VPS_EXT_UNSPECIFIED
-    put(len(extension), 16)
-    for byte in extension:
-        put(byte, 8)
-    bits.append("1")
-    binary = "".join(bits)
-    binary += "0" * (-len(binary) % 8)
-    vps = b"\x00" * 4 + int(binary, 2).to_bytes(len(binary) // 8, "big")
-    return b"\x60" + _U32.pack(len(vps)) + vps
-
-
-_BOOTSTRAP = _bootstrap()
+_MAGIC = b"VMESH\x00\x01\x00"
+_MAX_UNIT = _MAX_JSON + _RECORD.size
 
 
 def _error(message):
-    return CodecError(f"invalid O4D .vmesh: {message}")
+    return CodecError(f"invalid VMESH: {message}")
 
 
 def _read(stream, size):
@@ -97,8 +52,14 @@ def _json(data):
     def constant(value):
         raise ValueError(f"non-finite JSON value {value}")
 
+    def real(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("non-finite JSON number")
+        return number
+
     try:
-        return json.loads(data, object_pairs_hook=pairs, parse_constant=constant)
+        return json.loads(data, object_pairs_hook=pairs, parse_constant=constant, parse_float=real)
     except (ValueError, UnicodeError, RecursionError) as error:
         raise _error(f"invalid JSON: {error}") from error
 
@@ -109,8 +70,10 @@ def _sequence_metadata(data, codec):
         if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
             raise ValueError("unsupported native metadata version")
         _validate_manifest(value, schema=None, codec=codec)
-        if not value["frames"]:
-            raise ValueError("empty frame list")
+        if "schema" in value:
+            raise ValueError("VMESH metadata cannot contain an application schema")
+        if not 0 < len(value["frames"]) <= MAX_FRAMES:
+            raise ValueError("frame count outside limits")
         _layout(codec, len(value["frames"]), value.get("native"))
     except (ValueError, TypeError, KeyError) as error:
         raise _error(f"invalid sequence metadata: {error}") from error
@@ -128,9 +91,9 @@ def _descriptor(data):
             or value.get("representation") != PROFILES[codec][0]
             or value.get("dependency_mode") != PROFILES[codec][1]):
         raise _error("unsupported native representation/dependencies")
-    if type(count) is not int or not 1 <= count <= _MAX_JSON // 16:
+    if type(count) is not int or not 1 <= count <= MAX_FRAMES:
         raise _error("invalid frame count")
-    expected = _layout(codec, count, value.get("native"))
+    expected = _layout(codec, count, value.get("native"))[1:]
     if not isinstance(files, list) or len(files) != len(expected):
         raise _error("invalid native file list")
     for index, (record, (name, role)) in enumerate(zip(files, expected)):
@@ -142,51 +105,38 @@ def _descriptor(data):
             raise _error("invalid native payload size")
         if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise _error("invalid SHA-256 digest")
-    if files[0]["size"] > _MAX_JSON:
-        raise _error("sequence metadata exceeds size limit")
+    sequence = value.get("sequence")
+    if not isinstance(sequence, dict) or "schema" in sequence:
+        raise _error("invalid VMESH sequence metadata")
+    parsed = _sequence_metadata(json.dumps(sequence, allow_nan=False).encode(), codec)
+    if len(parsed["frames"]) != count or parsed.get("native") != value.get("native"):
+        raise _error("sequence metadata disagrees with codec profile")
     return value
 
 
 def _write_record(stream, kind, file_id, offset, data):
-    payload = _UUID + _RECORD.pack(1, kind, file_id, offset) + data
-    size = len(payload)
-    # Atlas SEI user_data_unregistered is payload type 4 (not video SEI 5).
-    sei = b"\x04" + b"\xff" * (size // 255) + bytes([size % 255]) + payload + b"\x80"
-    nal = _NAL + sei
-    unit = _AD + b"\x60" + _U32.pack(len(nal)) + nal
+    unit = _RECORD.pack(1, kind, file_id, offset) + data
     stream.write(_U32.pack(len(unit)))
     stream.write(unit)
 
 
 def _read_record(stream):
     size = _U32.unpack(_read(stream, 4))[0]
-    if not 45 <= size <= _MAX_UNIT:
-        raise _error("V3C unit size outside limits")
-    unit = _read(stream, size)
-    if unit[:5] != _AD + b"\x60" or _U32.unpack(unit[5:9])[0] != size - 9:
-        raise _error("invalid atlas unit or NAL sample length")
-    if unit[9:12] != _NAL + b"\x04":
-        raise _error("expected atlas prefix NSEI user_data_unregistered")
-    pos, payload_size = 12, 0
-    while pos < size:
-        byte = unit[pos]
-        payload_size += byte
-        pos += 1
-        if byte != 255:
-            break
-    if payload_size < 16 + _RECORD.size or pos + payload_size + 1 != size or unit[-1] != 0x80:
-        raise _error("invalid SEI payload length or trailing bits")
-    if unit[pos:pos + 16] != _UUID:
-        raise _error("unexpected application UUID")
-    version, kind, file_id, offset = _RECORD.unpack_from(unit, pos + 16)
+    if not _RECORD.size <= size <= _MAX_UNIT:
+        raise _error("record size outside limits")
+    version, kind, file_id, offset = _RECORD.unpack(_read(stream, _RECORD.size))
     if version != 1 or kind not in (0, 1, 2):
         raise _error("unsupported record version/type")
-    return kind, file_id, offset, unit[pos + 16 + _RECORD.size:-1]
+    length = size - _RECORD.size
+    maximum = (_MAX_JSON, _CHUNK, 32)[kind]
+    if not 0 < length <= maximum:
+        raise _error("record payload size outside limits")
+    return kind, file_id, offset, _read(stream, length)
 
 
 def _start(stream):
-    if _read(stream, len(_BOOTSTRAP)) != _BOOTSTRAP:
-        raise _error("unsupported VPS/bootstrap")
+    if _read(stream, len(_MAGIC)) != _MAGIC:
+        raise _error("unsupported magic/version")
     kind, file_id, offset, data = _read_record(stream)
     if (kind, file_id, offset) != (0, 0, 0) or len(data) > _MAX_JSON:
         raise _error("missing or oversized application manifest")
@@ -194,26 +144,41 @@ def _start(stream):
 
 
 def probe_codec(source: str | Path) -> str | None:
-    """Identify this application format without loading native libraries.
+    """Identify standalone VMESH without loading native libraries.
 
-    None means an ordinary/other V3C stream; recognized malformed O4D streams
-    raise CodecError. This probe does not validate the native payload hashes.
+    None means another format, including raw MPEG V-DMC. Recognizable corrupt
+    VMESH and the retired private O4D/V3C wrapper fail before native decoding.
     """
     with Path(source).open("rb") as stream:
-        prefix = stream.read(len(_BOOTSTRAP))
-        if prefix != _BOOTSTRAP:
-            if _UUID in prefix or b"O4D\x01" in prefix:
-                raise _error("damaged VPS/bootstrap")
+        prefix = stream.read(128)
+        if not prefix.startswith(_MAGIC):
+            if prefix.startswith(b"PK\x03\x04"):
+                raise _error("archive input requires explicit migration")
+            if prefix.startswith(b"VMESH") or prefix[1:8] == _MAGIC[1:]:
+                raise _error("damaged magic/version")
+            if bytes.fromhex("e23b8c4791354e3490ad421c6c57b63a") in prefix or b"O4D\x01" in prefix:
+                raise _error("retired O4D/V3C wrapper; repack the original native directory")
             return None
         stream.seek(0)
         descriptor, _ = _start(stream)
         return descriptor["codec"]
 
 
+def is_mesh_profile(source: str | Path) -> bool:
+    """Classify VMESH for mesh-only tools without loading a decoder."""
+    codec = probe_codec(source)
+    if codec in ("vega", "queen", "3dgstream", "rerf"):
+        return False
+    if codec == "frames":
+        with Path(source).open("rb") as stream:
+            descriptor, _ = _start(stream)
+        return descriptor["native"]["representation"] == "mesh"
+    return True
+
+
 def _consume(source, destination=None):
     with Path(source).open("rb") as stream:
         descriptor, manifest_hash = _start(stream)
-        sequence_data = bytearray()
         for record in descriptor["files"]:
             digest, offset = hashlib.sha256(), 0
             target = (destination / record["name"]).open("xb") if destination is not None else None
@@ -223,11 +188,11 @@ def _consume(source, destination=None):
                     if ((kind, file_id, position) != (1, record["id"], offset)
                             or not 0 < len(data) <= min(_CHUNK, record["size"] - offset)):
                         raise _error("missing, reordered or oversized native payload chunk")
+                    if descriptor["codec"] == "frames" and len(data) != min(_CHUNK, record["size"] - offset):
+                        raise _error("frames profile requires fixed-size payload chunks")
                     digest.update(data)
                     if target is not None:
                         target.write(data)
-                    if record["id"] == 0:
-                        sequence_data.extend(data)
                     offset += len(data)
             finally:
                 if target is not None:
@@ -237,16 +202,16 @@ def _consume(source, destination=None):
         kind, file_id, offset, data = _read_record(stream)
         if (kind, file_id, offset, data) != (2, 0, 0, manifest_hash) or stream.read(1):
             raise _error("invalid end record or trailing data")
-        sequence = _sequence_metadata(sequence_data, descriptor["codec"])
-        if len(sequence["frames"]) != descriptor["frame_count"]:
-            raise _error("frame count disagrees with sequence metadata")
-        if sequence.get("native") != descriptor.get("native"):
-            raise _error("native profile disagrees with sequence metadata")
-        return {**descriptor, "sequence": sequence}
+        if destination is not None:
+            # Adapter input is reconstructed from VMESH metadata. It is not a
+            # carried Open4D file or object in the container.
+            (destination / "metadata.json").write_text(
+                json.dumps(descriptor["sequence"], allow_nan=False), encoding="utf-8")
+        return descriptor
 
 
 def inspect_vmesh(source: str | Path) -> dict:
-    """Validate an O4D .vmesh and return its manifest and sequence metadata.
+    """Validate a standalone VMESH and return its manifest and sequence metadata.
 
     Streams and verifies all payload hashes without extracting/deserializing
     native data or requiring the research codecs' optional dependencies.
@@ -255,7 +220,7 @@ def inspect_vmesh(source: str | Path) -> dict:
 
 
 def pack_vmesh(source: str | Path, destination: str | Path, *, overwrite: bool = False) -> Path:
-    """Pack an O4D native directory or legacy N4MC .n4d into one .vmesh.
+    """Pack a native codec directory into one .vmesh.
 
     Required native files are preserved byte for byte. Scratch files and
     decoded geometry are excluded. This does not recompress the native data.
@@ -269,15 +234,6 @@ def pack_vmesh(source: str | Path, destination: str | Path, *, overwrite: bool =
         raise FileExistsError(destination)
     if destination.is_dir():
         raise IsADirectoryError(destination)
-    if source.suffix.lower() == ".n4d" and source.is_file():
-        if source.is_symlink():
-            raise _error("linked N4MC source archive")
-        from ._n4mc import _extract_n4d, _write_native_metadata
-        with tempfile.TemporaryDirectory(prefix="open4d-n4mc-repack-") as directory:
-            native = Path(directory)
-            metadata = _extract_n4d(source, native)
-            _write_native_metadata(metadata, native)
-            return pack_vmesh(native, destination, overwrite=overwrite)
     metadata = source / "metadata.json"
     if metadata.is_symlink() or not metadata.is_file() or metadata.stat().st_size > _MAX_JSON:
         raise _error("missing, linked or oversized metadata.json")
@@ -289,10 +245,10 @@ def pack_vmesh(source: str | Path, destination: str | Path, *, overwrite: bool =
     sequence = _sequence_metadata(data, codec)
     descriptor = dict(schema=_SCHEMA, codec=codec, native_version=1,
                       representation=PROFILES[codec][0], frame_count=len(sequence["frames"]),
-                      dependency_mode=PROFILES[codec][1], files=[])
+                      dependency_mode=PROFILES[codec][1], sequence=sequence, files=[])
     if "native" in sequence:
         descriptor["native"] = sequence["native"]
-    for index, (name, role) in enumerate(_layout(codec, len(sequence["frames"]), sequence.get("native"))):
+    for index, (name, role) in enumerate(_layout(codec, len(sequence["frames"]), sequence.get("native"))[1:]):
         path = source / name
         if path.is_symlink() or not path.is_file():
             raise _error(f"missing or linked native payload {name}")
@@ -301,9 +257,6 @@ def pack_vmesh(source: str | Path, destination: str | Path, *, overwrite: bool =
             while chunk := stream.read(_CHUNK):
                 digest.update(chunk)
                 size += len(chunk)
-        # Preserve the exact metadata we validated even if the source changed.
-        if index == 0 and digest.digest() != hashlib.sha256(data).digest():
-            raise _error("metadata changed during packing")
         descriptor["files"].append(dict(id=index, name=name, role=role, size=size, sha256=digest.hexdigest()))
     manifest = json.dumps(descriptor, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(manifest) > _MAX_JSON:
@@ -313,7 +266,7 @@ def pack_vmesh(source: str | Path, destination: str | Path, *, overwrite: bool =
     with tempfile.TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as directory:
         temporary = Path(directory) / "stream"
         with temporary.open("xb") as output:
-            output.write(_BOOTSTRAP)
+            output.write(_MAGIC)
             _write_record(output, 0, 0, 0, manifest)
             for record in descriptor["files"]:
                 digest, offset = hashlib.sha256(), 0

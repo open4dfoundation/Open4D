@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import warnings
-from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 
@@ -17,12 +17,12 @@ from open4d.core import Sequence
 from open4d.io import open_sequence
 
 from ._klt import _KLTProvider, _normalization
-from ._npz import _json_value, _publish_file, _validate_manifest
+from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
 from ._protocol import CodecError
 from ._research import research_module
 from ._torch import torch_device
 from ._tsdf import write_tsdf_sequence
-from ._v3c import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import _json, pack_vmesh, probe_codec, unpack_vmesh
 
 _SCHEMA = "open4d.n4mc-sequence/v1"
 
@@ -36,10 +36,14 @@ def _extract_n4d(source: Path, destination: Path) -> dict:
                 raise CodecError("duplicate N4MC archive member")
             if archive.getinfo("manifest.json").file_size > 16 * 1024 * 1024:
                 raise CodecError("oversized N4MC manifest")
-            manifest = json.loads(archive.read("manifest.json"))
+            manifest = _json(archive.read("manifest.json"))
             _validate_manifest(manifest, schema=_SCHEMA, codec="n4mc")
             _normalization(manifest)
+            if archive.getinfo("checkpoint.pt").file_size > 64 * 1024**2:
+                raise CodecError("N4MC migration checkpoint exceeds 64 MiB")
             required = ["checkpoint.pt", *(f"frame_{i:06d}.npz" for i in range(len(manifest["frames"])))]
+            if len(required) > 65535 or sum(archive.getinfo(name).file_size for name in required) > 8 * 1024**3:
+                raise CodecError("N4MC migration payload budget exceeded")
             for name in required:
                 if archive.getinfo(name).file_size == 0:
                     raise CodecError(f"empty N4MC payload: {name}")
@@ -130,20 +134,13 @@ def _reconstruct_mesh(volume, metrics):
 
 class N4MCCodec:
     id = "n4mc"
-    suffixes = (".n4d", ".vmesh")
+    suffixes = (".vmesh",)
     backend = "python-in-process"
     lossless = False
     preserves = ("positions", "triangles")
 
     def can_decode(self, source: Path) -> bool:
-        if Path(source).suffix.lower() == ".vmesh":
-            return probe_codec(source) == self.id
-        try:
-            with ZipFile(source) as archive:
-                manifest = json.loads(archive.read("manifest.json"))
-                return isinstance(manifest, dict) and manifest.get("schema") == _SCHEMA
-        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
-            return False
+        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
 
     def encode(
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
@@ -151,10 +148,10 @@ class N4MCCodec:
         latent_channels: int = 64, learning_rate: float = 1e-4,
         device: str | None = None, seed: int = 7,
     ) -> Path:
-        destination = Path(destination).absolute()
+        destination = require_vmesh_destination(destination)
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
-        if destination.suffix.lower() == ".vmesh" and len(sequence) < 2:
+        if len(sequence) < 2:
             raise CodecError("N4MC .vmesh carriage requires at least two frames")
         for frame in sequence:
             mesh = frame.geometry
@@ -180,7 +177,7 @@ class N4MCCodec:
             "lambda_band": 2., "lambda_sign": .2,
         }
         manifest = {
-            "schema": _SCHEMA, "codec": self.id,
+            "version": 1, "codec": self.id,
             "metadata": _json_value(sequence.metadata, "sequence"),
             "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [{
@@ -207,10 +204,9 @@ class N4MCCodec:
             model.eval()
             checkpoint = work / "checkpoint.pt"
             torch.save({
-                "schema": "open4d.n4mc/v1", "model": model.state_dict(),
+                "model": model.state_dict(),
                 "model_config": model_config,
             }, checkpoint)
-            packs = []
             with torch.inference_mode():
                 for ordinal, path in enumerate(volumes):
                     encoded = model.encode(_volume(torch, path, target_device).unsqueeze(0))
@@ -221,26 +217,8 @@ class N4MCCodec:
                         original_shape=encoded["original_shape"].cpu().numpy(),
                         bottleneck_shape=encoded["bottleneck_shape"].cpu().numpy(),
                     )
-                    packs.append(pack)
-            if destination.suffix.lower() == ".vmesh":
-                _write_native_metadata(manifest, work)
-                return pack_vmesh(work, destination, overwrite=overwrite)
-            with tempfile.NamedTemporaryFile(
-                prefix=f".{destination.name}.", suffix=".tmp",
-                dir=destination.parent, delete=False,
-            ) as stream:
-                temporary = Path(stream.name)
-            try:
-                with ZipFile(temporary, "w", compression=ZIP_DEFLATED) as archive:
-                    archive.write(checkpoint, checkpoint.name)
-                    for pack in packs:
-                        archive.write(pack, pack.name)
-                    archive.writestr("manifest.json", json.dumps(manifest))
-                _publish_file(temporary, destination, overwrite=overwrite)
-            except Exception:
-                temporary.unlink(missing_ok=True)
-                raise
-        return destination
+            _write_native_metadata(manifest, work)
+            return pack_vmesh(work, destination, overwrite=overwrite)
 
     def decode(
         self, source: Path, *, device: str | None = None,
@@ -251,17 +229,12 @@ class N4MCCodec:
         work = Path(temporary.name)
         decoded = None
         try:
-            if source.suffix.lower() == ".vmesh":
-                detected = probe_codec(source)
-                if detected != self.id:
-                    raise CodecError(f".vmesh contains {detected!r}, not {self.id}")
-                native = unpack_vmesh(source, work / "native")
-                manifest = json.loads((native / "metadata.json").read_text())
-                _validate_manifest(manifest, schema=None, codec=self.id)
-                _normalization(manifest)
-            else:
-                native = work
-                manifest = _extract_n4d(source, native)
+            if source.suffix.lower() != ".vmesh" or probe_codec(source) != self.id:
+                raise CodecError("N4MC decode requires its VMESH profile; use migrate_legacy for older artifacts")
+            native = unpack_vmesh(source, work / "native")
+            manifest = json.loads((native / "metadata.json").read_text())
+            _validate_manifest(manifest, schema=None, codec=self.id)
+            _normalization(manifest)
             torch, models, _, metrics = _backend()
             target_device = _device(torch, device)
             checkpoint = torch.load(
@@ -274,7 +247,10 @@ class N4MCCodec:
             model.eval()
             output = work / "decoded"
             output.mkdir()
-            with torch.inference_mode():
+            with torch.inference_mode(), torch.backends.cudnn.flags(
+                enabled=torch.backends.cudnn.enabled, benchmark=False,
+                deterministic=True, allow_tf32=torch.backends.cudnn.allow_tf32,
+            ):
                 for ordinal in range(len(manifest["frames"])):
                     with np.load(native / f"frame_{ordinal:06d}.npz", allow_pickle=False) as pack:
                         latent = torch.from_numpy(pack["quantized_latent"]).unsqueeze(0).to(target_device)

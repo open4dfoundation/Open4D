@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import math
 from numbers import Real
@@ -10,7 +9,6 @@ import os
 from pathlib import Path
 import tempfile
 from types import MappingProxyType
-from zipfile import BadZipFile, ZIP_STORED, ZipFile
 
 import numpy as np
 
@@ -18,12 +16,11 @@ from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import Open4DError, open_sequence
 from open4d.io._mesh import write_obj
 
-from ._npz import _json_value, _publish_file, _validate_manifest
+from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
 from ._protocol import CodecError
 from ._native import run as _run
-from ._v3c import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
 
-_SCHEMA = "open4d.vmesh-sequence/v1"
 _POSITION_BIT_DEPTH = 12
 _DEFAULT_RAW_FPS = 30.0
 
@@ -164,7 +161,7 @@ class _RawDecodedProvider:
 class VMeshCodec:
     """Invoke one external V-Mesh process per sequence direction."""
 
-    suffixes = (".v4d", ".vmesh")
+    suffixes = (".vmesh",)
     backend = "native-sequence"
     lossless = False
     preserves = ("positions", "triangles")
@@ -174,18 +171,7 @@ class VMeshCodec:
         self._environment = identifier.upper()
 
     def can_decode(self, source: Path) -> bool:
-        if Path(source).suffix.lower() == ".vmesh":
-            return probe_codec(source) == self.id
-        try:
-            with ZipFile(source) as archive:
-                manifest = json.loads(archive.read("manifest.json"))
-            return (
-                isinstance(manifest, Mapping)
-                and manifest.get("schema") == _SCHEMA
-                and manifest.get("codec") == self.id
-            )
-        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
-            return False
+        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
 
     def encode(
         self,
@@ -197,12 +183,12 @@ class VMeshCodec:
         decoder_config: str | os.PathLike[str] | None = None,
         overwrite: bool = False,
     ) -> Path:
+        destination = require_vmesh_destination(destination)
         executable = _executable(encoder, f"OPEN4D_{self._environment}_ENCODER")
         configs = [Path(value).absolute() for value in (encoder_config, decoder_config) if value]
         for config in configs:
             if not config.is_file():
                 raise CodecError(f"native codec configuration is missing: {config}")
-        destination = Path(destination).absolute()
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         if not len(sequence):
@@ -215,7 +201,7 @@ class VMeshCodec:
             lower = np.minimum(lower, frame.geometry.positions.min(0))
             upper = np.maximum(upper, frame.geometry.positions.max(0))
         manifest = {
-            "schema": _SCHEMA, "codec": self.id,
+            "version": 1, "codec": self.id,
             "metadata": _json_value(sequence.metadata, "sequence"),
             "topology": sequence.topology.value,
             "has_constant_vertex_count": sequence.has_constant_vertex_count,
@@ -261,32 +247,12 @@ class VMeshCodec:
             _run(command, f"{self.id} encoder")
             if not stream.is_file() or not stream.stat().st_size:
                 raise CodecError(f"{self.id} encoder produced no bitstream")
-            if destination.suffix.lower() == ".vmesh":
-                # Preserve native V3C bytes plus the timing and normalization
-                # previously available only in the .v4d ZIP wrapper.
-                native_manifest = {k: v for k, v in manifest.items() if k != "schema"}
-                native_manifest.update(version=1, native={"profile": f"{self.id}/1", "decoder_config": bool(decoder_config)})
-                (work / "metadata.json").write_text(json.dumps(native_manifest), encoding="utf-8")
-                if decoder_config:
-                    import shutil
-                    shutil.copyfile(Path(decoder_config).absolute(), work / "decoder.cfg")
-                return pack_vmesh(work, destination, overwrite=overwrite)
-            with tempfile.NamedTemporaryFile(
-                prefix=f".{destination.name}.", suffix=".tmp",
-                dir=destination.parent, delete=False,
-            ) as temporary_stream:
-                temporary = Path(temporary_stream.name)
-            try:
-                with ZipFile(temporary, "w", compression=ZIP_STORED) as archive:
-                    archive.write(stream, "sequence.vmesh")
-                    if decoder_config:
-                        archive.write(Path(decoder_config).absolute(), "decoder.cfg")
-                    archive.writestr("manifest.json", json.dumps(manifest))
-                _publish_file(temporary, destination, overwrite=overwrite)
-            except Exception:
-                temporary.unlink(missing_ok=True)
-                raise
-        return destination
+            manifest["native"] = {"profile": f"{self.id}/1", "decoder_config": bool(decoder_config)}
+            (work / "metadata.json").write_text(json.dumps(manifest), encoding="utf-8")
+            if decoder_config:
+                import shutil
+                shutil.copyfile(Path(decoder_config).absolute(), work / "decoder.cfg")
+            return pack_vmesh(work, destination, overwrite=overwrite)
 
     def decode(
         self,
@@ -297,7 +263,9 @@ class VMeshCodec:
         fps: float | None = None,
     ) -> Sequence:
         source = Path(source).absolute()
-        carried = probe_codec(source) if source.suffix.lower() == ".vmesh" else None
+        if source.suffix.lower() != ".vmesh":
+            raise CodecError("V-DMC decode requires VMESH; use migrate_legacy for older artifacts")
+        carried = probe_codec(source)
         if carried is not None and carried != self.id:
             raise CodecError(f".vmesh contains {carried}, not {self.id}")
         raw = source.suffix.lower() == ".vmesh" and carried is None
@@ -324,15 +292,6 @@ class VMeshCodec:
             elif raw:
                 stream = source
                 manifest = None
-            else:
-                with ZipFile(source) as archive:
-                    manifest = json.loads(archive.read("manifest.json"))
-                    _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
-                    _position_normalization(manifest)
-                    archive.extract("sequence.vmesh", work)
-                    if "decoder.cfg" in archive.namelist():
-                        archive.extract("decoder.cfg", work)
-                stream = work / "sequence.vmesh"
             output = work / "decoded"
             output.mkdir()
             # The pinned V-DMC decoder parses decTex even with zero attributes.

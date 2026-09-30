@@ -14,10 +14,11 @@ from collections.abc import Iterable
 from ._klt import KLT_CODEC
 from ._n4mc import N4MC_CODEC
 from ._protocol import Codec, CodecError
+from ._metadata import require_vmesh_destination
 from ._qndf import QNDF_CODEC, QNDF_INT8_CODEC
 from ._tracked import TVMC_CODEC, TSMC_CODEC
 from ._vmesh import FASTER_VDMC_CODEC, VDMC_CODEC
-from ._v3c import probe_codec
+from ._vmesh_format import probe_codec
 from ._native_temporal import QUEEN_CODEC, GSTREAM_CODEC, RERF_CODEC
 
 if TYPE_CHECKING:
@@ -105,7 +106,7 @@ def encode_sequence(
     """Encode mesh/Gaussian data, or carry native temporal neural outputs."""
     if "overwrite" in options and not isinstance(options["overwrite"], bool):
         raise TypeError("overwrite must be bool")
-    path = Path(destination)
+    path = require_vmesh_destination(destination)
     implementation = _codec(codec, path)
     if getattr(implementation, "representation", "triangle_mesh") != "triangle_mesh":
         if input_format is not None:
@@ -128,7 +129,7 @@ def encode_sequence(
 def decode_sequence(
     source: str | Path, *, codec: str | Codec | None = None, **options
 ) -> Sequence | NativeSequence | tuple[NeuralGaussianFrame, ...]:
-    """Open mesh reconstructions, native temporal state, or legacy Vega frames."""
+    """Open mesh reconstructions, native temporal state."""
     path = Path(source)
     if path.suffix.lower() == ".vmesh" and not path.is_dir():
         detected = probe_codec(path)
@@ -137,8 +138,22 @@ def decode_sequence(
             if selected is not None and selected != detected:
                 raise CodecError(f".vmesh contains {detected}, but codec={selected!r} was requested")
             if "fps" in options:
-                raise TypeError("O4D .vmesh stores frame timestamps; fps cannot override them")
-            codec = detected if codec is None else codec
+                raise TypeError("VMESH stores frame timestamps; fps cannot override them")
+            if detected == "frames":
+                if options:
+                    raise TypeError("frame delivery VMESH accepts no native decoder options")
+                from open4d._streamer import _require
+                _require()
+                from streamer.sequence import open_frames
+                return open_frames(path)
+            if detected not in _CODECS and (codec is None or codec == detected):
+                from ._npz import REFERENCE_CODECS
+                from ._draco import DRACO_CODEC
+                from ._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC
+                private = {item.id: item for item in (*REFERENCE_CODECS, DRACO_CODEC, TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC)}
+                codec = private.get(detected, detected)
+            else:
+                codec = detected if codec is None else codec
         elif codec is None:
             codec = "vdmc"
     return _codec(codec, path).decode(path, **options)

@@ -6,6 +6,7 @@ const net = require("net");
 const path = require("path");
 const { spawn, execFile } = require("child_process");
 const readline = require("readline"); // add here
+const { childDirectory, validDirectoryId } = require("./path-safety");
 
 // -------------------- Logging --------------------
 // One line per event: [YYYY-MM-DD HH:MM:SS.mmm][LEVEL][COMPONENT] message
@@ -22,7 +23,26 @@ const logWarn = (component, message) => log("WARN", component, message);
 const logError = (component, message) => log("ERROR", component, message);
 
 const app = express();
-app.use(cors({ origin: "*" }));
+// Native/headset requests have no Origin. Browser requests must come from
+// this server or an explicitly configured companion UI.
+const allowedOrigins = new Set((process.env.VS4D_ALLOWED_ORIGINS || "")
+  .split(",").map(value => value.trim()).filter(Boolean));
+const allowedHostnames = new Set(["localhost", process.env.HOST,
+  ...(process.env.VS4D_ALLOWED_HOSTS || "").split(",")]
+  .filter(Boolean).map(value => value.trim().toLowerCase()));
+app.use((req, res, next) => {
+  // A same-origin check alone trusts attacker-controlled DNS names that can
+  // rebind to loopback. Accept IP literals and explicitly configured names.
+  const hostname = req.hostname?.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname || (!net.isIP(hostname) && !allowedHostnames.has(hostname)))
+    return res.status(403).json({ error: "request hostname is not allowed" });
+  const origin = req.get("Origin");
+  if (!origin) return next();
+  const sameOrigin = origin === `${req.protocol}://${req.get("Host")}`;
+  if (!sameOrigin && !allowedOrigins.has(origin))
+    return res.status(403).json({ error: "browser origin is not allowed" });
+  return cors({ origin })(req, res, next);
+});
 app.use(express.json({ limit: "200mb" }));
 
 // -------------------- Paths --------------------
@@ -517,7 +537,7 @@ app.use("/api/study", createStudyRouter({
 // live in server_results/<broadcastId>/ so each run stays self-contained.
 function broadcastResultsDir(broadcastId) {
   const id = broadcastId || currentBroadcastId || "no-broadcast";
-  const dir = path.join(SERVER_RESULTS_DIR, id);
+  const dir = childDirectory(SERVER_RESULTS_DIR, id, "broadcast id");
   ensureDir(dir);
   return dir;
 }
@@ -1008,7 +1028,7 @@ const SHAPED_INTERFACE = process.env.VS4D_SHAPED_INTERFACE || "eth0";
 // so unlike every other system here, choosing objects means replacing the
 // process. That is why this exists rather than a query parameter.
 //
-// This endpoint spawns processes and the server listens on 0.0.0.0, so the
+// This endpoint spawns processes and can be bound to a network interface, so the
 // input is constrained hard rather than trusted:
 //   * the baseline id must be one of the two configured ones, never a module
 //     name from the request;
@@ -1335,14 +1355,13 @@ app.get("/api/systems", async (req, res) => {
 
 app.get("/api/viewpoint-index", (req, res) => {
   const requested = String(req.query.dir || "");
-  if (requested && !/^[A-Za-z0-9._-]+$/.test(requested)) {
+  if (requested && !validDirectoryId(requested)) {
     return res.status(400).json({ error: "invalid viewpoint directory" });
   }
   const root = path.join(SYSTEM_ROOT_CLIENT, "viewpoints");
-  const directory = requested ? path.join(root, requested) : root;
-  if (!path.resolve(directory).startsWith(path.resolve(root))) {
-    return res.status(400).json({ error: "viewpoint path escapes the client dir" });
-  }
+  let directory;
+  try { directory = requested ? childDirectory(root, requested, "viewpoint directory") : root; }
+  catch (error) { return res.status(400).json({ error: error.message }); }
   if (!fs.existsSync(directory)) {
     return res.status(404).json({ error: `no viewpoint directory ${directory}` });
   }
@@ -2040,7 +2059,7 @@ function sceneRelativeTrajectoryPayload(value, preferredBroadcastId = "") {
 // older in-session runs fall back to playback-aligned Unity poses in the CSV.
 app.get("/api/offline-trajectory/:broadcastId", (req, res) => {
   const broadcastId = String(req.params.broadcastId || "");
-  if (!/^[A-Za-z0-9._-]+$/.test(broadcastId))
+  if (!validDirectoryId(broadcastId))
     return res.status(400).json({ error: "invalid trajectory broadcast id" });
   const filepath = path.join(SERVER_RESULTS_DIR, broadcastId, "viewport_trace.csv");
   if (!fs.existsSync(filepath))
@@ -2157,6 +2176,9 @@ app.post("/api/client-log", (req, res) => {
     message: redactIpAddresses(entry.message),
     stack: entry.stack ? redactIpAddresses(entry.stack) : entry.stack,
   }));
+  if (broadcastId !== undefined && broadcastId !== null && broadcastId !== ""
+      && !validDirectoryId(broadcastId))
+    return res.status(400).json({ error: "invalid broadcast id" });
   const logFile = path.join(broadcastResultsDir(broadcastId), "client_log.jsonl");
   fs.appendFileSync(logFile, safeEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
   for (const entry of safeEntries) {
@@ -2383,8 +2405,9 @@ app.get("/api/results", (req, res) => {
 });
 
 function validViewportBroadcastId(value) {
-  return typeof value === "string" && /^[a-zA-Z0-9._-]+$/.test(value)
-    && fs.existsSync(path.join(SERVER_RESULTS_DIR, value));
+  if (!validDirectoryId(value)) return false;
+  try { return fs.existsSync(childDirectory(SERVER_RESULTS_DIR, value, "broadcast id")); }
+  catch { return false; }
 }
 
 function latestViewportBroadcastId() {

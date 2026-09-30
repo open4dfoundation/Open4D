@@ -4,10 +4,12 @@ import os
 
 from ._native_profiles import PROFILES
 from ._protocol import CodecError
-from ._v3c import probe_codec
+from ._metadata import require_vmesh_destination
+from ._vmesh_format import probe_codec
 
 
 def encode_native(source, destination, *, codec, overwrite=False, **options):
+    destination = require_vmesh_destination(destination)
     from open4d.native import NativeSequence, import_native, save_native
     if isinstance(source, NativeSequence):
         if options:
@@ -38,12 +40,14 @@ class NativeTemporalCodec:
         self.representation = PROFILES[identifier][0]
 
     def can_decode(self, path):
-        return probe_codec(path) == self.id
+        return Path(path).suffix.lower() == ".vmesh" and probe_codec(path) == self.id
 
     def encode(self, sequence, destination, **options):
         return encode_native(sequence, destination, codec=self.id, **options)
 
     def decode(self, source, *, runtime=None, python=None):
+        if Path(source).suffix.lower() != ".vmesh":
+            raise CodecError(f"{self.id} decode requires a .vmesh extension")
         from open4d.native import NativeSequence
         result = NativeSequence(source, runtime=runtime, python=python)
         if result.codec != self.id:

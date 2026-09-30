@@ -89,7 +89,7 @@ def test_sequence_weights_frames_equally_and_uses_one_peak():
 
 def test_comparison_after_codec_round_trip(tmp_path):
     with mesh_sequence(side=4, frames=3) as reference:
-        artifact = save(reference, tmp_path / "wave.o4d", codec=NumPyZipCodec())
+        artifact = save(reference, tmp_path / "wave.vmesh", codec=NumPyZipCodec())
         with load(artifact, codec=NumPyZipCodec()) as decoded:
             result = compare_sequences(reference, decoded, peak=10)
     assert result.symmetric_rms == 0

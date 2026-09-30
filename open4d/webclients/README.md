@@ -40,7 +40,12 @@ servers (`baselines/`) and the corpora live in `4DVideoStreaming`, so
 clients and run the tests.
 
 The Node control server binds to `127.0.0.1` by default. Set `HOST` explicitly
-when remote clients need access; it provides no authentication.
+when remote clients need access; it provides no authentication. Browser requests
+must use this server's origin, or an origin explicitly listed in the comma-separated
+`VS4D_ALLOWED_ORIGINS`. IP addresses and `localhost` are accepted as request hosts;
+list additional DNS names in `VS4D_ALLOWED_HOSTS` (comma-separated), or bind using
+that name with `HOST`. Host checks prevent an unconfigured DNS name from rebinding
+to this local control server.
 
 ## Adding a method
 

@@ -1,4 +1,4 @@
-"""Portable native temporal runs and lossless USDC / V3C interchange.
+"""Portable native temporal runs and lossless USDC / VMESH interchange.
 
 Opening a run never executes its models. ``decode`` and ``render`` explicitly
 invoke the selected research runtime. USD interchange retains the compressed
@@ -21,9 +21,9 @@ import numpy as np
 
 from .codec._native import run
 from .codec._native_profiles import NEURAL_CODECS, layout
-from .codec._npz import _json_value
+from .codec._metadata import _json_value
 from .codec._protocol import CodecError
-from .codec._v3c import _json, inspect_vmesh, pack_vmesh, unpack_vmesh
+from .codec._vmesh_format import _json, inspect_vmesh, pack_vmesh, unpack_vmesh
 from ._files import publish_file
 
 
@@ -243,6 +243,8 @@ class NativeSequence:
         formats. Call this only for trusted native runs, in their configured
         runtime. Generic inspection/load/save never deserializes these models.
         """
+        if self.codec == "frames":
+            raise NotImplementedError("Use unpack() or browser playback for point, Gaussian and image frame payloads")
         source = self._native_directory()
         root, executable = self._settings(runtime, python)
         if self.codec == "vega":
@@ -342,7 +344,7 @@ def import_native(source, *, codec=None, config=None, initial_model=None, ntc_co
 
 
 def save_native(sequence, destination, *, overwrite=False):
-    """Save native temporal state as V3C .vmesh or a self-contained O4D USD."""
+    """Save native temporal state as standalone .vmesh or a self-contained VMESH USD."""
     if not isinstance(sequence, NativeSequence):
         raise TypeError("sequence must be a NativeSequence")
     if not isinstance(overwrite, bool):

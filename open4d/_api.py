@@ -48,7 +48,7 @@ def load(
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
 ) -> Sequence | NativeSequence | tuple[NeuralGaussianFrame, ...]:
-    """Open a sequence artifact, V3C .vmesh bitstream, or geometry source."""
+    """Open VMESH, native V-DMC input, or a geometry source."""
     if format is not None and codec is not None:
         raise TypeError("format and codec are mutually exclusive")
     values = _options(options)

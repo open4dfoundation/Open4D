@@ -6,8 +6,8 @@
         --metric plane --csv error.csv --save compare.gif
 
 This is the comparison viewer; `visualize_sequence.py` is the plain one. Both
-read the same sources — `.o4d` codec artifacts, time-sampled USD files, frame
-directories, raw V-DMC `.vmesh` bitstreams, or standalone mesh imports —
+read the same sources — `.vmesh` mesh profiles, time-sampled USD files, frame
+directories, or standalone mesh imports —
 through the same loader.
 
 Two synchronized panes: the reference as geometry, the decoded mesh coloured by

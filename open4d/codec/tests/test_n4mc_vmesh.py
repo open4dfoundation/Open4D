@@ -1,12 +1,13 @@
 """N4MC carries a shared model and independent latents, not temporal residuals."""
 import json
+from io import BytesIO
 from zipfile import ZipFile
 
 import numpy as np
 import pytest
 
 import open4d
-from open4d.codec import CodecError, inspect_vmesh, pack_vmesh, unpack_vmesh
+from open4d.codec import CodecError, inspect_vmesh, migrate_legacy, pack_vmesh, unpack_vmesh
 from open4d.codec import _n4mc
 
 pytestmark = pytest.mark.cpu
@@ -18,8 +19,10 @@ def legacy_archive(path, *, omit=None, duplicate=False, normalization=None):
                     metadata={"scene": "fixture"}, allow_nonmonotonic_timestamps=False,
                     frames=[dict(frame_index=7, timestamp=.125, metadata={"key": "first"}),
                             dict(frame_index=19, timestamp=.875, metadata={"key": "last"})])
-    # These bytes only test carriage, never neural reconstruction.
-    payloads = {"checkpoint.pt": b"opaque shared model", "frame_000000.npz": b"opaque latent 0",
+    torch = pytest.importorskip("torch")
+    checkpoint = BytesIO()
+    torch.save({"model": {}, "model_config": {}, "schema": "open4d.n4mc/v1"}, checkpoint)
+    payloads = {"checkpoint.pt": checkpoint.getvalue(), "frame_000000.npz": b"opaque latent 0",
                 "frame_000001.npz": b"opaque latent 1"}
     with ZipFile(path, "w") as archive:
         archive.writestr("manifest.json", json.dumps(manifest))
@@ -37,9 +40,9 @@ def test_n4d_migration_preserves_native_payloads_without_loading_models(tmp_path
     source = tmp_path / "legacy.n4d"
     manifest, payloads = legacy_archive(source)
     monkeypatch.setattr(_n4mc, "_backend", lambda: pytest.fail("repacking must not load a model"))
-    artifact = pack_vmesh(source, tmp_path / "motion.vmesh")
+    artifact = migrate_legacy(source, tmp_path / "motion.vmesh")
     source.unlink()
-    assert artifact.read_bytes()[0] == 0x60
+    assert artifact.read_bytes()[:8] == b"VMESH\x00\x01\x00"
     info = inspect_vmesh(artifact)
     assert info["codec"] == "n4mc"
     assert info["representation"] == "neural_tsdf"
@@ -50,7 +53,12 @@ def test_n4d_migration_preserves_native_payloads_without_loading_models(tmp_path
     recovered = unpack_vmesh(artifact, tmp_path / "recovered")
     assert sorted(p.name for p in recovered.iterdir()) == sorted(["metadata.json", *payloads])
     for name, data in payloads.items():
-        assert (recovered / name).read_bytes() == data
+        if name == "checkpoint.pt":
+            import torch
+            checkpoint = torch.load(recovered / name, weights_only=True)
+            assert checkpoint == {"model": {}, "model_config": {}}
+        else:
+            assert (recovered / name).read_bytes() == data
     repacked = pack_vmesh(recovered, tmp_path / "again.vmesh")
     assert artifact.read_bytes() == repacked.read_bytes()
     with pytest.raises(CodecError, match="contains n4mc"):
@@ -64,7 +72,7 @@ def test_invalid_n4d_never_publishes_vmesh(tmp_path, options):
     legacy_archive(source, **options)
     destination = tmp_path / "result.vmesh"
     with pytest.raises(CodecError):
-        pack_vmesh(source, destination)
+        migrate_legacy(source, destination)
     assert not destination.exists()
 
 
@@ -72,7 +80,7 @@ def test_n4mc_native_usdc_preserves_compressed_state_without_decoding(tmp_path, 
     pytest.importorskip("pxr.Usd")
     source = tmp_path / "legacy.n4d"
     legacy_archive(source)
-    artifact = pack_vmesh(source, tmp_path / "motion.vmesh")
+    artifact = migrate_legacy(source, tmp_path / "motion.vmesh")
     monkeypatch.setattr(_n4mc, "_backend", lambda: pytest.fail("native USD must not decode N4MC"))
     with open4d.NativeSequence(artifact) as native:
         usd = open4d.save(native, tmp_path / "native.usdc")
@@ -91,10 +99,10 @@ def test_n4mc_native_usdc_preserves_compressed_state_without_decoding(tmp_path, 
 def test_corrupt_n4mc_vmesh_fails_before_loading_model(tmp_path, monkeypatch):
     source = tmp_path / "original.n4d"
     legacy_archive(source)
-    artifact = pack_vmesh(source, tmp_path / "original.vmesh")
+    artifact = migrate_legacy(source, tmp_path / "original.vmesh")
     data = artifact.read_bytes()
-    assert b"opaque shared model" in data
-    artifact.write_bytes(data.replace(b"opaque shared model", b"broken shared model"))
+    assert b"opaque latent 0" in data
+    artifact.write_bytes(data.replace(b"opaque latent 0", b"broken latent 0"))
     monkeypatch.setattr(_n4mc, "_backend", lambda: pytest.fail("corrupt carriage must not load a model"))
     with pytest.raises(CodecError, match="SHA-256"):
         open4d.load(artifact)
@@ -117,6 +125,9 @@ def test_real_n4mc_mesh_usdc_vmesh_decode_matches_legacy_latents(tmp_path):
                              latent_channels=4, learning_rate=3e-3)
     native = unpack_vmesh(artifact, tmp_path / "native")
     info = inspect_vmesh(artifact)
+    import torch
+    checkpoint = torch.load(native / "checkpoint.pt", weights_only=True)
+    assert "schema" not in checkpoint
     # Reconstruct the legacy packaging from exactly the same native model and
     # latents, proving the new carrier does not change neural reconstruction.
     legacy = tmp_path / "same-latents.n4d"
@@ -125,9 +136,14 @@ def test_real_n4mc_mesh_usdc_vmesh_decode_matches_legacy_latents(tmp_path):
     manifest["schema"] = "open4d.n4mc-sequence/v1"
     with ZipFile(legacy, "w") as archive:
         archive.writestr("manifest.json", json.dumps(manifest))
-        for record in info["files"][1:]:
-            archive.write(native / record["name"], record["name"])
-    with open4d.load(artifact, options={"device": "cpu"}) as decoded, open4d.load(legacy, options={"device": "cpu"}) as original:
+        for record in info["files"]:
+            if record["name"] == "checkpoint.pt":
+                stream = BytesIO()
+                torch.save({**checkpoint, "schema": "open4d.n4mc/v1"}, stream)
+                archive.writestr("checkpoint.pt", stream.getvalue())
+            else:
+                archive.write(native / record["name"], record["name"])
+    with open4d.load(artifact, options={"device": "cpu"}) as decoded, open4d.load(migrate_legacy(legacy, tmp_path / "converted.vmesh"), options={"device": "cpu"}) as original:
         assert len(decoded) == len(original) == 2
         assert decoded.timestamps == original.timestamps == (1.25, 2.75)
         assert decoded.metadata == original.metadata

@@ -39,9 +39,9 @@ def test_fetch_rejects_symlink_targets(tmp_path, monkeypatch, partial):
 
 
 def test_fetch_paths_include_variants_and_packed_sequences():
-    index = {"clips": [{"frames": ["logical.ply"], "sequence": {"url": "clip.seq"},
+    index = {"clips": [{"frames": ["logical.ply"], "sequence": {"url": "clip.vmesh"},
                         "variants": [{"frames": ["low.ply"]}, {"frames": ["low.ply"]}]}]}
-    assert transfer.frame_paths(index) == ("clip.seq", "low.ply")
+    assert transfer.frame_paths(index) == ("clip.vmesh", "low.ply")
 
 
 def make_bundle(root, *, frames: int = 3):
@@ -673,10 +673,10 @@ def test_a_frame_container_is_never_compressed(tmp_path):
     something the client did not ask for, which is what the header prefetch
     relies on."""
     root = _repetitive_bundle(tmp_path)
-    (root / "clip.seq").write_bytes(b"O4DSEQ\x00\x00" + bytes(4096))
+    (root / "clip.vmesh").write_bytes(b"VMESH\x00\x01\x00" + bytes(4096))
     with serving(root) as base:
         request = urllib.request.Request(
-            f"{base}/clip.seq", headers={"Accept-Encoding": "gzip"})
+            f"{base}/clip.vmesh", headers={"Accept-Encoding": "gzip"})
         with urllib.request.urlopen(request) as response:
             body = response.read()
             headers = dict(response.headers)

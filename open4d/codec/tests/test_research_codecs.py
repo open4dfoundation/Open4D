@@ -73,8 +73,8 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
             num_layers=3, batch_size=256, device="cuda:0",
         ),
     }
-    suffix = {"klt": ".k4d", "n4mc": ".n4d", "qndf": ".q4d",
-              "qndf-int8": ".qi4d"}[codec]
+    suffix = {"klt": ".vmesh", "n4mc": ".vmesh", "qndf": ".vmesh",
+              "qndf-int8": ".vmesh"}[codec]
     artifact = encode_sequence(
         input_path, tmp_path / f"rafa-{codec}{suffix}",
         codec=codec,

@@ -54,53 +54,51 @@ def _frames(directory: Path, sizes: list[int], suffix: str = "splat") -> list[Pa
 
 def test_a_packed_container_round_trips_every_frame(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 300, 7, 4096])
-    header = sequence.pack(frames, tmp_path / "clip.seq")
+    header = sequence.pack(frames, tmp_path / "clip.vmesh")
 
     assert header.frames == 4
     assert header.suffix == "splat"
     assert header.bytes == 10 + 300 + 7 + 4096
 
-    data = (tmp_path / "clip.seq").read_bytes()
+    data = (tmp_path / "clip.vmesh").read_bytes()
     for index, path in enumerate(frames):
         assert sequence.frame(data, index, header) == path.read_bytes()
 
 
-def test_offsets_are_absolute_and_leave_no_gaps(tmp_path):
+def test_offsets_name_real_vmesh_records(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 300, 7])
-    header = sequence.pack(frames, tmp_path / "clip.seq")
-    size = (tmp_path / "clip.seq").stat().st_size
-
-    # Absolute, so a client with the header can slice any frame without having
-    # walked the ones before it -- which is what lets a partial download play
-    # from the beginning.
+    header = sequence.pack(frames, tmp_path / "clip.vmesh")
+    data = (tmp_path / "clip.vmesh").read_bytes()
+    assert data[:8] == b"VMESH\x00\x01\x00"
     first = header.entries[0]
-    assert first.offset == size - header.bytes
+    assert first.offset == 26 + struct.unpack_from(">I", data, 8)[0] - 14
     for before, after in zip(header.entries, header.entries[1:]):
-        assert before.offset + before.length == after.offset
+        assert before.offset + before.length + 18 == after.offset
     last = header.entries[-1]
-    assert last.offset + last.length == size
+    assert last.offset + last.length + 18 == header.end_offset
+    assert header.end_offset + 50 == len(data)
 
 
 def test_a_header_read_back_matches_the_one_written(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 300, 7])
-    written = sequence.pack(frames, tmp_path / "clip.seq")
-    read = sequence.read_header((tmp_path / "clip.seq").read_bytes())
+    written = sequence.pack(frames, tmp_path / "clip.vmesh")
+    read = sequence.read_header((tmp_path / "clip.vmesh").read_bytes())
     assert read == written
 
 
 def test_the_header_can_be_read_before_the_body_arrives(tmp_path):
     frames = _frames(tmp_path / "clip", [4096, 4096, 4096])
-    written = sequence.pack(frames, tmp_path / "clip.seq")
+    written = sequence.pack(frames, tmp_path / "clip.vmesh")
     # The point of a fixed header: a progress count knows how many frames are
     # coming from the first few hundred bytes, not the last.
-    prefix = (tmp_path / "clip.seq").read_bytes()[: written.entries[0].offset]
+    prefix = (tmp_path / "clip.vmesh").read_bytes()[: written.entries[0].offset]
     assert sequence.read_header(prefix) == written
 
 
 def test_unpacking_restores_the_frames(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 300, 7])
-    sequence.pack(frames, tmp_path / "clip.seq")
-    restored = sequence.unpack(tmp_path / "clip.seq", tmp_path / "out")
+    sequence.pack(frames, tmp_path / "clip.vmesh")
+    restored = sequence.unpack(tmp_path / "clip.vmesh", tmp_path / "out")
     assert [path.read_bytes() for path in restored] == [
         path.read_bytes() for path in frames
     ]
@@ -111,7 +109,7 @@ def test_unpacking_restores_the_frames(tmp_path):
 
 def test_a_container_needs_a_frame(tmp_path):
     with pytest.raises(ValueError, match="at least one frame"):
-        sequence.pack([], tmp_path / "clip.seq")
+        sequence.pack([], tmp_path / "clip.vmesh")
 
 
 def test_frames_must_share_a_suffix(tmp_path):
@@ -121,30 +119,30 @@ def test_frames_must_share_a_suffix(tmp_path):
     # Two formats in one container would need the client to switch decoders
     # mid-clip. A clip whose frames are not one codec is two clips.
     with pytest.raises(ValueError, match="share one suffix"):
-        sequence.pack(frames + [odd], tmp_path / "clip.seq")
+        sequence.pack(frames + [odd], tmp_path / "clip.vmesh")
 
 
 def test_a_missing_frame_is_named(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 10])
     with pytest.raises(FileNotFoundError, match="frame_0009"):
         sequence.pack(
-            frames + [tmp_path / "clip" / "frame_0009.splat"], tmp_path / "clip.seq"
+            frames + [tmp_path / "clip" / "frame_0009.splat"], tmp_path / "clip.vmesh"
         )
 
 
 @pytest.mark.parametrize(
     "mangle, complaint",
     [
-        (lambda data: b"NOTASEQ\x00" + data[8:], "not a sequence container"),
-        (lambda data: data[:8] + struct.pack("<I", 99) + data[12:], "version 99"),
-        (lambda data: data[:12], "not enough bytes"),
-        (lambda data: data[:24], "header needs"),
+        (lambda data: b"NOTASEQ\x00" + data[8:], "magic/version"),
+        (lambda data: data[:12] + b"\x63" + data[13:], "record version/type"),
+        (lambda data: data[:12], "truncated stream"),
+        (lambda data: data[:24], "truncated stream"),
     ],
 )
 def test_a_damaged_header_is_refused(tmp_path, mangle, complaint):
-    sequence.pack(_frames(tmp_path / "clip", [4096] * 8), tmp_path / "clip.seq")
+    sequence.pack(_frames(tmp_path / "clip", [4096] * 8), tmp_path / "clip.vmesh")
     with pytest.raises(ValueError, match=complaint):
-        sequence.read_header(mangle((tmp_path / "clip.seq").read_bytes()))
+        sequence.read_header(mangle((tmp_path / "clip.vmesh").read_bytes()))
 
 
 # ---------------------------------------------------------- packing a clip ---
@@ -163,10 +161,10 @@ def test_packing_a_clip_records_where_it_went(tmp_path):
     clip = _clip(tmp_path, [10, 300, 7])
     packed = sequence.pack_clip(tmp_path, clip)
 
-    assert packed["url"] == "clip.seq"
+    assert packed["url"] == "clip.vmesh"
     assert packed["frames"] == 3
     assert packed["suffix"] == "splat"
-    assert packed["bytes"] == (tmp_path / "clip.seq").stat().st_size
+    assert packed["bytes"] == (tmp_path / "clip.vmesh").stat().st_size
     # Taken from the registry rather than mapped again in the client: the
     # container is served as octet-stream, so the frame's own type has to come
     # from the manifest or from nowhere.
@@ -184,7 +182,7 @@ def test_packing_removes_the_frames_it_replaced(tmp_path):
     # Both would double the bundle on disk for nothing: a client handed a
     # container never asks for the pieces.
     assert not (tmp_path / "clip").exists()
-    assert (tmp_path / "clip.seq").is_file()
+    assert (tmp_path / "clip.vmesh").is_file()
 
 
 def test_packing_can_keep_the_frames(tmp_path):
@@ -224,7 +222,7 @@ def test_a_live_clip_cannot_be_packed(tmp_path):
     )
     # Nothing to pack: the pixels do not exist until someone is watching.
     with pytest.raises(ValueError, match="no end to pack"):
-        bundle.validate(replace(live, sequence={"url": "live.seq", "frames": 0}))
+        bundle.validate(replace(live, sequence={"url": "live.vmesh", "frames": 0}))
 
 
 # ------------------------------------------------- one layout, two languages ---
@@ -250,7 +248,8 @@ def _extract(*names: str) -> str:
     return "\n".join(chunks)
 
 
-READER = ("SEQ_MAGIC", "SEQ_PREAMBLE", "readSequenceHeader", "sequenceFrame")
+READER = ("SEQ_MAGIC", "SEQ_PREAMBLE", "VMESH_CHUNK", "vmeshSHA256",
+          "vmeshJSON", "vmeshRecord", "readSequenceHeader", "validateSequenceEnd", "sequenceFrame")
 
 
 def run_js(body: str, tmp_path: Path, names=READER, name: str = "q.mjs") -> object:
@@ -278,19 +277,20 @@ LOAD = """
 @requires_node
 def test_the_client_reads_a_header_python_wrote(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 300, 7, 4096])
-    header = sequence.pack(frames, tmp_path / "clip.seq")
+    header = sequence.pack(frames, tmp_path / "clip.vmesh")
 
     result = run_js(
         LOAD
         + f"""
-        const header = readSequenceHeader(load({str(tmp_path / "clip.seq")!r}));
+        const header = readSequenceHeader(load({str(tmp_path / "clip.vmesh")!r}));
         process.stdout.write(JSON.stringify(header));
     """,
         tmp_path,
     )
     assert result["suffix"] == header.suffix
     assert result["entries"] == [
-        {"offset": entry.offset, "length": entry.length} for entry in header.entries
+        {"offset": entry.offset, "length": entry.length, "sha256": entry.sha256}
+        for entry in header.entries
     ]
 
 
@@ -299,12 +299,12 @@ def test_the_client_slices_the_same_bytes(tmp_path):
     # Sizes chosen unequal and unaligned: equal-length frames would let an
     # off-by-one in the offset table pass every frame but the last.
     frames = _frames(tmp_path / "clip", [10, 300, 7, 4096, 33])
-    sequence.pack(frames, tmp_path / "clip.seq")
+    sequence.pack(frames, tmp_path / "clip.vmesh")
 
     result = run_js(
         LOAD
         + f"""
-        const buffer = load({str(tmp_path / "clip.seq")!r});
+        const buffer = load({str(tmp_path / "clip.vmesh")!r});
         const header = readSequenceHeader(buffer);
         const out = [];
         for (let i = 0; i < header.entries.length; i++) {{
@@ -325,11 +325,11 @@ def test_the_client_slices_the_same_bytes(tmp_path):
 
 @requires_node
 def test_a_sliced_frame_does_not_alias_the_container(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [64, 64]), tmp_path / "clip.seq")
+    sequence.pack(_frames(tmp_path / "clip", [64, 64]), tmp_path / "clip.vmesh")
     result = run_js(
         LOAD
         + f"""
-        const buffer = load({str(tmp_path / "clip.seq")!r});
+        const buffer = load({str(tmp_path / "clip.vmesh")!r});
         const header = readSequenceHeader(buffer);
         const first = sequenceFrame(buffer, header, 0);
         new Uint8Array(first).fill(0xff);
@@ -338,7 +338,7 @@ def test_a_sliced_frame_does_not_alias_the_container(tmp_path):
         // the first frame and leave every later one unreachable.
         const container = new Uint8Array(buffer);
         process.stdout.write(JSON.stringify({{
-          inContainer: container[header.entries[0].offset],
+          inContainer: container[header.entries[0].offset + 18],
           inFrame: new Uint8Array(first)[0],
         }}));
     """,
@@ -351,8 +351,7 @@ def test_a_sliced_frame_does_not_alias_the_container(tmp_path):
 # The container's whole point is the request count, so that is what these
 # assert on: one request for a clip, not one per frame.
 
-SCHEDULER = ("INDEPENDENT", "dependencyOf", "chain", "suffixOf", "SEQ_MAGIC",
-             "SEQ_PREAMBLE", "readSequenceHeader", "sequenceFrame", "Scheduler")
+SCHEDULER = ("INDEPENDENT", "dependencyOf", "chain", "suffixOf", *READER, "Scheduler")
 
 HARNESS = """
     import {readFileSync} from "node:fs";
@@ -382,15 +381,15 @@ HARNESS = """
 @requires_node
 def test_a_packed_clip_is_fetched_in_one_request(tmp_path):
     frames = _frames(tmp_path / "clip", [10, 300, 7, 4096])
-    sequence.pack(frames, tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 4, "bytes":
-              (tmp_path / "clip.seq").stat().st_size,
+    sequence.pack(frames, tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 4, "bytes":
+              (tmp_path / "clip.vmesh").stat().st_size,
               "media_type": "application/octet-stream"}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         const s = new Scheduler(packedClip(4, {json.dumps(packed)}), "", decode,
                                 {{cacheSize: 1}});
         (async () => {{
@@ -406,7 +405,7 @@ def test_a_packed_clip_is_fetched_in_one_request(tmp_path):
         names=SCHEDULER,
     )
 
-    assert result["requests"] == ["clip.seq"]
+    assert result["requests"] == ["clip.vmesh"]
     assert result["held"] is True
     assert [frame["bytes"] for frame in result["seen"]] == [10, 300, 7, 4096]
     # Each frame's bytes are all its own index, so this catches a slice that
@@ -426,14 +425,14 @@ def test_a_packed_clip_is_fetched_in_one_request(tmp_path):
 
 @requires_node
 def test_progress_climbs_to_the_frame_count(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [4096] * 6), tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 6,
-              "bytes": (tmp_path / "clip.seq").stat().st_size}
+    sequence.pack(_frames(tmp_path / "clip", [4096] * 6), tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 6,
+              "bytes": (tmp_path / "clip.vmesh").stat().st_size}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         const s = new Scheduler(packedClip(6, {json.dumps(packed)}), "", decode, {{}});
         (async () => {{
           const seen = [];
@@ -456,13 +455,13 @@ def test_progress_climbs_to_the_frame_count(tmp_path):
 
 @requires_node
 def test_a_container_too_big_to_hold_is_refused_unfetched(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [4096] * 4), tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 4, "bytes": 900e6}
+    sequence.pack(_frames(tmp_path / "clip", [4096] * 4), tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 4, "bytes": 900e6}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         const s = new Scheduler(packedClip(4, {json.dumps(packed)}), "", decode, {{}});
         (async () => {{
           const held = await s.downloadAll(null);
@@ -486,14 +485,14 @@ def test_a_container_too_big_to_hold_is_refused_unfetched(tmp_path):
 
 @requires_node
 def test_a_container_that_disagrees_with_the_clip_is_an_error(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [4096] * 4), tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 5,
-              "bytes": (tmp_path / "clip.seq").stat().st_size}
+    sequence.pack(_frames(tmp_path / "clip", [4096] * 4), tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 5,
+              "bytes": (tmp_path / "clip.vmesh").stat().st_size}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         const s = new Scheduler(packedClip(5, {json.dumps(packed)}), "", decode, {{}});
         (async () => {{
           let message = null;
@@ -512,14 +511,14 @@ def test_a_container_that_disagrees_with_the_clip_is_an_error(tmp_path):
 
 @requires_node
 def test_seeking_a_packed_clip_pulls_the_container_once(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [4096] * 4), tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 4,
-              "bytes": (tmp_path / "clip.seq").stat().st_size}
+    sequence.pack(_frames(tmp_path / "clip", [4096] * 4), tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 4,
+              "bytes": (tmp_path / "clip.vmesh").stat().st_size}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         const s = new Scheduler(packedClip(4, {json.dumps(packed)}), "", decode, {{}});
         (async () => {{
           // Two seeks started together, before either could finish. Packing
@@ -534,7 +533,7 @@ def test_seeking_a_packed_clip_pulls_the_container_once(tmp_path):
         tmp_path,
         names=SCHEDULER,
     )
-    assert result["requests"] == ["clip.seq"]
+    assert result["requests"] == ["clip.vmesh"]
     assert result["firsts"] == [3, 4]
 
 
@@ -565,9 +564,9 @@ def test_an_unpacked_clip_still_fetches_frame_by_frame(tmp_path):
 
 @requires_node
 def test_a_rung_without_a_container_is_not_served_the_base_one(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [4096] * 3), tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 3,
-              "bytes": (tmp_path / "clip.seq").stat().st_size}
+    sequence.pack(_frames(tmp_path / "clip", [4096] * 3), tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 3,
+              "bytes": (tmp_path / "clip.vmesh").stat().st_size}
 
     result = run_js(
         HARNESS
@@ -596,7 +595,7 @@ def test_a_rung_without_a_container_is_not_served_the_base_one(tmp_path):
 # ------------------------------------------------ decoded under its own name ---
 # Reported as "why is vega blank". A frame is decoded by the codec its *name*
 # selects (`worker.js` sniffs the suffix), so handing the decode the
-# container's name means a `.seq` in a table of `.ply` and `.splat`. Every
+# container's name means a `.vmesh` in a table of `.ply` and `.splat`. Every
 # Gaussian pane went blank; the pixel panes did not, because an image is
 # decoded from its media type on the main thread -- so it looked like one
 # method being broken rather than one code path.
@@ -604,14 +603,14 @@ def test_a_rung_without_a_container_is_not_served_the_base_one(tmp_path):
 
 @requires_node
 def test_a_packed_frame_is_decoded_under_its_own_name(tmp_path):
-    sequence.pack(_frames(tmp_path / "clip", [64] * 3), tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 3,
-              "bytes": (tmp_path / "clip.seq").stat().st_size}
+    sequence.pack(_frames(tmp_path / "clip", [64] * 3), tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 3,
+              "bytes": (tmp_path / "clip.vmesh").stat().st_size}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         // The real rule, from worker.js: the codec comes from the suffix.
         const CODECS = {{gaussians: {{".ply": 1, ".splat": 1}}}};
         const pick = (url) => {{
@@ -648,14 +647,14 @@ def test_a_container_whose_frames_are_a_different_format_is_refused(tmp_path):
     # plausible files and the length check passes, so without this the frames
     # would be handed to the Gaussian parser and come out as noise.
     sequence.pack(_frames(tmp_path / "clip", [64] * 3, suffix="jpg"),
-                  tmp_path / "clip.seq")
-    packed = {"url": "clip.seq", "frames": 3,
-              "bytes": (tmp_path / "clip.seq").stat().st_size}
+                  tmp_path / "clip.vmesh")
+    packed = {"url": "clip.vmesh", "frames": 3,
+              "bytes": (tmp_path / "clip.vmesh").stat().st_size}
 
     result = run_js(
         HARNESS
         + f"""
-        globalThis.serve({str(tmp_path / "clip.seq")!r});
+        globalThis.serve({str(tmp_path / "clip.vmesh")!r});
         const s = new Scheduler(packedClip(3, {json.dumps(packed)}), "./", decode, {{}});
         (async () => {{
           let message = null;
@@ -691,7 +690,7 @@ def test_the_viewer_and_the_worker_agree_on_a_suffix():
         + cut(worker).replace("function suffixOf(", "function original(")
         + """
         const cases = ["a/b.splat", "a/b.SPLAT", "a/b.ply?v=2", "b.tar.gz",
-                       "nodot", "a.b/c", "", "a/b.seq"];
+                       "nodot", "a.b/c", "", "a/b.vmesh"];
         const rows = cases.map((c) => [c, suffixOf(c), original(c)]);
         process.stdout.write(JSON.stringify(rows));
         """
@@ -704,7 +703,7 @@ def test_the_viewer_and_the_worker_agree_on_a_suffix():
     disagree = [row for row in rows if row[1] != row[2]]
     assert not disagree, f"suffixOf disagrees with the worker on {disagree}"
     # And the case that started this: a container is not a frame format.
-    assert dict((row[0], row[1]) for row in rows)["a/b.seq"] == ".seq"
+    assert dict((row[0], row[1]) for row in rows)["a/b.vmesh"] == ".vmesh"
 
 
 def test_a_failed_download_is_explained_in_the_pane():
@@ -755,3 +754,286 @@ def test_packing_keeps_frames_referenced_by_variants_or_unpacked_clips(tmp_path)
     bundle.write(tmp_path, title="test", source="test", clips=clips)
     sequence.pack_bundle(tmp_path, names=["first"])
     assert all(p.is_file() for p in paths)
+
+
+def test_browser_vmesh_is_validated_by_shared_codec_inspector(tmp_path):
+    from open4d.codec import inspect_vmesh
+    paths = _frames(tmp_path / "input", [13, 1_048_581], suffix="drc")
+    target = tmp_path / "clip.vmesh"
+    header = sequence.pack(paths, target, fps=24)
+    descriptor = inspect_vmesh(target)
+    assert descriptor["codec"] == "frames"
+    assert descriptor["native"] == {"profile": "frames/1", "suffix": "drc", "representation": "mesh"}
+    assert descriptor["sequence"]["frames"][1]["timestamp"] == 1 / 24
+    assert all(sequence.frame(target.read_bytes(), i, header) == path.read_bytes()
+               for i, path in enumerate(paths))
+
+
+@pytest.mark.parametrize("suffix", ["seq", "o4d", "bin"])
+def test_only_vmesh_is_a_public_sequence_output(tmp_path, suffix):
+    with pytest.raises(ValueError, match=".vmesh extension"):
+        sequence.pack(_frames(tmp_path / "input", [12]), tmp_path / f"clip.{suffix}")
+
+
+@pytest.mark.parametrize("fps", [0, -1, float("nan"), float("inf"), True])
+def test_sequence_timing_must_be_finite_positive(tmp_path, fps):
+    with pytest.raises(ValueError, match="fps"):
+        sequence.pack(_frames(tmp_path / "input", [12]), tmp_path / "clip.vmesh", fps=fps)
+
+
+def _legacy_bytes(payloads=(b"abc", b"defg"), suffix="splat"):
+    header = struct.pack("<8sIII", b"O4DSEQ\x00\x00", 1, len(payloads), len(suffix))
+    at = 20 + len(suffix) + 8 * len(payloads)
+    table = bytearray()
+    for payload in payloads:
+        table.extend(struct.pack("<II", at, len(payload)))
+        at += len(payload)
+    return header + suffix.encode() + table + b"".join(payloads)
+
+
+def test_legacy_conversion_is_explicit_and_preserves_payloads(tmp_path):
+    source, target = tmp_path / "old.seq", tmp_path / "new.vmesh"
+    data = _legacy_bytes()
+    source.write_bytes(data)
+    with pytest.raises(ValueError, match="magic/version"):
+        sequence.read_header(data)
+    assert sequence.convert_legacy(source, target, fps=12) == target
+    header = sequence.read_header(target.read_bytes())
+    assert [sequence.frame(target.read_bytes(), i, header) for i in range(2)] == [b"abc", b"defg"]
+    assert source.read_bytes() == data
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda data: data[:-1],
+    lambda data: data + b"extra",
+    lambda data: data[:12] + struct.pack("<I", 2**32 - 1) + data[16:],
+    lambda data: data[:25] + struct.pack("<I", 0) + data[29:],
+])
+def test_legacy_conversion_refuses_bad_bounds_before_publication(tmp_path, mutate):
+    source, target = tmp_path / "old.seq", tmp_path / "new.vmesh"
+    source.write_bytes(mutate(_legacy_bytes()))
+    with pytest.raises(ValueError):
+        sequence.convert_legacy(source, target)
+    assert not target.exists()
+
+
+def test_corrupt_payload_is_not_extracted(tmp_path):
+    target = tmp_path / "clip.vmesh"
+    header = sequence.pack(_frames(tmp_path / "input", [64, 64]), target)
+    data = bytearray(target.read_bytes())
+    data[header.entries[0].offset + 18] ^= 1
+    target.write_bytes(data)
+    with pytest.raises(ValueError, match="SHA-256"):
+        sequence.frame(data, 0)
+    with pytest.raises(ValueError, match="SHA-256"):
+        sequence.unpack(target, tmp_path / "output")
+    assert not (tmp_path / "output").exists()
+
+
+@requires_node
+@pytest.mark.parametrize("size", [0, 3, 55, 56, 64, 1_048_581])
+def test_browser_sha256_matches_native_sha256(tmp_path, size):
+    import hashlib
+    data = bytes((i * 37) % 256 for i in range(size))
+    source = tmp_path / "payload.bin"
+    source.write_bytes(data)
+    result = run_js(LOAD + f"process.stdout.write(JSON.stringify(vmeshSHA256(load({str(source)!r}))));", tmp_path)
+    assert result == hashlib.sha256(data).hexdigest()
+
+
+@requires_node
+def test_browser_reassembles_large_multirecord_frames(tmp_path):
+    target = tmp_path / "clip.vmesh"
+    sequence.pack(_frames(tmp_path / "input", [1_048_581, 17]), target)
+    result = run_js(LOAD + f"""
+      const buffer = load({str(target)!r}), header = readSequenceHeader(buffer);
+      validateSequenceEnd(buffer, header);
+      process.stdout.write(JSON.stringify(header.entries.map((entry, i) => {{
+        const bytes = new Uint8Array(sequenceFrame(buffer, header, i));
+        return [bytes.length, bytes[0], bytes[bytes.length - 1]];
+      }})));
+    """, tmp_path)
+    assert result == [[1_048_581, 1, 1], [17, 2, 2]]
+
+
+@requires_node
+@pytest.mark.parametrize("corruption", ["payload", "record", "end", "trailing", "legacy"])
+def test_browser_refuses_corrupt_vmesh_before_decoder(tmp_path, corruption):
+    target = tmp_path / "clip.vmesh"
+    header = sequence.pack(_frames(tmp_path / "input", [64, 64]), target)
+    data = bytearray(target.read_bytes())
+    if corruption == "payload":
+        data[header.entries[0].offset + 18] ^= 1
+    elif corruption == "record":
+        data[header.entries[0].offset + 5] = 2
+    elif corruption == "end":
+        data[-1] ^= 1
+    elif corruption == "trailing":
+        data += b"extra"
+    else:
+        data = _legacy_bytes()
+    target.write_bytes(data)
+    result = run_js(LOAD + f"""
+      let message = null;
+      try {{
+        const buffer = load({str(target)!r}), header = readSequenceHeader(buffer);
+        validateSequenceEnd(buffer, header);
+        sequenceFrame(buffer, header, 0);
+      }} catch (error) {{ message = error.message; }}
+      process.stdout.write(JSON.stringify(message));
+    """, tmp_path)
+    assert result
+
+
+def test_public_frame_loader_preserves_mesh_geometry_and_timestamps(tmp_path):
+    import numpy as np
+    from open4d.io._mesh import write_ply
+    paths = []
+    positions = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+    triangles = np.array([[0, 1, 2]], dtype=np.uint32)
+    for index in range(2):
+        path = tmp_path / f"frame_{index}.ply"
+        write_ply(path, positions + index, triangles)
+        paths.append(path)
+    target = tmp_path / "mesh.vmesh"
+    sequence.pack(paths, target, fps=12, representation="mesh")
+    with sequence.open_frames(target) as restored:
+        assert restored.timestamps == (0, 1 / 12)
+        assert [frame.frame_index for frame in restored] == [0, 1]
+        np.testing.assert_array_equal(restored[1].geometry.positions, positions + 1)
+        np.testing.assert_array_equal(restored[0].geometry.triangles, triangles)
+
+
+def test_public_frame_loader_preserves_images_without_deserialization(tmp_path):
+    from open4d.native import NativeSequence
+    target = tmp_path / "pixels.vmesh"
+    sequence.pack(_frames(tmp_path / "input", [23, 35], suffix="png"), target)
+    with sequence.open_frames(target) as restored:
+        assert isinstance(restored, NativeSequence)
+        assert restored.codec == "frames"
+        assert restored.manifest["native"]["representation"] == "pixels"
+        assert len(restored) == 2
+
+
+def test_packing_a_bundle_uses_its_real_fps_and_representation(tmp_path):
+    from open4d.codec import inspect_vmesh
+    clip = _clip(tmp_path, [23, 35])
+    bundle.write(tmp_path, title="test", source="test", clips=[clip], fps=24)
+    sequence.pack_bundle(tmp_path)
+    manifest = inspect_vmesh(tmp_path / "clip.vmesh")
+    assert manifest["sequence"]["frames"][1]["timestamp"] == 1 / 24
+    assert manifest["native"]["representation"] == "gaussians"
+
+
+@pytest.mark.parametrize("representation", ["unknown", "pixels", "points"])
+def test_frame_suffix_must_match_its_representation(tmp_path, representation):
+    with pytest.raises(ValueError, match="representation"):
+        sequence.pack(_frames(tmp_path / "input", [12]), tmp_path / "bad.vmesh", representation=representation)
+
+
+@requires_node
+@pytest.mark.parametrize("text", [
+    '{"codec":"frames","codec":"frames"}',
+    '{"nested":{"name":1,"na\\u006de":2}}',
+    '{"a":[{"x":1,"x":2}]}',
+])
+def test_browser_refuses_duplicate_json_keys(tmp_path, text):
+    result = run_js(f"""
+      let message = null;
+      try {{ vmeshJSON({json.dumps(text)}); }} catch (error) {{ message = error.message; }}
+      process.stdout.write(JSON.stringify(message));
+    """, tmp_path)
+    assert "duplicate" in result
+
+
+@requires_node
+def test_browser_partial_download_can_recover_first_complete_frame(tmp_path):
+    target = tmp_path / "clip.vmesh"
+    header = sequence.pack(_frames(tmp_path / "input", [71, 103]), target)
+    partial = tmp_path / "partial.bin"
+    partial.write_bytes(target.read_bytes()[:header.entries[1].offset])
+    result = run_js(LOAD + f"""
+      const buffer = load({str(partial)!r}), header = readSequenceHeader(buffer);
+      const frame = new Uint8Array(sequenceFrame(buffer, header, 0));
+      let unavailable = false;
+      try {{ sequenceFrame(buffer, header, 1); }} catch (_) {{ unavailable = true; }}
+      process.stdout.write(JSON.stringify([frame.length, frame[0], unavailable]));
+    """, tmp_path)
+    assert result == [71, 1, True]
+
+
+def test_existing_packed_bundle_migrates_and_rewrites_its_url(tmp_path):
+    from open4d.codec import inspect_vmesh
+    old = tmp_path / "capture.seq"
+    old.write_bytes(_legacy_bytes())
+    clip = bundle.Clip(name="capture", representation="gaussians",
+                       frames=["capture/frame_0000.splat", "capture/frame_0001.splat"],
+                       sequence={"url": "capture.seq", "frames": 2, "suffix": "splat", "bytes": old.stat().st_size})
+    bundle.write(tmp_path, title="test", source="test", clips=[clip], fps=12)
+    converted = sequence.pack_bundle(tmp_path)
+    assert converted[0][1]["url"] == "capture.vmesh"
+    assert bundle.read(tmp_path)["clips"][0]["sequence"]["url"] == "capture.vmesh"
+    assert not old.exists()
+    assert inspect_vmesh(tmp_path / "capture.vmesh")["sequence"]["frames"][1]["timestamp"] == 1 / 12
+    assert sequence.pack_bundle(tmp_path) == []
+
+
+def test_failed_bundle_migration_preserves_original_and_manifest(tmp_path, monkeypatch):
+    old = tmp_path / "capture.seq"
+    data = _legacy_bytes()
+    old.write_bytes(data)
+    clip = bundle.Clip(name="capture", representation="gaussians",
+                       frames=["f0.splat", "f1.splat"],
+                       sequence={"url": "capture.seq", "frames": 2})
+    bundle.write(tmp_path, title="test", source="test", clips=[clip])
+    original = (tmp_path / "view.json").read_bytes()
+    monkeypatch.setattr(bundle, "write", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("manifest write failed")))
+    with pytest.raises(OSError, match="manifest write failed"):
+        sequence.pack_bundle(tmp_path)
+    assert old.read_bytes() == data
+    assert (tmp_path / "view.json").read_bytes() == original
+
+
+def test_public_open4d_load_supports_self_describing_browser_vmesh(tmp_path):
+    import open4d
+    import numpy as np
+    from open4d.io._mesh import write_ply
+    path = tmp_path / "frame.ply"
+    positions = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+    triangles = np.array([[0, 1, 2]], dtype=np.uint32)
+    write_ply(path, positions, triangles)
+    target = tmp_path / "mesh.vmesh"
+    sequence.pack([path], target, representation="mesh")
+    with open4d.load(target) as restored:
+        assert restored.timestamps == (0,)
+        np.testing.assert_array_equal(restored[0].geometry.positions, positions)
+
+
+def test_migration_keeps_a_legacy_container_referenced_by_an_unselected_clip(tmp_path):
+    old = tmp_path / "shared.seq"
+    old.write_bytes(_legacy_bytes())
+    clips = [bundle.Clip(name=name, representation="gaussians", frames=["f0.splat", "f1.splat"],
+                         sequence={"url": "shared.seq", "frames": 2}) for name in ("one", "two")]
+    bundle.write(tmp_path, title="test", source="test", clips=clips)
+    sequence.pack_bundle(tmp_path, names=["one"])
+    assert old.is_file()
+    index = bundle.read(tmp_path)
+    assert index["clips"][0]["sequence"]["url"] == "shared.vmesh"
+    assert index["clips"][1]["sequence"]["url"] == "shared.seq"
+
+
+def test_legacy_bundle_migration_never_removes_paths_outside_the_bundle(tmp_path):
+    root = tmp_path / "bundle"
+    root.mkdir()
+    sentinel = tmp_path / "keep.splat"
+    sentinel.write_bytes(b"keep")
+    old = root / "capture.seq"
+    old.write_bytes(_legacy_bytes())
+    clip = bundle.Clip(name="capture", representation="gaussians", frames=["../keep.splat", "f1.splat"],
+                       sequence={"url": "capture.seq", "frames": 2})
+    bundle.write(root, title="test", source="test", clips=[clip])
+    with pytest.raises(ValueError, match="safe relative paths"):
+        sequence.pack_bundle(root)
+    assert sentinel.read_bytes() == b"keep"
+    assert old.is_file()
+    assert not (root / "capture.vmesh").exists()
