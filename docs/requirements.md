@@ -136,5 +136,5 @@ with `Hardware MFT failed to start`. 5 synchronized pairs/s held over Wi-Fi and
 VPN; 15 did not.
 
 Calibration layout and the step-by-step session walkthrough are in
-[`open4d/streaming/README.md`](../open4d/streaming/README.md),
+[`open4d/reconstruction/rgbd/README.md`](../open4d/reconstruction/rgbd/README.md),
 which covers how to run the pipeline and leaves requirements to this page.

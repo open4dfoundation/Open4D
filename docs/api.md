@@ -97,7 +97,7 @@ saying how to install it. For several clips in one bundle, a constrained link,
 or the delivered-quality metrics, use that package directly —
 `streamer.Bundle`, `streamer.Link`, `streamer.serve`.
 
-Separately, [`open4d/webclients`](../open4d/webclients) is the vendored
+Separately, [`open4d/streamer/study`](../open4d/streamer/study) is the vendored
 browser-client research tree that compares five delivery systems against each
 other. It is not this API and shares no code with it.
 

@@ -70,7 +70,7 @@ jobs:
       - name: Run every Open3D-backed test
         run: >-
           python -m pytest -m open3d
-          integrations/open3d/tests open4d/torch_ops/tests open4d/streaming/tests
+          integrations/open3d/tests open4d/torch_ops/tests open4d/reconstruction/rgbd/tests
           open4d/codec/tests/test_notebook.py
 
   research-codecs:
@@ -219,7 +219,8 @@ jobs:
       - name: Compile supported Python sources
         run: >-
           python -m compileall -q
-          open4d/*.py open4d/streaming/*.py open4d/codec open4d/core open4d/io
+          open4d/*.py open4d/reconstruction/*.py open4d/reconstruction/rgbd/*.py
+          open4d/transport open4d/codec open4d/core open4d/io
           open4d/torch_ops open4d/visualization
           integrations/__init__.py integrations/open3d
           examples/visualization examples/streaming_demo.py scripts
