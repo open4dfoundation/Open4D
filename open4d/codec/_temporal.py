@@ -14,7 +14,7 @@ from open4d.core import Frame, MemoryFrameProvider, Sequence, TopologyMode, Tria
 
 from ._metadata import _json_value
 from ._npz import NumPyZipCodec, _read_array
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 from ._protocol import CodecError
 
 
@@ -100,7 +100,7 @@ class TemporalMeshCodec:
         self.suffixes = (".vmesh",)
 
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def encode(
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
@@ -164,8 +164,8 @@ class TemporalMeshCodec:
                     if (len(members) != len(set(members))
                             or set(members) != {f"{name}.npy" for name in _temporal_fields(self.id)}):
                         raise CodecError("unexpected temporal native arrays")
-                artifact = {name: _read_array(native / "sequence.npz", name, _PLAIN_ARRAYS)
-                            for name in _temporal_fields(self.id)}
+                    artifact = {name: _read_array(archive, name, _PLAIN_ARRAYS)
+                                for name in _temporal_fields(self.id)}
                 reference, faces = artifact["reference"], artifact["triangles"]
                 reference_mesh = TriangleMesh(reference, faces)
                 count, vertices = len(manifest["frames"]), len(reference_mesh.positions)

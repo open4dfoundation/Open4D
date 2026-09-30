@@ -155,8 +155,8 @@ wheel. Internal benchmark experiments are not public codec choices. The V-DMC ad
 shell scripts, but they do invoke configured native encoder and decoder
 processes once per sequence. Callers can also register another
 `open4d.codec.Codec`.
-Native mesh processes default to a one-hour timeout; set
-`OPEN4D_NATIVE_TIMEOUT` to a positive number of seconds for longer jobs.
+Native mesh processes run without a time limit by default; set
+`OPEN4D_NATIVE_TIMEOUT` to a positive number of seconds to bound them.
 
 For an all-registered-codec attempt using `4d_files/Rafa_Approves_hd_4k`, open
 [`examples/open4d_sequence_codec.ipynb`](../examples/open4d_sequence_codec.ipynb).

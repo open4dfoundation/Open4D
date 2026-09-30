@@ -17,7 +17,7 @@ from open4d.io._mesh import write_obj
 from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
 from ._protocol import CodecError
 from ._native import run as _run_native
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
 
 def _executable(value, label: str) -> str:
@@ -97,7 +97,7 @@ class TrackedMeshCodec:
         self.suffixes = (".vmesh",)
 
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def _settings(self, backend, python, encoder, decoder, *, encoding):
         variable = f"OPEN4D_{self.id.upper()}_ROOT"

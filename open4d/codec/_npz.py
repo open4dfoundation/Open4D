@@ -23,9 +23,11 @@ from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 
 from ._protocol import CodecError
 from ._metadata import _json_value
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
 _MAX_ARRAY_BYTES = 256 * 1024 * 1024
+# Worst-case RLE doubles its input, plus its length prefix and the NPY header.
+_MAX_RLE_MEMBER_BYTES = 2 * _MAX_ARRAY_BYTES + 8 + 4096
 _FIELDS = ("positions", "triangles", "colors", "normals", "texture_coordinates")
 
 
@@ -48,13 +50,13 @@ def _array_from_bytes(payload: bytes) -> np.ndarray:
     return np.load(BytesIO(payload), allow_pickle=False, max_header_size=4096)
 
 
-def _read_array(path: Path, name: str, codec: "NumPyZipCodec") -> np.ndarray:
+def _read_array(archive: ZipFile, name: str, codec: "NumPyZipCodec") -> np.ndarray:
     try:
-        with ZipFile(path) as archive:
-            member = archive.getinfo(f"{name}.npy")
-            if not 0 < member.file_size <= _MAX_ARRAY_BYTES:
-                raise CodecError("array payload outside limits")
-            value = _array_from_bytes(archive.read(member))
+        member = archive.getinfo(f"{name}.npy")
+        limit = _MAX_RLE_MEMBER_BYTES if codec.rle else _MAX_ARRAY_BYTES
+        if not 0 < member.file_size <= limit:
+            raise CodecError("array payload outside limits")
+        value = _array_from_bytes(archive.read(member))
         if codec.rle:
             if value.dtype != np.uint8 or value.ndim != 1:
                 raise CodecError("RLE array payload must contain encoded bytes")
@@ -98,15 +100,20 @@ class _ZipProvider:
         except IndexError as error:
             raise IndexError("frame index out of range") from error
         arrays = record["arrays"]
-        values = {
-            name: _read_array(self.native / f"frame_{index:06d}.npz", path, self.codec)
-            for name, path in arrays.items()
-            if name != "attributes"
-        }
-        attributes = {
-            name: _read_array(self.native / f"frame_{index:06d}.npz", path, self.codec)
-            for name, path in arrays.get("attributes", {}).items()
-        }
+        try:
+            archive = ZipFile(self.native / f"frame_{index:06d}.npz")
+        except BadZipFile as error:
+            raise CodecError(f"invalid array payload frame {index}: {error}") from error
+        with archive:
+            values = {
+                name: _read_array(archive, path, self.codec)
+                for name, path in arrays.items()
+                if name != "attributes"
+            }
+            attributes = {
+                name: _read_array(archive, path, self.codec)
+                for name, path in arrays.get("attributes", {}).items()
+            }
         return Frame(
             frame_index=record["frame_index"],
             timestamp=record["timestamp"],
@@ -162,12 +169,25 @@ class NumPyZipCodec:
         expected = int.from_bytes(payload[:8], "little")
         pairs = np.frombuffer(payload[8:], dtype=np.uint8).reshape(-1, 2)
         if (expected > _MAX_ARRAY_BYTES or np.any(pairs[:, 0] == 0)
-                or sum(int(count) for count in pairs[:, 0]) != expected):
+                or int(pairs[:, 0].sum(dtype=np.int64)) != expected):
             raise CodecError("RLE payload length does not match its bounded header")
         return np.repeat(pairs[:, 1], pairs[:, 0]).tobytes()
 
+    def _member(self, value: np.ndarray, label: str) -> bytes:
+        # Enforce the decoder's bound here so encode never publishes an
+        # artifact that its own decoder would reject.
+        payload = _array_bytes(value)
+        if len(payload) > _MAX_ARRAY_BYTES:
+            raise CodecError(
+                f"{self.id} array {label} is {len(payload)} bytes; the limit is {_MAX_ARRAY_BYTES}"
+            )
+        payload = self.pack(payload)
+        if self.rle:
+            payload = _array_bytes(np.frombuffer(payload, dtype=np.uint8))
+        return payload
+
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def encode(
         self,
@@ -207,18 +227,12 @@ class NumPyZipCodec:
                     for name in _FIELDS:
                         value = getattr(frame.geometry, name)
                         if value is not None:
-                            payload = self.pack(_array_bytes(value))
-                            if self.rle:
-                                payload = _array_bytes(np.frombuffer(payload, dtype=np.uint8))
-                            archive.writestr(f"{name}.npy", payload)
+                            archive.writestr(f"{name}.npy", self._member(value, f"frame {ordinal} {name}"))
                             arrays[name] = name
                     attributes = {}
                     for number, (name, value) in enumerate(frame.geometry.attributes.items()):
                         key = f"attribute_{number:04d}"
-                        payload = self.pack(_array_bytes(value))
-                        if self.rle:
-                            payload = _array_bytes(np.frombuffer(payload, dtype=np.uint8))
-                        archive.writestr(f"{key}.npy", payload)
+                        archive.writestr(f"{key}.npy", self._member(value, f"frame {ordinal} attribute {name!r}"))
                         attributes[name] = key
                     arrays["attributes"] = attributes
                 manifest["frames"].append({

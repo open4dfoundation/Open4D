@@ -106,6 +106,16 @@ def test_codec_detection_returns_false_for_malformed_manifest(tmp_path, codec, m
     assert codec.can_decode(artifact) is False
 
 
+@pytest.mark.parametrize("payload", [b"PK\x03\x04legacy", b"VMESH\x00\x01\x00", b"VMESH\x00\x02\x00"])
+def test_codec_detection_returns_false_for_foreign_vmesh(tmp_path, payload):
+    from open4d.codec._api import _CODECS, _codec
+    artifact = tmp_path / "foreign.vmesh"
+    artifact.write_bytes(payload)
+    assert all(codec.can_decode(artifact) is False for codec in _CODECS.values())
+    with pytest.raises(CodecError, match="invalid VMESH"):
+        _codec(None, artifact)
+
+
 @pytest.mark.parametrize("frame", [{"frame_index": -1, "timestamp": 0},
                                   {"frame_index": 0, "timestamp": float("nan")},
                                   {"frame_index": 0, "timestamp": 0, "metadata": []}])

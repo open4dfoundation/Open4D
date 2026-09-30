@@ -5,7 +5,7 @@ import os
 from ._native_profiles import PROFILES
 from ._protocol import CodecError
 from ._metadata import require_vmesh_destination
-from ._vmesh_format import probe_codec
+from ._vmesh_format import contains_codec
 
 
 def encode_native(source, destination, *, codec, overwrite=False, **options):
@@ -40,7 +40,7 @@ class NativeTemporalCodec:
         self.representation = PROFILES[identifier][0]
 
     def can_decode(self, path):
-        return Path(path).suffix.lower() == ".vmesh" and probe_codec(path) == self.id
+        return contains_codec(path, self.id)
 
     def encode(self, sequence, destination, **options):
         return encode_native(sequence, destination, codec=self.id, **options)

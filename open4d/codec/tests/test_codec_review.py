@@ -19,6 +19,42 @@ def test_native_timeout_is_bounded_and_explained(monkeypatch):
         _vmesh._run([sys.executable, "-c", "import time; time.sleep(1)"], "native")
 
 
+def test_native_timeout_is_opt_in(monkeypatch):
+    from open4d.codec import _native
+
+    monkeypatch.delenv("OPEN4D_NATIVE_TIMEOUT", raising=False)
+    assert _native._timeout() is None
+
+
+@pytest.mark.parametrize("value", ["soon", "0", "-5", "inf", "nan"])
+def test_invalid_native_timeout_is_a_codec_error(monkeypatch, value):
+    import sys
+    from open4d.codec import CodecError, _vmesh
+
+    monkeypatch.setenv("OPEN4D_NATIVE_TIMEOUT", value)
+    with pytest.raises(CodecError, match="OPEN4D_NATIVE_TIMEOUT"):
+        _vmesh._run([sys.executable, "-c", "pass"], "native")
+
+
+@pytest.mark.parametrize("identifier", ["npz", "rle"])
+def test_array_codec_refuses_to_write_arrays_it_cannot_read(tmp_path, monkeypatch, identifier):
+    from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
+    from open4d.codec import CodecError, _npz
+
+    codec = {c.id: c for c in _npz.REFERENCE_CODECS}[identifier]
+    mesh = TriangleMesh(np.random.default_rng(0).random((64, 3)), [[0, 1, 2]])
+    source = Sequence(MemoryFrameProvider([Frame(0, 0., mesh)]))
+    monkeypatch.setattr(_npz, "_MAX_ARRAY_BYTES", 512)
+    destination = tmp_path / "large.vmesh"
+    with pytest.raises(CodecError, match="limit"):
+        codec.encode(source, destination)
+    assert not destination.exists()
+    monkeypatch.setattr(_npz, "_MAX_ARRAY_BYTES", 4096)
+    monkeypatch.setattr(_npz, "_MAX_RLE_MEMBER_BYTES", 2 * 4096 + 8 + 4096)
+    with codec.decode(codec.encode(source, destination)) as decoded:
+        np.testing.assert_array_equal(decoded[0].geometry.positions, mesh.positions)
+
+
 def test_n4mc_reconstruction_uses_tsdf_sampling_extent():
     pytest.importorskip("torch")
     pytest.importorskip("skimage")

@@ -10,12 +10,15 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ._files import publish_directory
+
+if TYPE_CHECKING:
+    from .native import NativeSequence
 
 
 @dataclass(frozen=True, eq=False)
@@ -474,8 +477,8 @@ class _VegaCodec:
     preserves = ("positions", "scales", "rotations", "opacities", "neural_appearance")
 
     def can_decode(self, source):
-        from .codec._vmesh_format import probe_codec
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        from .codec._vmesh_format import contains_codec
+        return contains_codec(source, self.id)
 
     def encode(self, sequence, destination: Path, **options) -> Path:
         from .codec._metadata import require_vmesh_destination
@@ -493,7 +496,8 @@ class _VegaCodec:
             with import_native(encoded, **timeline) as native:
                 return save_native(native, destination, overwrite=overwrite)
 
-    def decode(self, source: Path, **options):
+    def decode(self, source: Path, **options) -> NativeSequence:
+        """Open the owned native state; call ``.decode()`` to evaluate frames."""
         from .codec._native_temporal import NativeTemporalCodec
         return NativeTemporalCodec("vega").decode(source, **options)
 

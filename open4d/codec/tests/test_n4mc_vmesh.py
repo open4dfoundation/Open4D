@@ -13,17 +13,17 @@ from open4d.codec import _n4mc
 pytestmark = pytest.mark.cpu
 
 
-def legacy_archive(path, *, omit=None, duplicate=False, normalization=None):
+def legacy_archive(path, *, omit=None, duplicate=False, normalization=None, frames=2):
     manifest = dict(schema="open4d.n4mc-sequence/v1", codec="n4mc",
                     normalization=normalization or dict(center=[1, 2, 3], scale=2.),
                     metadata={"scene": "fixture"}, allow_nonmonotonic_timestamps=False,
                     frames=[dict(frame_index=7, timestamp=.125, metadata={"key": "first"}),
-                            dict(frame_index=19, timestamp=.875, metadata={"key": "last"})])
+                            dict(frame_index=19, timestamp=.875, metadata={"key": "last"})][:frames])
     torch = pytest.importorskip("torch")
     checkpoint = BytesIO()
     torch.save({"model": {}, "model_config": {}, "schema": "open4d.n4mc/v1"}, checkpoint)
-    payloads = {"checkpoint.pt": checkpoint.getvalue(), "frame_000000.npz": b"opaque latent 0",
-                "frame_000001.npz": b"opaque latent 1"}
+    payloads = {"checkpoint.pt": checkpoint.getvalue(),
+                **{f"frame_{i:06d}.npz": f"opaque latent {i}".encode() for i in range(frames)}}
     with ZipFile(path, "w") as archive:
         archive.writestr("manifest.json", json.dumps(manifest))
         for name, data in payloads.items():
@@ -63,6 +63,14 @@ def test_n4d_migration_preserves_native_payloads_without_loading_models(tmp_path
     assert artifact.read_bytes() == repacked.read_bytes()
     with pytest.raises(CodecError, match="contains n4mc"):
         open4d.load(artifact, codec="tsmc")
+
+
+def test_single_frame_n4d_migrates(tmp_path, monkeypatch):
+    source = tmp_path / "single.n4d"
+    manifest, _ = legacy_archive(source, frames=1)
+    monkeypatch.setattr(_n4mc, "_backend", lambda: pytest.fail("repacking must not load a model"))
+    artifact = migrate_legacy(source, tmp_path / "single.vmesh")
+    assert inspect_vmesh(artifact)["sequence"]["frames"] == manifest["frames"]
 
 
 @pytest.mark.parametrize("options", [dict(omit="checkpoint.pt"), dict(omit="frame_000001.npz"),

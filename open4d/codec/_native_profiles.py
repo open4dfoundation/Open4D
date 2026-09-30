@@ -73,7 +73,7 @@ def layout(codec, count, native=None):
                       ("entropy_model.npz", "entropy-model")]
         return files
     _require(isinstance(native, dict) and native.get("profile") == f"{codec}/1", "unsupported profile version")
-    if codec in NEURAL_CODECS or codec == "n4mc":
+    if codec in NEURAL_CODECS:
         _require(count >= 2, "native sequence profiles require at least two frames")
     if codec == "n4mc":
         _require(set(native) == {"profile"}, "unexpected N4MC configuration")

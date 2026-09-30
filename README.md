@@ -221,7 +221,8 @@ from open4d import load_gaussians, encode, decode
 
 frames = [load_gaussians("frame_0000.ply"), load_gaussians("frame_0001.ply")]
 encoded = encode(frames, "capture.vmesh", codec="vega")
-decoded = decode(encoded)
+native = decode(encoded)   # owned native state; inspecting it needs no CUDA
+decoded = native.decode()  # runs the Vega runtime, returning NeuralGaussianFrame values
 ```
 
 A `GaussianSplats` frame contains `positions` `(N, 3)`, positive `scales`

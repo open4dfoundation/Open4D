@@ -87,6 +87,9 @@ def _codec(value: str | Codec | None, path: Path) -> Codec:
             if callable(getattr(codec, "can_decode", None)) and codec.can_decode(path)
         ]
         if not detected:
+            # can_decode is a boolean probe; surface why a damaged, archived or
+            # retired-wrapper file was rejected before the generic error.
+            probe_codec(path)
             raise CodecError(f"invalid Open4D artifact {path}: no known codec manifest")
         matches = detected
     if len(matches) != 1:

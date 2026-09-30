@@ -23,7 +23,7 @@ from ._protocol import CodecError
 from ._research import research_module
 from ._tsdf import write_tsdf_sequence
 from ._torch import torch_device
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
 _SCHEMA = "open4d.klt-sequence/v1"
 
@@ -136,7 +136,7 @@ class KLTCodec:
     preserves = ("positions", "triangles")
 
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def encode(
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,

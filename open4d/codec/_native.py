@@ -10,10 +10,23 @@ import tempfile
 from ._protocol import CodecError
 
 
-def run(command, label, *, cwd=None):
-    timeout = float(os.environ.get("OPEN4D_NATIVE_TIMEOUT", "3600"))
+def _timeout():
+    # Native encodes of long sequences can legitimately run for hours, so the
+    # bound is opt-in rather than a default that kills working jobs.
+    value = os.environ.get("OPEN4D_NATIVE_TIMEOUT", "").strip()
+    if not value:
+        return None
+    try:
+        timeout = float(value)
+    except ValueError:
+        timeout = math.nan
     if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError("OPEN4D_NATIVE_TIMEOUT must be finite and positive")
+        raise CodecError(f"OPEN4D_NATIVE_TIMEOUT must be a finite positive number of seconds, got {value!r}")
+    return timeout
+
+
+def run(command, label, *, cwd=None):
+    timeout = _timeout()
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as log:
         with subprocess.Popen(
             command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,

@@ -19,7 +19,7 @@ from open4d.io._mesh import write_obj
 from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
 from ._protocol import CodecError
 from ._native import run as _run
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
 _POSITION_BIT_DEPTH = 12
 _DEFAULT_RAW_FPS = 30.0
@@ -171,7 +171,7 @@ class VMeshCodec:
         self._environment = identifier.upper()
 
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def encode(
         self,

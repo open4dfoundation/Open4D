@@ -21,7 +21,7 @@ from ._metadata import _json_value, _validate_manifest
 from ._protocol import CodecError
 from ._research import research_module
 from ._torch import torch_device
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
 _MAX_CONTEXT_BYTES = 64 * 1024 * 1024
 _MAX_GRAPH_ELEMENTS = 64 * 1024 * 1024
@@ -203,7 +203,7 @@ class QNDFCodec:
         self.suffixes = (".vmesh",)
 
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def encode(
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,

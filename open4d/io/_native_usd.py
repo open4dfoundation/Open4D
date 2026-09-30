@@ -37,6 +37,16 @@ def _open(path):
 
 
 def is_native_usd(path):
+    # Layer metadata first: ordinary mesh USD is rejected without parsing its
+    # scene description, so load() opens it once and reports its own errors.
+    Sdf, _, _, _ = _pxr()
+    from pxr import Tf
+    try:
+        layer = Sdf.Layer.OpenAsAnonymous(str(Path(path).absolute()), metadataOnly=True)
+    except Tf.ErrorException:
+        return False
+    if layer is None or layer.defaultPrim != _PRIM.lstrip("/"):
+        return False
     _, prim = _open(path)
     return bool(prim and prim.HasAttribute("vmesh:schema"))
 

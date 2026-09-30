@@ -4,7 +4,6 @@ from collections.abc import Mapping
 import math
 from pathlib import Path
 import numpy as np
-from open4d._files import publish_file as _publish_file
 from ._protocol import CodecError
 
 

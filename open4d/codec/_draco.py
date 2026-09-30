@@ -13,7 +13,7 @@ import numpy as np
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 
 from ._metadata import _json_value
-from ._vmesh_format import pack_vmesh, probe_codec, unpack_vmesh
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 from ._protocol import CodecError
 
 
@@ -106,7 +106,7 @@ class DracoCodec:
     preserves = ("positions", "triangles", "colors", "normals", "texture_coordinates")
 
     def can_decode(self, source: Path) -> bool:
-        return Path(source).suffix.lower() == ".vmesh" and probe_codec(source) == self.id
+        return contains_codec(source, self.id)
 
     def encode(
         self,

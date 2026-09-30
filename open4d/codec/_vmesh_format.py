@@ -18,7 +18,7 @@ from open4d._files import publish_directory, publish_file
 
 from ._metadata import _validate_manifest
 from ._protocol import CodecError
-from ._native_profiles import MAX_FRAMES, PROFILES, layout as _layout
+from ._native_profiles import MAX_FRAMES, NEURAL_CODECS, PROFILES, layout as _layout
 
 _SCHEMA = "vmesh/1"
 _CHUNK = 1024 * 1024
@@ -164,10 +164,23 @@ def probe_codec(source: str | Path) -> str | None:
         return descriptor["codec"]
 
 
+def contains_codec(source: str | Path, codec: str) -> bool:
+    """Boolean probe for ``Codec.can_decode``; never raises for foreign input.
+
+    Callers that need the reason a file is rejected use probe_codec instead.
+    """
+    if Path(source).suffix.lower() != ".vmesh":
+        return False
+    try:
+        return probe_codec(source) == codec
+    except (CodecError, OSError):
+        return False
+
+
 def is_mesh_profile(source: str | Path) -> bool:
     """Classify VMESH for mesh-only tools without loading a decoder."""
     codec = probe_codec(source)
-    if codec in ("vega", "queen", "3dgstream", "rerf"):
+    if codec in NEURAL_CODECS:
         return False
     if codec == "frames":
         with Path(source).open("rb") as stream:
