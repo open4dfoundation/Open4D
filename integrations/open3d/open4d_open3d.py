@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
+import warnings
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -106,6 +107,15 @@ def _vertex_attribute(
 
 
 def _colors(value: ArrayLike, vertex_count: int) -> NDArray[np.float64]:
+    raw = np.asarray(value)
+    if raw.shape == (vertex_count, 4):
+        alpha = raw[:, 3]
+        maximum = 255 if np.issubdtype(raw.dtype, np.integer) else 1
+        if not np.isfinite(alpha).all() or np.any(alpha < 0) or np.any(alpha > maximum):
+            raise ValueError("Color alpha must be finite and within the color range")
+        if np.any(alpha != maximum):
+            warnings.warn("Open3D legacy geometry does not preserve color alpha", UserWarning, stacklevel=3)
+        value = raw[:, :3]
     array = _vertex_attribute(value, vertex_count, "Colors")
     if np.issubdtype(np.asarray(value).dtype, np.integer):
         if np.any(array < 0) or np.any(array > 255):

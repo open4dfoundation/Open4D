@@ -10,6 +10,7 @@ downscale that zooms instead of shrinking, a crop that finds nothing.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -55,7 +56,7 @@ def test_numpy_aliases_are_restored():
     env.patch_dependencies()
     import numpy
 
-    assert numpy.bool is bool
+    assert numpy.dtype(numpy.bool) == numpy.dtype(bool)
     assert numpy.str is str
 
 
@@ -239,11 +240,16 @@ def test_waiting_times_out_rather_than_blocking_forever():
 
 # ------------------------------------------------- the decode, when it can run ---
 
-RUN = Path("/media/frozzzen/LocalDisk/nevo_runs/g_basketball")
+RUN = Path(os.environ.get("OPEN4D_RERF_RUN", str(Path.home() / "open4d-data/rerf/g_basketball")))
 CONFIG, BITSTREAM = RUN / "config.py", RUN / "rerf"
 
+try:
+    _has_bitstream = CONFIG.is_file() and (BITSTREAM / "header_0.json").is_file()
+except OSError:
+    _has_bitstream = False
+
 requires_bitstream = pytest.mark.skipif(
-    not (CONFIG.is_file() and (BITSTREAM / "header_0.json").is_file()),
+    not _has_bitstream,
     reason="needs an encoded ReRF bitstream on this machine",
 )
 

@@ -57,7 +57,7 @@ def encoded_payload(request):
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
-def test_codec_directory_round_trip_preserves_timing_and_cleans_up(tmp_path, monkeypatch, codec):
+def test_codec_vmesh_round_trip_preserves_timing_and_cleans_up(tmp_path, monkeypatch, codec):
     root = backend(tmp_path, codec)
     requests = []
 
@@ -93,132 +93,111 @@ def test_codec_directory_round_trip_preserves_timing_and_cleans_up(tmp_path, mon
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
-def test_empty_directory_created_at_publication_is_preserved(tmp_path, monkeypatch, codec):
+def test_competing_file_created_at_publication_is_preserved(tmp_path, monkeypatch, codec):
+    from open4d.codec import _vmesh_format
     root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded"
-    exists = Path.exists
-    ready = False
+    destination = tmp_path / "encoded.vmesh"
+    publish = _vmesh_format.publish_file
     competing_inode = None
 
-    def encode(python, action, request):
-        nonlocal ready
-        encoded_payload(request)
-        ready = True
-
-    def create_after_check(path):
+    def competing_writer(temporary, target, **kwargs):
         nonlocal competing_inode
-        found = exists(path)
-        if path == destination and ready and not found:
-            path.mkdir()
-            competing_inode = path.stat().st_ino
-        return found
-
-    monkeypatch.setattr(_tracked, "_run", encode)
-    monkeypatch.setattr(Path, "exists", create_after_check)
-    with pytest.raises(FileExistsError):
-        codec.encode(sequence(), destination, **options(root))
-    assert competing_inode is not None
-    assert destination.stat().st_ino == competing_inode
-    assert list(destination.iterdir()) == []
-    assert not list(tmp_path.glob(".encoded-*"))
-
-
-@pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
-def test_failed_publication_and_restore_preserve_original_backup(tmp_path, monkeypatch, codec):
-    root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded"
-    destination.mkdir()
-    (destination / "existing.txt").write_text("original")
-    rename = Path.rename
-    backup = None
-
-    def fail_publication(source, target):
-        nonlocal backup
-        target = Path(target)
-        if source == destination:
-            backup = target
-        elif target == destination and source != backup:
-            destination.mkdir()
-            (destination / "competing.txt").write_text("other writer")
-            raise OSError("publication failed")
-        return rename(source, target)
+        target.write_bytes(b"other writer")
+        competing_inode = target.stat().st_ino
+        publish(temporary, target, **kwargs)
 
     monkeypatch.setattr(_tracked, "_run", lambda python, action, request: encoded_payload(request))
-    monkeypatch.setattr(Path, "rename", fail_publication)
-    with pytest.raises(OSError) as error:
-        codec.encode(sequence(), destination, overwrite=True, **options(root))
-    assert backup is not None
-    assert (backup / "existing.txt").read_text() == "original"
-    assert (destination / "competing.txt").read_text() == "other writer"
-    assert str(backup) in str(error.value)
-    assert sorted(tmp_path.iterdir()) == sorted([root, destination, backup])
+    monkeypatch.setattr(_vmesh_format, "publish_file", competing_writer)
+    with pytest.raises(FileExistsError):
+        codec.encode(sequence(), destination, **options(root))
+    assert destination.stat().st_ino == competing_inode
+    assert destination.read_bytes() == b"other writer"
+    assert not list(tmp_path.glob(".encoded.vmesh-*"))
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
 @pytest.mark.parametrize("publication_failure", [False, True])
-def test_overwrite_cleans_backup_after_publication_or_restore(
+def test_atomic_overwrite_preserves_original_until_completed_publication(
     tmp_path, monkeypatch, codec, publication_failure,
 ):
+    from open4d.codec import _vmesh_format, inspect_vmesh
     root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded"
-    destination.mkdir()
-    (destination / "existing.txt").write_text("original")
-    rename = Path.rename
+    destination = tmp_path / "encoded.vmesh"
+    destination.write_bytes(b"original")
+    original_inode = destination.stat().st_ino
+    publish = _vmesh_format.publish_file
 
-    def fail_publication(source, target):
-        if publication_failure and source.name == "encoded" and Path(target) == destination:
+    def publish_checked(temporary, target, **kwargs):
+        assert target.read_bytes() == b"original"
+        assert target.stat().st_ino == original_inode
+        assert temporary.read_bytes().startswith(b"VMESH\x00\x01\x00")
+        if publication_failure:
             raise OSError("publication failed")
-        return rename(source, target)
+        publish(temporary, target, **kwargs)
 
     monkeypatch.setattr(_tracked, "_run", lambda python, action, request: encoded_payload(request))
-    monkeypatch.setattr(Path, "rename", fail_publication)
+    monkeypatch.setattr(_vmesh_format, "publish_file", publish_checked)
     if publication_failure:
         with pytest.raises(OSError, match="publication failed"):
             codec.encode(sequence(), destination, overwrite=True, **options(root))
-        assert (destination / "existing.txt").read_text() == "original"
+        assert destination.read_bytes() == b"original"
+        assert destination.stat().st_ino == original_inode
     else:
         codec.encode(sequence(), destination, overwrite=True, **options(root))
-        assert (destination / "reference.drc").read_bytes() == b"reference"
-        assert not (destination / "existing.txt").exists()
+        assert inspect_vmesh(destination)["codec"] == codec.id
+        assert destination.stat().st_ino != original_inode
     assert sorted(tmp_path.iterdir()) == sorted([root, destination])
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
 def test_failed_encode_preserves_existing_destination(tmp_path, monkeypatch, codec):
     root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded"
-    destination.mkdir()
-    sentinel = destination / "existing.txt"
-    sentinel.write_text("keep")
+    destination = tmp_path / "encoded.vmesh"
+    destination.write_bytes(b"keep")
     monkeypatch.setattr(_tracked, "_run", lambda *args: None)
     with pytest.raises(CodecError, match="produced no reference.drc"):
         codec.encode(sequence(), destination, overwrite=True, **options(root))
-    assert sentinel.read_text() == "keep"
-    assert not list(tmp_path.glob(".encoded-*"))
+    assert destination.read_bytes() == b"keep"
+    assert not list(tmp_path.glob(".encoded.vmesh-*"))
+
+
+@pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
+@pytest.mark.parametrize("extension", ["tvmc", "tsmc", "o4d", ""])
+def test_tracked_encoders_only_publish_vmesh(tmp_path, codec, extension):
+    destination = tmp_path / ("encoded." + extension if extension else "encoded")
+    with pytest.raises(ValueError, match=".vmesh"):
+        codec.encode(sequence(), destination)
+    assert not destination.exists()
 
 
 def test_missing_backend_and_invalid_options_fail_before_launch(tmp_path):
     with pytest.raises(CodecError, match="OPEN4D_TVMC_ROOT"):
-        TVMC_CODEC.encode(sequence(), tmp_path / "output", backend=tmp_path / "missing")
+        TVMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", backend=tmp_path / "missing")
     for kwargs in ({"key_frame": -1}, {"num_centers": True}, {"quantization": 31}):
         with pytest.raises(ValueError):
-            TVMC_CODEC.encode(sequence(), tmp_path / "output", **kwargs)
+            TVMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", **kwargs)
     with pytest.raises(ValueError, match="components"):
-        TSMC_CODEC.encode(sequence(), tmp_path / "output", components=7)
+        TSMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", components=7)
     with pytest.raises(TypeError, match="only to TSMC"):
-        TVMC_CODEC.encode(sequence(), tmp_path / "output", components=5)
+        TVMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", components=5)
     with pytest.raises(ValueError, match="preceding frame"):
-        TSMC_CODEC.encode(sequence(), tmp_path / "output", key_frame=0)
+        TSMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", key_frame=0)
 
 
 def test_decode_rejects_wrong_codec_and_cleans_up_incomplete_output(tmp_path, monkeypatch):
-    source = tmp_path / "artifact.tvmc"
-    source.mkdir()
+    from open4d.codec import pack_vmesh
+    native = tmp_path / "native"
+    native.mkdir()
     manifest = {"codec": "tvmc", "version": 1,
                 "frames": [{"frame_index": 10, "timestamp": 0}, {"frame_index": 11, "timestamp": 0.1}]}
-    (source / "metadata.json").write_text(json.dumps(manifest))
+    (native / "metadata.json").write_text(json.dumps(manifest))
+    (native / "reference.drc").write_bytes(b"reference")
+    for index in range(2):
+        (native / f"displacement_{index:06d}.drc").write_bytes(b"offsets")
+        np.save(native / f"displacement_{index:06d}.npy", np.arange(3, dtype=np.uint32))
+    source = pack_vmesh(native, tmp_path / "artifact.vmesh")
     assert not TSMC_CODEC.can_decode(source)
-    with pytest.raises(CodecError, match="invalid tsmc"):
+    with pytest.raises(CodecError, match="tsmc decode requires VMESH"):
         TSMC_CODEC.decode(source)
     decoded_directories = []
 
@@ -240,7 +219,7 @@ def test_decode_rejects_wrong_codec_and_cleans_up_incomplete_output(tmp_path, mo
     {"frames": [{"frame_index": 0, "timestamp": 1}, {"frame_index": 1, "timestamp": 0}]},
 ])
 def test_tracked_manifest_rejects_invalid_metadata_before_native_work(tmp_path, changed):
-    source = tmp_path / "take.tvmc"
+    source = tmp_path / "native"
     source.mkdir()
     value = {"version": 1, "codec": "tvmc", "frames": [{"frame_index": 0, "timestamp": 0}]}
     (source / "metadata.json").write_text(json.dumps(value | changed))
@@ -301,13 +280,12 @@ def test_tracking_xml_escapes_user_paths(tmp_path):
 
 
 def test_worker_failure_reports_native_diagnostic(tmp_path, monkeypatch):
-    def failed(command, **kwargs):
+    def failed(command, label, **kwargs):
         assert command[1].endswith("_tracked_worker.py")
         assert kwargs["cwd"] == tmp_path
-        kwargs["stdout"].write("missing native dependency\n")
-        return SimpleNamespace(returncode=2)
+        raise CodecError("missing native dependency")
 
-    monkeypatch.setattr(_tracked.subprocess, "run", failed)
+    monkeypatch.setattr(_tracked, "_run_native", failed)
     with pytest.raises(CodecError, match="missing native dependency"):
         _tracked._run(sys.executable, "encode", tmp_path / "request.json")
 
@@ -388,7 +366,7 @@ def test_tvmc_native_payload_decodes_without_original_geometry(tmp_path):
     vertices = np.asarray(mesh.subdivide_midpoint(number_of_iterations=1).vertices)
     displacements = tmp_path / "displacements"
     displacements.mkdir()
-    encoded = tmp_path / "take.tvmc"
+    encoded = tmp_path / "native"
     encoded.mkdir()
     offsets = np.random.default_rng(4).uniform(-0.1, 0.1, (2, len(vertices), 3))
     for index in range(2):
@@ -409,10 +387,21 @@ def test_tvmc_native_payload_decodes_without_original_geometry(tmp_path):
     reference.unlink()
     for path in tmp_path.glob("*.ply"):
         path.unlink()
-    with TVMC_CODEC.decode(encoded, python=sys.executable, decoder=decoder) as decoded:
+    from open4d.codec import pack_vmesh
+    native = encoded
+    encoded = pack_vmesh(native, tmp_path / "take.vmesh")
+    shutil.rmtree(native)
+    import open4d
+
+    with open4d.decode(encoded, python=sys.executable, decoder=decoder) as decoded:
         from scipy.spatial import cKDTree
 
         for index in range(2):
             distance, _ = cKDTree(vertices + offsets[index]).query(decoded[index].geometry.positions)
             assert distance.max() < 0.001
         assert decoded.timestamps == (0.0, 1 / 24)
+        pytest.importorskip("pxr")
+        exported = open4d.save(decoded, tmp_path / "reconstructed.usdc")
+        with open4d.load(exported) as reopened:
+            assert reopened.timestamps == decoded.timestamps
+            np.testing.assert_array_equal(reopened[1].geometry.positions, decoded[1].geometry.positions)

@@ -50,14 +50,24 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from baselines.ViVo.orbitvivo.ladder import Representation
-
 CATALOG_NAME = "catalog.json"
 SUPPORTED_CATALOG_VERSION = 2
 
 
 class SourceCorpusUnavailable(RuntimeError):
     """Raised when a caller needs the RGB-D source this ladder does not have."""
+
+
+@dataclass(frozen=True)
+class Representation:
+    """One prepared level; self-contained metadata for the tile catalogue."""
+
+    representation_id: int
+    name: str
+    root: Path
+    manifest_path: Path
+    manifest: TileManifest
+    point_ratio: float
 
 
 @dataclass(frozen=True)

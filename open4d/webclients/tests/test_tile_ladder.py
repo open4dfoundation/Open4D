@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from baselines.ViVo.orbitvivo.tile_ladder import (
+from open4d.webclients.tile_ladder import (
     SourceCorpusUnavailable,
     TileCatalogLadder,
 )

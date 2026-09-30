@@ -1,27 +1,72 @@
-"""In-process adapter for Open4D's KLT TSDF codec."""
+"""In-process KLT TSDF codec using standalone VMESH carriage."""
 
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+from importlib import import_module
 import json
 import os
 from pathlib import Path
+import pickle
 import shutil
 from types import MappingProxyType, SimpleNamespace
 import tempfile
-from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import open_sequence
 
-from ._npz import _json_value, _publish_file, _validate_manifest
+from ._metadata import _json_value, _validate_manifest
 from ._protocol import CodecError
 from ._research import research_module
 from ._tsdf import write_tsdf_sequence
+from ._torch import torch_device
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
 _SCHEMA = "open4d.klt-sequence/v1"
+
+
+def _extract_legacy_klt(source: Path, destination: Path) -> dict:
+    """Convert the retired archive explicitly; never used by normal decoding."""
+    try:
+        with ZipFile(source) as archive:
+            members = archive.infolist()
+            if len({member.filename for member in members}) != len(members):
+                raise CodecError("duplicate KLT archive member")
+            if archive.getinfo("manifest.json").file_size > 16 * 1024 * 1024:
+                raise CodecError("oversized KLT manifest")
+            manifest = json.loads(archive.read("manifest.json"))
+            _validate_manifest(manifest, schema=_SCHEMA, codec="klt")
+            _normalization(manifest)
+            metadata = {key: value for key, value in manifest.items() if key != "schema"}
+            metadata.update(version=1, native={"profile": "klt/1"})
+            from ._native_profiles import layout
+            required = [name for name, _ in layout("klt", len(metadata["frames"]), metadata["native"])[1:]]
+            if set(archive.namelist()) != {"manifest.json", *required}:
+                raise CodecError("unexpected KLT archive payloads")
+            for name in required:
+                member = archive.getinfo(name)
+                limit = 16 * 1024 * 1024 if name.endswith((".pt", ".npz")) else 128 * 1024 * 1024
+                if not 0 < member.file_size <= limit:
+                    raise CodecError(f"KLT legacy payload outside limits: {name}")
+                with archive.open(member) as payload, (destination / name).open("xb") as output:
+                    shutil.copyfileobj(payload, output)
+        torch = import_module("torch")
+        checkpoint = destination / "decoder_context.pt"
+        context = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        if not isinstance(context, dict) or context.pop("schema", None) != "open4d.klt/v1":
+            raise CodecError("invalid legacy KLT context")
+        context["version"] = 1
+        # Old encoders could advertise more components than their training rank.
+        context["num_components"] = len(context["basis"])
+        _backend().validate_decoder_context(context)
+        torch.save(context, checkpoint)
+        (destination / "metadata.json").write_text(json.dumps(metadata, allow_nan=False), encoding="utf-8")
+        return metadata
+    except (BadZipFile, KeyError, ValueError, TypeError, RuntimeError, pickle.UnpicklingError) as error:
+        raise CodecError(f"invalid legacy KLT artifact: {error}") from error
 
 
 def _normalization(manifest):
@@ -85,18 +130,13 @@ class _KLTProvider:
 
 class KLTCodec:
     id = "klt"
-    suffixes = (".k4d",)
+    suffixes = (".vmesh",)
     backend = "python-in-process"
     lossless = False
     preserves = ("positions", "triangles")
 
     def can_decode(self, source: Path) -> bool:
-        try:
-            with ZipFile(source) as archive:
-                manifest = json.loads(archive.read("manifest.json"))
-                return isinstance(manifest, dict) and manifest.get("schema") == _SCHEMA
-        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
-            return False
+        return contains_codec(source, self.id)
 
     def encode(
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
@@ -105,8 +145,24 @@ class KLTCodec:
         verbose: bool = False,
     ) -> Path:
         destination = Path(destination).absolute()
+        if destination.suffix.lower() != ".vmesh":
+            raise ValueError("KLT destination must have a .vmesh extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
+        if type(resolution) is not int or not 7 <= resolution <= 255:
+            raise ValueError("KLT resolution must be an integer from 7 to 255")
+        if type(block_size) is not int or not 1 <= block_size <= min(16, resolution + 1):
+            raise ValueError("KLT block_size must be an integer from 1 to 16 within the grid")
+        if type(num_components) is not int or not 1 <= num_components <= min(block_size ** 3, 512):
+            raise ValueError("KLT num_components exceeds the block dimensions")
+        if type(k_total) is not int or not 1 <= k_total <= 65536:
+            raise ValueError("KLT k_total must be an integer from 1 to 65536")
+        training_frames = tuple(training_frames)
+        if not training_frames or any(type(index) is not int or not 0 <= index < len(sequence)
+                                      for index in training_frames):
+            raise ValueError("KLT training_frames must select existing frames")
+        if type(frame_rate) not in (int, float) or not np.isfinite(frame_rate) or frame_rate <= 0:
+            raise ValueError("KLT frame_rate must be finite and positive")
         for frame in sequence:
             mesh = frame.geometry
             if any((mesh.colors is not None, mesh.normals is not None,
@@ -114,7 +170,7 @@ class KLTCodec:
                 raise CodecError("KLT's TSDF profile cannot preserve mesh attributes")
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
-            "schema": _SCHEMA, "codec": self.id,
+            "version": 1, "codec": self.id, "native": {"profile": "klt/1"},
             "metadata": _json_value(sequence.metadata, "sequence"),
             "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [{
@@ -139,37 +195,30 @@ class KLTCodec:
             else:
                 with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
                     backend.run_compression(arguments, verify_decode=False)
-            with tempfile.NamedTemporaryFile(
-                prefix=f".{destination.name}.", suffix=".tmp",
-                dir=destination.parent, delete=False,
-            ) as stream:
-                temporary = Path(stream.name)
-            try:
-                shutil.copyfile(work / "encoded/compressed_archive.zip", temporary)
-                with ZipFile(temporary, "a", compression=ZIP_DEFLATED) as archive:
-                    archive.writestr("manifest.json", json.dumps(manifest))
-                _publish_file(temporary, destination, overwrite=overwrite)
-            except Exception:
-                temporary.unlink(missing_ok=True)
-                raise
+            native = work / "encoded/compressed"
+            (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
+            pack_vmesh(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path, *, device=None) -> Sequence:
+        if device == "auto":
+            device = str(torch_device(import_module("torch"), device))
         source = Path(source).absolute()
+        if source.suffix.lower() != ".vmesh":
+            raise CodecError("KLT decoding requires .vmesh; migrate the legacy artifact explicitly")
+        if probe_codec(source) != self.id:
+            raise CodecError("VMESH does not contain KLT")
         temporary = tempfile.TemporaryDirectory(prefix="open4d-klt-decode-")
         work = Path(temporary.name)
         decoded = None
         try:
-            with ZipFile(source) as archive:
-                manifest = json.loads(archive.read("manifest.json"))
-                _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
-                _normalization(manifest)
-                members = [item for item in archive.infolist() if item.filename != "manifest.json"]
-                if any(Path(item.filename).is_absolute() or ".." in Path(item.filename).parts
-                       for item in members):
-                    raise CodecError("unsafe path in KLT artifact")
-                archive.extractall(work / "compressed", members)
-            _backend().decode_compressed(work / "compressed", work / "decoded", device)
+            unpack_vmesh(source, work / "compressed")
+            manifest = json.loads((work / "compressed/metadata.json").read_text(encoding="utf-8"))
+            _normalization(manifest)
+            try:
+                _backend().decode_compressed(work / "compressed", work / "decoded", device)
+            except (ValueError, KeyError, TypeError, RuntimeError, BadZipFile, pickle.UnpicklingError) as error:
+                raise CodecError(f"invalid KLT native payload: {error}") from error
             decoded = open_sequence(work / "decoded")
             if len(decoded) != len(manifest["frames"]):
                 raise CodecError(

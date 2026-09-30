@@ -282,12 +282,12 @@ class BrowserFusion:
 
     def run(self) -> None:
         self.args.output_dir.mkdir(parents=True, exist_ok=True)
-        self.server.start()
-        print(
-            "Browser viewer ready through Ubuntu 127.0.0.1:8888",
-            flush=True,
-        )
         try:
+            self.server.start()
+            print(
+                "Browser viewer ready through Ubuntu 127.0.0.1:8888",
+                flush=True,
+            )
             o3d.visualization.webrtc_server.enable_webrtc()
             o3d.visualization.draw(
                 [],
@@ -305,9 +305,13 @@ class BrowserFusion:
             self.stop = True
             if self.processor is not None:
                 self.processor.join(timeout=10.0)
-            self.save()
-            self.server.close()
-            self.mesh_worker.close()
+            try:
+                self.save()
+            finally:
+                try:
+                    self.server.close()
+                finally:
+                    self.mesh_worker.close()
             report = {
                 "status": "completed",
                 "viewer": "Open3D WebRTC",

@@ -21,7 +21,7 @@ def sequence() -> Sequence:
 
 
 def test_top_level_codec_round_trip_and_unload(tmp_path):
-    artifact = open4d.save(sequence(), tmp_path / "capture.o4d", codec=NumPyZipCodec())
+    artifact = open4d.save(sequence(), tmp_path / "capture.vmesh", codec=NumPyZipCodec())
 
     loaded = open4d.load(artifact, codec=NumPyZipCodec())
     np.testing.assert_array_equal(loaded[0].geometry.triangles, [[0, 1, 2]])
@@ -58,7 +58,7 @@ def test_top_level_load_rejects_conflicting_dispatch_overrides(tmp_path):
         open4d.load(path, format="obj", codec="npz")
 
 
-def test_top_level_load_dispatches_raw_vmesh_to_the_read_only_vdmc_decoder(
+def test_top_level_load_dispatches_vmesh_to_codec_detection(
     tmp_path, monkeypatch
 ):
     import open4d._api as implementation
@@ -79,22 +79,23 @@ def test_top_level_load_dispatches_raw_vmesh_to_the_read_only_vdmc_decoder(
     ) is expected
     assert received == {
         "source": path,
-        "codec": "vdmc",
+        "codec": None,
         "options": {"decoder": "/native/decoder", "fps": 24},
     }
 
 
 @pytest.mark.parametrize(
-    "name", ("capture", "frame.obj", "capture.unknown", "capture.vmesh")
+    "name", ("capture", "frame.obj", "capture.unknown")
 )
 def test_top_level_save_requires_a_sequence_file_extension(tmp_path, name):
     with pytest.raises(ValueError, match="sequence-file extension"):
         open4d.save(sequence(), tmp_path / name)
 
 
-def test_top_level_save_requires_a_codec_for_ambiguous_codec_suffix(tmp_path):
-    with pytest.raises(ValueError, match=r"ambiguous.*\.v4d.*codec"):
-        open4d.save(sequence(), tmp_path / "capture.v4d")
+@pytest.mark.parametrize("suffix", [".vmesh"])
+def test_top_level_save_requires_a_codec_for_ambiguous_codec_suffix(tmp_path, suffix):
+    with pytest.raises(ValueError, match="ambiguous.*codec"):
+        open4d.save(sequence(), tmp_path / f"capture{suffix}")
 
 
 def test_top_level_api_exports_visualize():
@@ -104,11 +105,11 @@ def test_top_level_api_exports_visualize():
 @pytest.mark.parametrize("codec", ["draco", "raw", "npz", "temporal-delta"])
 def test_utility_codecs_are_not_public_choices(tmp_path, codec):
     with pytest.raises(ValueError, match="unknown codec"):
-        open4d.encode(sequence(), tmp_path / "take.o4d", codec=codec)
+        open4d.encode(sequence(), tmp_path / "take.vmesh", codec=codec)
 
 
 def test_encoding_requires_an_explicit_codec(tmp_path):
     with pytest.raises(TypeError, match="codec"):
-        open4d.encode(sequence(), tmp_path / "take.o4d")
-    with pytest.raises(ValueError, match="sequence-file extension"):
-        open4d.save(sequence(), tmp_path / "take.o4d")
+        open4d.encode(sequence(), tmp_path / "take.vmesh")
+    with pytest.raises(ValueError, match="ambiguous.*codec"):
+        open4d.save(sequence(), tmp_path / "take.vmesh")

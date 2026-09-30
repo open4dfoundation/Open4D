@@ -1,0 +1,11 @@
+Repository instructions for all agents
+
+Never create random or unsolicited Markdown (.md) files in this repository.
+Create a new Markdown file only when the user explicitly requests that file.
+Update the relevant existing documentation when documenting code changes.
+Keep task plans, audit reports, progress notes, summaries, and scratch notes in
+the conversation unless the user explicitly requests a saved artifact.
+Do not evade this rule by creating unsolicited reports with another extension.
+Keep temporary files outside the repository and remove your temporary artifacts.
+Preserve existing useful documentation, licenses, and vendored documentation.
+Follow these instructions throughout the repository, including subdirectories.

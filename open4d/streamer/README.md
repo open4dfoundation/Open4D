@@ -290,7 +290,7 @@ from_source("captures/basketball_player", out, fps=10, frame_format="draco")
 
 The decoder is Google's, vendored under `client/vendor/draco` and served by the
 bundle server from this origin — never a CDN, which is what keeps the page free
-of external dependencies. `open4d[draco]` is needed on the encoding side only;
+of external dependencies. `DracoPy` is needed on the encoding side only;
 the client needs nothing installed.
 
 Lossy in two bounded ways, both in the clip's notes and measured in
