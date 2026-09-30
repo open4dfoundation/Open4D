@@ -445,9 +445,13 @@ def test_failed_gif_write_keeps_existing_output(tmp_path, monkeypatch, gif_scene
 
 
 def test_mesh_vmesh_path_reaches_player_and_releases_owned_payloads(tmp_path, monkeypatch):
+    from pathlib import Path
     from open4d.io._mesh import write_ply
-    from open4d.streamer.streamer.sequence import pack
     from open4d.visualization import _qt
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "streamer"))
+    from streamer.sequence import pack
+
     source = tmp_path / "frame.ply"
     mesh = sequence()[0].geometry
     write_ply(source, mesh.positions, mesh.triangles)
