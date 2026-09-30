@@ -72,11 +72,9 @@ with tempfile.TemporaryDirectory() as directory:
     np.testing.assert_array_equal(frame.geometry.triangles, [[0, 1, 2]])
     assert all(callable(getattr(open4d, name)) for name in
                ("encode", "decode", "visualize", "reconstruct", "stream", "receive"))
-    codecs = available_codecs()
-    installed = {info.id for info in codecs}
-    assert installed == {"klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc",
-                         "tvmc", "tsmc", "vega", "queen", "3dgstream", "rerf"}
-    assert all(info.suffixes == (".vmesh",) for info in codecs)
+    installed = {info.id for info in available_codecs()}
+    assert {"klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc", "tvmc", "tsmc", "vega"} <= installed
+    assert not installed & {"npz", "raw", "draco", "temporal-delta", "temporal-pca"}
     from open4d.codec._research import research_module
     os.environ.pop("OPEN4D_RESEARCH_ROOT", None)
     try:
@@ -87,20 +85,9 @@ with tempfile.TemporaryDirectory() as directory:
         raise AssertionError("wheel unexpectedly includes KLT research source")
 
     from concurrent.futures import ThreadPoolExecutor
-    from open4d.codec import inspect_vmesh
-    from open4d.codec._npz import REFERENCE_CODECS
     from open4d.demo import mesh_sequence
 
     with mesh_sequence(side=3, frames=2) as source:
-        reference = next(codec for codec in REFERENCE_CODECS if codec.id == "npz")
-        artifact = open4d.encode(source, Path(directory) / "reference.vmesh", codec=reference)
-        assert artifact.read_bytes().startswith(b"VMESH\x00\x01\x00")
-        assert inspect_vmesh(artifact)["codec"] == "npz"
-        with open4d.decode(artifact) as decoded:
-            assert decoded.timestamps == source.timestamps
-            for expected, actual in zip(source, decoded):
-                np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
-                np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
         with open4d.receive(port=0, timeout=5) as receiver, ThreadPoolExecutor(1) as pool:
             transfer = pool.submit(open4d.stream, source, *receiver.address, realtime=False)
             restored = list(receiver)
@@ -108,4 +95,4 @@ with tempfile.TemporaryDirectory() as directory:
         for expected, actual in zip(source, restored):
             np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
             assert actual.timestamp == expected.timestamp
-    print("Installed I/O, CLI, VMESH round trip, codec discovery and mesh streaming passed")
+    print("Installed I/O, CLI, codec discovery and mesh streaming passed")

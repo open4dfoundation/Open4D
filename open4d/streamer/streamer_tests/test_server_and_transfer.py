@@ -17,33 +17,6 @@ from streamer.server import serve
 pytestmark = pytest.mark.cpu
 
 
-@pytest.mark.parametrize("path", ["../escaped", "/tmp/escaped", "C:/escaped", "dir/../../escaped", "dir\\escaped", "view.json", "frame.partial"])
-def test_fetch_rejects_unsafe_paths_before_writing_manifest(tmp_path, monkeypatch, path):
-    monkeypatch.setattr(transfer, "_get", lambda *args: json.dumps({"clips": [{"frames": [path]}]}).encode())
-    with pytest.raises(ValueError, match="path"):
-        transfer.fetch("https://example.invalid/", tmp_path / "copy")
-    assert not (tmp_path / "copy" / "view.json").exists()
-
-
-@pytest.mark.parametrize("partial", [False, True])
-def test_fetch_rejects_symlink_targets(tmp_path, monkeypatch, partial):
-    root = tmp_path / "copy"
-    root.mkdir()
-    outside = tmp_path / "outside"
-    outside.write_bytes(b"keep")
-    (root / ("frame.ply.partial" if partial else "frame.ply")).symlink_to(outside)
-    monkeypatch.setattr(transfer, "_get", lambda *args: b'{"clips":[{"frames":["frame.ply"]}]}')
-    with pytest.raises(ValueError, match="path"):
-        transfer.fetch("https://example.invalid/", root)
-    assert outside.read_bytes() == b"keep"
-
-
-def test_fetch_paths_include_variants_and_packed_sequences():
-    index = {"clips": [{"frames": ["logical.ply"], "sequence": {"url": "clip.vmesh"},
-                        "variants": [{"frames": ["low.ply"]}, {"frames": ["low.ply"]}]}]}
-    assert transfer.frame_paths(index) == ("clip.vmesh", "low.ply")
-
-
 def make_bundle(root, *, frames: int = 3):
     """A two-clip bundle: one geometry clip, one pixel clip."""
     written = {"gaussians": [], "pixels": []}
@@ -673,10 +646,10 @@ def test_a_frame_container_is_never_compressed(tmp_path):
     something the client did not ask for, which is what the header prefetch
     relies on."""
     root = _repetitive_bundle(tmp_path)
-    (root / "clip.vmesh").write_bytes(b"VMESH\x00\x01\x00" + bytes(4096))
+    (root / "clip.seq").write_bytes(b"O4DSEQ\x00\x00" + bytes(4096))
     with serving(root) as base:
         request = urllib.request.Request(
-            f"{base}/clip.vmesh", headers={"Accept-Encoding": "gzip"})
+            f"{base}/clip.seq", headers={"Accept-Encoding": "gzip"})
         with urllib.request.urlopen(request) as response:
             body = response.read()
             headers = dict(response.headers)

@@ -46,7 +46,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Optional, Sequence
-from collections.abc import Mapping
 
 import numpy as np
 
@@ -99,15 +98,7 @@ class BitstreamPlayer:
         pca_channels: Sequence[int] = DEFAULT_PCA_CHANNELS,
         group_size: Optional[int] = None,
         device: str = "cuda",
-        render_bounds=None,
     ) -> None:
-        self.path = Path(compression_path).expanduser().resolve()
-        self.frames = self._available_frames()
-        if not self.frames:
-            raise FileNotFoundError(
-                f"{self.path} holds no ReRF bitstream: no header_<frame>.json. "
-                "Encode one with upstream's codec/compress.py."
-            )
         env.activate()
         with env.upstream_cwd():
             import mmcv
@@ -141,8 +132,9 @@ class BitstreamPlayer:
         }
 
         self.device = torch.device(device)
-        self.config_path = None if isinstance(config_path, Mapping) else Path(config_path).expanduser().resolve()
-        self.cfg = mmcv.Config(dict(config_path)) if self.config_path is None else mmcv.Config.fromfile(str(self.config_path))
+        self.config_path = Path(config_path).expanduser().resolve()
+        self.path = Path(compression_path).expanduser().resolve()
+        self.cfg = mmcv.Config.fromfile(str(self.config_path))
         self.corpus_dir = Path(self.cfg.data["datadir"]).expanduser()
         self.pca = bool(pca)
         self.pca_channels = tuple(int(channel) for channel in pca_channels)
@@ -150,6 +142,12 @@ class BitstreamPlayer:
         self.n_channel = int(self.cfg.fine_model_and_render["rgbnet_dim"]) + 1
         self.voxel_size = int(self.cfg.voxel_size)
 
+        self.frames = self._available_frames()
+        if not self.frames:
+            raise FileNotFoundError(
+                f"{self.path} holds no ReRF bitstream: no header_<frame>.json. "
+                "Encode one with upstream's codec/compress.py."
+            )
         # Upstream: `group_size = args.group_size if given else args.frame_num`.
         # Defaulting to the number of frames present plays a single-group
         # bitstream correctly without having to be told its own structure.
@@ -175,13 +173,7 @@ class BitstreamPlayer:
             )
         self.model.k0.eval()
 
-        if render_bounds is None:
-            near, far = inward_near_far(self.corpus_dir)
-        else:
-            near, far = render_bounds["near"], render_bounds["far"]
-            if (isinstance(near, bool) or isinstance(far, bool) or
-                    not np.isfinite([near, far]).all() or not 0 <= near < far):
-                raise ValueError("render bounds must be finite with 0 <= near < far")
+        near, far = inward_near_far(self.corpus_dir)
         self.render_kwargs = {
             "near": near,
             "far": far,

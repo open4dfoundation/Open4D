@@ -153,9 +153,6 @@ function createStudyRouter({ resultsRoot, shaper, tracesDir, layoutFile }) {
     }));
 
     router.post('/sessions/:id/trials/:position/finish', wrap(req => {
-        if (!live || live.session !== req.params.id || live.position !== Number(req.params.position)) {
-            throw Object.assign(new Error('this trial does not own the live link'), { statusCode: 409 });
-        }
         const shaping = shaper.status();
         const result = store.finishTrial(req.params.id, req.params.position, {
             ...(req.body || {}), shaping

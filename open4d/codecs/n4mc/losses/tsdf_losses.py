@@ -119,13 +119,14 @@ def compute_rd_loss(outputs: dict, target: torch.Tensor, config: dict) -> tuple[
         target=target,
         temperature=float(config.get("sign_temperature", 0.1)),
     )
-    lambda_ssim = float(config.get("lambda_ssim", 0.1))
+    '''
     ssim = ssim_loss(
         prediction=prediction,
         target=target,
         window_size=int(config.get("ssim_window_size", 5)),
         sigma=float(config.get("ssim_sigma", 1.5)),
-    ) if lambda_ssim else prediction.new_zeros(())
+    )
+    '''
     rate = outputs["rate_bpv"].float()
 
     total = (
@@ -133,7 +134,7 @@ def compute_rd_loss(outputs: dict, target: torch.Tensor, config: dict) -> tuple[
         + float(config.get("lambda_rec", 1.0)) * rec
         + float(config.get("lambda_band", 1.0)) * band
         + float(config.get("lambda_sign", 0.1)) * sign
-        + lambda_ssim * ssim
+        #+ float(config.get("lambda_ssim", 0.1)) * ssim
     )
     return total, {
         "total_loss": total.detach(),
@@ -141,5 +142,5 @@ def compute_rd_loss(outputs: dict, target: torch.Tensor, config: dict) -> tuple[
         "rec_loss": rec.detach(),
         "band_loss": band.detach(),
         "sign_loss": sign.detach(),
-        "ssim_loss": ssim.detach(),
+        #"ssim_loss": ssim.detach(),
     }

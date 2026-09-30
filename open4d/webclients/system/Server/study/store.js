@@ -18,7 +18,6 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { childDirectory } = require('../path-safety');
 
 const questionnaire = require('./questionnaire');
 const { participantIndex, trialOrder } = require('./order');
@@ -26,6 +25,7 @@ const { parseTrace, windowTrace, summarize } = require('./trace');
 
 const SCHEMA_VERSION = 1;
 const PARTICIPANT = /^[A-Za-z0-9._-]{1,40}$/;
+const SESSION_ID = /^[A-Za-z0-9._-]{1,80}$/;
 
 /**
  * Every method the comparison page knows, and whether it can follow a camera
@@ -116,7 +116,10 @@ class StudyStore {
     }
 
     _dir(sessionId) {
-        return childDirectory(this.root, sessionId, 'session id', 80);
+        if (!SESSION_ID.test(String(sessionId || ''))) {
+            throw Object.assign(new Error('invalid session id'), { statusCode: 400 });
+        }
+        return path.join(this.root, sessionId);
     }
 
     _read(sessionId, name) {
@@ -179,7 +182,7 @@ class StudyStore {
         // always gets the same row whatever order the methods were ticked in.
         const canonical = Object.keys(METHODS).filter(id => methods.includes(id));
         const { row, order } = trialOrder(canonical, index);
-        const id = `${participant}-${timestamp()}-${crypto.randomBytes(8).toString("hex")}`;
+        const id = `${participant}-${timestamp()}`;
         const trajectory = spec.trajectory ? validateTrajectory(spec.trajectory) : null;
 
         const session = {
@@ -206,7 +209,6 @@ class StudyStore {
                 : null,
             trials: order.map(entry => ({ ...entry, status: 'pending' }))
         };
-        fs.mkdirSync(this._dir(id));
         this._write(id, 'session.json', session);
         fs.writeFileSync(path.join(this._dir(id), 'trace.csv'), spec.trace.text);
         if (trajectory) this._write(id, 'trajectory.json', trajectory);
@@ -340,11 +342,8 @@ class StudyStore {
         ];
         const cell = value => {
             if (value === null || value === undefined) return '';
-            // Quoting CSV syntax alone does not prevent spreadsheet formulas.
-            const raw = String(value);
-            const text = typeof value === 'string' && /^[=+@\-\t\r\n]/.test(raw)
-                ? "'" + raw : raw;
-            return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+            const text = String(value);
+            return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
         };
         const rows = records.map(record => [
             record.session, record.participant, record.position + 1, record.label, record.method,
@@ -354,7 +353,7 @@ class StudyStore {
             record.questionnaire.timing.totalSeconds,
             ...metricKeys.map(key => record.metrics[key])
         ].map(cell).join(','));
-        return `${columns.map(cell).join(',')}\n${rows.join('\n')}${rows.length ? '\n' : ''}`;
+        return `${columns.join(',')}\n${rows.join('\n')}${rows.length ? '\n' : ''}`;
     }
 }
 

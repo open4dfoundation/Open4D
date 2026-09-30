@@ -77,9 +77,6 @@ class Comparison:
 
     def summary(self) -> "DirectionalSummary":
         """Aggregate the per-frame figures over the whole comparison."""
-        aggregate = mesh_metrics.SequenceComparison(
-            tuple(frame.error for frame in self.frames), (), self.peak, self.metric
-        )
         return DirectionalSummary(
             symmetric_rms=float(
                 np.sqrt(np.mean([f.error.symmetric_rms ** 2 for f in self.frames]))
@@ -88,7 +85,9 @@ class Comparison:
             worst_frame=int(
                 np.argmax([f.error.symmetric_rms for f in self.frames])
             ),
-            mean_psnr_db=aggregate.symmetric_psnr_db,
+            mean_psnr_db=float(
+                np.mean([f.error.symmetric_psnr_db for f in self.frames])
+            ),
         )
 
 
@@ -204,8 +203,7 @@ def resolve_clamp(
         return 0.0
     if percentile is None:
         return float(np.max(distances))
-    clamp = float(np.percentile(distances, percentile))
-    return clamp if clamp > 0 else float(np.max(distances))
+    return float(np.percentile(distances, percentile))
 
 
 def diffuse_intensity(frame: RenderFrame) -> np.ndarray:

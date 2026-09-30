@@ -110,15 +110,14 @@ class Bundle:
         *,
         title: str | None = None,
         source: Path | str | None = None,
-        fps: float | None = None,
+        fps: int = 30,
         scenes: dict[str, Any] | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:
         self.out_dir = Path(out_dir).expanduser().resolve()
         self.title = title or self.out_dir.name
         self.source = source
-        self.fps = 30.0 if fps is None else fps
-        self._infer_fps = fps is None
+        self.fps = fps
         self.scenes = scenes
         self.detail = detail
         self.clips: list[bundle.Clip] = []
@@ -158,8 +157,6 @@ class Bundle:
         because which rendition should be the default is a delivery decision
         (interchange? cheapest? middle?) and not one a byte count settles.
         """
-        if self._infer_fps and not self.clips:
-            self.fps = sequence.fps or 30.0
         parsed = [parse_rung(rung) for rung in rungs]
         if not parsed:
             raise ValueError(f"{name}: needs at least one rung")

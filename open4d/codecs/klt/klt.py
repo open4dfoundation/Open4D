@@ -19,9 +19,6 @@ SSIM against the ground-truth meshes (requires the helper viewpoint files).
 """
 
 import argparse
-from collections.abc import Mapping
-from io import BytesIO
-import math
 import os
 import time
 import zipfile
@@ -31,7 +28,6 @@ import numpy as np
 import torch
 import trimesh
 import zstd
-import zstandard
 from tqdm import tqdm
 
 try:
@@ -41,56 +37,6 @@ except ImportError:  # Direct ``python klt.py`` execution.
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-_MAX_VOXELS = 256 ** 3
-_MAX_INDEX_BYTES = 128 * 1024 * 1024
-_MAX_CONTEXT_BYTES = 16 * 1024 * 1024
-_MAX_METADATA_BYTES = 16 * 1024 * 1024
-
-
-def validate_decoder_context(context):
-    if (not isinstance(context, Mapping) or set(context) != {
-            "version", "basis", "mean", "block_size", "num_components"}
-            or type(context["version"]) is not int or context["version"] != 1):
-        raise ValueError("invalid KLT decoder context/version")
-    block, count = context["block_size"], context["num_components"]
-    if (type(block) is not int or not 1 <= block <= 16
-            or type(count) is not int or not 1 <= count <= min(block ** 3, 512)):
-        raise ValueError("KLT decoder dimensions outside limits")
-    for name, shape in (("basis", (count, block ** 3)), ("mean", (1, block ** 3))):
-        value = context[name]
-        if (not isinstance(value, torch.Tensor) or value.layout != torch.strided
-                or value.dtype != torch.float32 or tuple(value.shape) != shape
-                or not torch.isfinite(value).all()):
-            raise ValueError(f"invalid KLT decoder {name}")
-
-
-def _quantizer_metadata(path):
-    """Read bounded, non-object NPY members before NumPy allocates their arrays."""
-    if os.path.getsize(path) > _MAX_METADATA_BYTES:
-        raise ValueError("KLT quantizer file outside limits")
-    result = {}
-    with zipfile.ZipFile(path) as archive:
-        members = archive.infolist()
-        if (len(members) > 517 or sum(member.file_size for member in members) > _MAX_METADATA_BYTES
-                or len({member.filename for member in members}) != len(members)):
-            raise ValueError("KLT quantizer metadata outside limits")
-        for member in members:
-            name = member.filename
-            if not name.endswith(".npy") or "/" in name or "\\" in name:
-                raise ValueError("invalid KLT quantizer member")
-            data = archive.read(member)
-            stream = BytesIO(data)
-            version = np.lib.format.read_magic(stream)
-            readers = {(1, 0): np.lib.format.read_array_header_1_0,
-                       (2, 0): np.lib.format.read_array_header_2_0}
-            if version not in readers:
-                raise ValueError("unsupported KLT NPY version")
-            shape, _, dtype = readers[version](stream, max_header_size=4096)
-            if (dtype.hasobject or dtype.kind not in "iufUS"
-                    or math.prod(shape) * dtype.itemsize != len(data) - stream.tell()):
-                raise ValueError("invalid KLT NPY payload size/type")
-            result[name[:-4]] = np.load(BytesIO(data), allow_pickle=False, max_header_size=4096)
-    return result
 
 
 def extract_training_blocks_torch(tsdf_volumes, block_size=4):
@@ -192,11 +138,11 @@ def quantize_coeffs(coeffs, eigenvalues, K_total=256, max_iterations=100, tol=1e
     eigenvalues = eigenvalues.clamp(min=0)
     V_total = eigenvalues.sum()
     if V_total == 0:
-        K_h = torch.ones_like(eigenvalues, dtype=torch.long)
-    else:
-        stds = torch.sqrt(eigenvalues)
-        std_total = torch.sqrt(V_total)
-        K_h = torch.floor(K_total * stds / std_total).long().clamp(min=1)
+        raise ValueError("All eigenvalues are zero; cannot assign bins.")
+    stds = torch.sqrt(eigenvalues)
+    std_total = torch.sqrt(V_total)
+    K_h = torch.floor(K_total * stds / std_total).long()
+    K_h = torch.clamp(K_h, min=1)
 
     # Identify fixed dimensions (zero variance)
     fixed_dims = {}
@@ -298,66 +244,20 @@ def save_quantized_coeffs(
     np.savez_compressed(f"{output_path}_metadata.npz", **metadata)
 
 
-def load_quantized_coeffs(output_path, target_device=device, *, decoder=None):
-    metadata = _quantizer_metadata(f"{output_path}_metadata.npz")
-    for name, dimensions in (("indices_shape", 2), ("volume_shape", 3)):
-        value = metadata.get(name)
-        if (not isinstance(value, np.ndarray) or value.dtype != np.int64
-                or value.shape != (dimensions,) or np.any(value <= 0)):
-            raise ValueError(f"invalid KLT {name}")
+def load_quantized_coeffs(output_path, target_device=device):
+    metadata = np.load(f"{output_path}_metadata.npz", allow_pickle=False)
     shape = tuple(int(value) for value in metadata["indices_shape"])
-    volume_shape = tuple(int(value) for value in metadata["volume_shape"])
-    if (not 1 <= shape[1] <= 512 or len(set(volume_shape)) != 1
-            or not 2 <= volume_shape[0] <= 256 or math.prod(volume_shape) > _MAX_VOXELS):
-        raise ValueError("KLT frame dimensions outside limits")
-    value = metadata.get("indices_dtype")
-    if not isinstance(value, np.ndarray) or value.shape != () or value.dtype.kind not in "US":
-        raise ValueError("invalid KLT index dtype")
-    dtype = np.dtype(str(value))
-    if dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32")):
-        raise ValueError("unsupported KLT index dtype")
-    expected = math.prod(shape) * dtype.itemsize
-    if expected > _MAX_INDEX_BYTES:
-        raise ValueError("KLT coefficient storage outside limits")
-    if decoder is not None:
-        block = decoder["block_size"]
-        blocks = math.prod((axis + block - 1) // block for axis in volume_shape)
-        if shape != (blocks, decoder["num_components"]):
-            raise ValueError("KLT coefficient dimensions disagree with decoder/grid")
-    required = {"indices_shape", "indices_dtype", "volume_shape", "fixed_indices", "fixed_values",
-                *(f"bin_centers_{h}" for h in range(shape[1]))}
-    if set(metadata) != required:
-        raise ValueError("unexpected KLT quantizer metadata")
-    arrays = [metadata[f"bin_centers_{h}"] for h in range(shape[1])]
-    if any(value.dtype != np.float32 or value.ndim != 1 or not 0 < len(value) <= 65536
-           or not np.isfinite(value).all() for value in arrays):
-        raise ValueError("invalid KLT quantizer centers")
-    fixed, fixed_values = metadata["fixed_indices"], metadata["fixed_values"]
-    if (fixed.dtype != np.int64 or fixed.ndim != 1 or len(fixed) > shape[1]
-            or np.any(fixed < 0) or np.any(fixed >= shape[1]) or len(set(fixed.tolist())) != len(fixed)
-            or fixed_values.dtype != np.float32 or fixed_values.shape != fixed.shape
-            or not np.isfinite(fixed_values).all()):
-        raise ValueError("invalid KLT fixed coefficients")
+    dtype = np.dtype(str(metadata["indices_dtype"]))
     with open(f"{output_path}_indices.zst", "rb") as stream:
-        data = stream.read(_MAX_INDEX_BYTES + 1)
-    if len(data) > _MAX_INDEX_BYTES:
-        raise ValueError("KLT compressed coefficients outside limits")
-    try:
-        declared = zstandard.frame_content_size(data)
-        if declared not in (expected, zstandard.CONTENTSIZE_UNKNOWN):
-            raise ValueError("KLT coefficient frame size disagrees with quantizer")
-        decoded = zstandard.ZstdDecompressor(max_window_size=_MAX_INDEX_BYTES // 1024).decompress(
-            data, max_output_size=expected, allow_extra_data=False
-        )
-    except zstandard.ZstdError as error:
-        raise ValueError(f"invalid KLT coefficient stream: {error}") from error
-    if len(decoded) != expected:
-        raise ValueError("KLT coefficient output size disagrees with quantizer")
-    values = np.frombuffer(decoded, dtype=dtype).reshape(shape)
-    if any(np.any(values[:, h] >= len(centers)) for h, centers in enumerate(arrays)):
-        raise ValueError("KLT coefficient index outside quantizer")
-    centers = [torch.from_numpy(value.copy()).to(target_device) for value in arrays]
-    fixed_dims = dict(zip(fixed.tolist(), fixed_values.tolist()))
+        values = np.frombuffer(zstd.decompress(stream.read()), dtype=dtype).reshape(shape)
+    centers = [
+        torch.from_numpy(metadata[f"bin_centers_{h}"].copy()).to(target_device)
+        for h in range(shape[1])
+    ]
+    fixed_dims = dict(zip(
+        metadata["fixed_indices"].tolist(), metadata["fixed_values"].tolist()
+    ))
+    volume_shape = tuple(int(value) for value in metadata["volume_shape"])
     return torch.from_numpy(values.astype(np.int64)).to(target_device), centers, fixed_dims, volume_shape
 
 
@@ -427,15 +327,13 @@ def decode_compressed(input_path, output_path, target_device=None):
     """Decode saved KLT coefficients without access to encoder-side tensors."""
     target_device = torch.device(target_device or device)
     input_path, output_path = os.fspath(input_path), os.fspath(output_path)
-    context_path = os.path.join(input_path, "decoder_context.pt")
-    if os.path.getsize(context_path) > _MAX_CONTEXT_BYTES:
-        raise ValueError("KLT decoder context outside limits")
     decoder = torch.load(
-        context_path,
+        os.path.join(input_path, "decoder_context.pt"),
         map_location=target_device,
         weights_only=True,
     )
-    validate_decoder_context(decoder)
+    if decoder.get("schema") != "open4d.klt/v1":
+        raise ValueError(f"Unsupported KLT decoder context: {decoder.get('schema')!r}")
     os.makedirs(output_path, exist_ok=True)
     metadata_paths = sorted(glob(os.path.join(input_path, "*_quantized_metadata.npz")))
     if not metadata_paths:
@@ -444,7 +342,7 @@ def decode_compressed(input_path, output_path, target_device=None):
     for metadata_path in metadata_paths:
         prefix = metadata_path.removesuffix("_metadata.npz")
         indices, centers, fixed, volume_shape = load_quantized_coeffs(
-            prefix, target_device, decoder=decoder
+            prefix, target_device
         )
         coefficients = decompress_coeffs(
             indices, centers, fixed, H=indices.shape[1]
@@ -487,14 +385,13 @@ def run_compression(args, *, verify_decode=True):
     training_tsdfs = [load_tsdf_tensor(tsdf_paths[i]) for i in args.training_frames]
     training_blocks = extract_training_blocks_torch(training_tsdfs, block_size=args.block_size)
     klt_basis, mean_vec = compute_klt_basis_torch(training_blocks)
-    components = min(args.num_components, len(klt_basis))
     context_path = os.path.join(compressed_folder, "decoder_context.pt")
     torch.save({
-        "version": 1,
-        "basis": klt_basis[:components].cpu(),
+        "schema": "open4d.klt/v1",
+        "basis": klt_basis[:args.num_components].cpu(),
         "mean": mean_vec.cpu(),
         "block_size": args.block_size,
-        "num_components": components,
+        "num_components": args.num_components,
     }, context_path)
     decoder = (
         torch.load(context_path, map_location=device, weights_only=True)
@@ -516,7 +413,7 @@ def run_compression(args, *, verify_decode=True):
                                        num_components=args.num_components)
 
         # 2) Quantize + save
-        eigenvalues = coeffs.var(dim=0, unbiased=coeffs.shape[0] > 1)
+        eigenvalues = torch.linalg.eigvalsh(coeffs.T @ coeffs / (coeffs.shape[0] - 1))
         quantized_indices, bin_centers, fixed_dims = quantize_coeffs(
             coeffs, eigenvalues, K_total=args.k_total)
 

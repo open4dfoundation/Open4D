@@ -72,19 +72,19 @@ def component_count(mesh):
 
 
 @pytest.mark.parametrize("codec,suffix,options", (
-    ("klt", ".vmesh", {
+    ("klt", ".k4d", {
         "resolution": 7, "num_components": 4, "block_size": 2,
         "k_total": 32, "training_frames": (0,),
     }),
-    ("n4mc", ".vmesh", {
+    ("n4mc", ".n4d", {
         "resolution": 7, "epochs": 30, "hidden_channels": (4, 8),
         "latent_channels": 4, "learning_rate": 3e-3, "device": "cpu",
     }),
-    ("qndf", ".vmesh", {
+    ("qndf", ".q4d", {
         "coarse_size": 12, "num_subdiv": 0, "epochs": 2,
         "hidden_dim": 8, "num_layers": 2, "batch_size": 32, "device": "cpu",
     }),
-    ("qndf-int8", ".vmesh", {
+    ("qndf-int8", ".qi4d", {
         "coarse_size": 12, "num_subdiv": 0, "epochs": 2,
         "hidden_dim": 8, "num_layers": 2, "batch_size": 32, "device": "cpu",
     }),
@@ -132,7 +132,7 @@ def test_n4mc_auto_encode_and_decode_on_apple_mps_runtime(tmp_path):
     if not torch.backends.mps.is_available():
         pytest.skip("Apple Metal/MPS is unavailable")
     source = moving_cube()
-    artifact = encode_sequence(source, tmp_path/'automatic.vmesh', codec="n4mc",
+    artifact = encode_sequence(source, tmp_path/'automatic.n4d', codec="n4mc",
                                resolution=7, epochs=30, hidden_channels=(4, 8),
                                latent_channels=4, learning_rate=3e-3)
     with decode_sequence(artifact) as first, decode_sequence(artifact) as second:
@@ -145,15 +145,15 @@ def test_n4mc_auto_encode_and_decode_on_apple_mps_runtime(tmp_path):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("codec,suffix,options", (
-    ("n4mc", ".vmesh", {
+    ("n4mc", ".n4d", {
         "resolution": 7, "epochs": 30, "hidden_channels": (4, 8),
         "latent_channels": 4, "learning_rate": 3e-3,
     }),
-    ("qndf", ".vmesh", {
+    ("qndf", ".q4d", {
         "coarse_size": 12, "num_subdiv": 0, "epochs": 2,
         "hidden_dim": 8, "num_layers": 2, "batch_size": 32,
     }),
-    ("qndf-int8", ".vmesh", {
+    ("qndf-int8", ".qi4d", {
         "coarse_size": 12, "num_subdiv": 0, "epochs": 2,
         "hidden_dim": 8, "num_layers": 2, "batch_size": 32,
     }),

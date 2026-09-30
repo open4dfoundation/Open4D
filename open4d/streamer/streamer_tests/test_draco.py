@@ -38,7 +38,7 @@ pytestmark = pytest.mark.cpu
 NODE = shutil.which("node")
 requires_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
-DracoPy = pytest.importorskip("DracoPy", reason="Draco frames need DracoPy")
+DracoPy = pytest.importorskip("DracoPy", reason="Draco frames need open4d[draco]")
 
 CLIENT = viewer_path().parent
 VENDOR = CLIENT / "vendor" / "draco"

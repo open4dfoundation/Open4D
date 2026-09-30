@@ -13,7 +13,6 @@ is a pane that stays empty.
 from __future__ import annotations
 
 import json
-import os
 import struct
 from pathlib import Path
 
@@ -28,16 +27,11 @@ from rerf_stream.geometry import (
 
 # Same fixture and skip rule as `test_bitstream.py`: the decode needs a real
 # encoded bitstream and a GPU, and neither is present everywhere.
-RUN = Path(os.environ.get("OPEN4D_RERF_RUN", str(Path.home() / "open4d-data/rerf/g_basketball")))
+RUN = Path("/media/frozzzen/LocalDisk/nevo_runs/g_basketball")
 CONFIG, BITSTREAM = RUN / "config.py", RUN / "rerf"
 
-try:
-    _has_bitstream = CONFIG.is_file() and (BITSTREAM / "header_0.json").is_file()
-except OSError:
-    _has_bitstream = False
-
 requires_bitstream = pytest.mark.skipif(
-    not _has_bitstream,
+    not (CONFIG.is_file() and (BITSTREAM / "header_0.json").is_file()),
     reason="needs an encoded ReRF bitstream on this machine",
 )
 

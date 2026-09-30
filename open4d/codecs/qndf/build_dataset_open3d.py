@@ -107,18 +107,6 @@ def combine(meshes: list[o3d.geometry.TriangleMesh]) -> o3d.geometry.TriangleMes
     return result
 
 
-def simplify_component(original: o3d.geometry.TriangleMesh, budget: int):
-    """Increase a collapsing target until the component retains valid faces."""
-    target = int(budget)
-    original_faces = len(original.triangles)
-    while target < original_faces:
-        coarse = clean_mesh(original.simplify_quadric_decimation(target))
-        if len(coarse.triangles):
-            return coarse, target
-        target = min(original_faces, target * 2)
-    return o3d.geometry.TriangleMesh(original), original_faces
-
-
 def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
     """Create QNDF's coarse/subdivided input and projected training target."""
     source = o3d.geometry.TriangleMesh()
@@ -139,7 +127,13 @@ def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
     budgets = allocate_face_budget(face_counts, coarse_size)
     inputs, targets, details = [], [], []
     for index, (original, budget) in enumerate(zip(components, budgets)):
-        coarse, simplification_target = simplify_component(original, int(budget))
+        coarse = (
+            original.simplify_quadric_decimation(int(budget))
+            if budget < len(original.triangles) else o3d.geometry.TriangleMesh(original)
+        )
+        coarse = clean_mesh(coarse)
+        if not len(coarse.triangles):
+            raise RuntimeError(f"component {index} vanished during simplification")
         subdivided = o3d.geometry.TriangleMesh(coarse)
         for _ in range(num_subdiv):
             subdivided = subdivided.subdivide_midpoint(number_of_iterations=1)
@@ -153,19 +147,15 @@ def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
             "index": index, "original_vertices": len(original.vertices),
             "original_faces": len(original.triangles),
             "allocated_coarse_faces": int(budget),
-            "simplification_target_faces": simplification_target,
             "actual_coarse_vertices": len(coarse.vertices),
             "actual_coarse_faces": len(coarse.triangles),
             "training_vertices": len(subdivided.vertices),
             "training_faces": len(subdivided.triangles),
         })
     low, target = combine(inputs), combine(targets)
-    actual_coarse_faces = sum(component["actual_coarse_faces"] for component in details)
     metadata = {
         "bbox_min": bbox_min.tolist(), "scale": scale,
         "component_count": len(components), "coarse_face_budget": coarse_size,
-        "actual_coarse_faces": actual_coarse_faces,
-        "coarse_face_budget_overshoot": max(0, actual_coarse_faces - coarse_size),
         "num_subdiv": num_subdiv, "components": details,
     }
     return (

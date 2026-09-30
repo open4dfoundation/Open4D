@@ -95,9 +95,6 @@ namespace Framework
 
         public float GetTransformDistance(Matrix<float> R1, Matrix<float> R2, Vector<float> t1, Vector<float> t2)
         {
-            if (R1.Equals(R2) && t1.Equals(t2))
-                return 0;
-
             var dif = t1 - t2;
             var greenTerm = 2 * (dif).DotProduct(R1 * qSum);
             var blueTerm = -2 * (dif).DotProduct(R2 * qSum);

@@ -62,14 +62,16 @@ def representation_of(sequence: Sequence) -> Representation:
 def _write_draco(sequence: Sequence, frames_at: Path, bits: int) -> list[Path]:
     """One ``.drc`` per frame, encoded with the same Draco this repository vendors.
 
-    Per frame because a streaming client fetches frames. DracoPy is an optional
-    dependency of this exporter, independent of the public codec registry.
+    Per frame rather than one container for the sequence, because a streaming
+    client fetches frames: `open4d.save(..., codec="draco")` writes a `.d4d`
+    holding the whole sequence, which is the right shape for an archive and the
+    wrong one for a wire.
     """
     try:
         import DracoPy
     except ImportError as error:  # pragma: no cover - depends on the environment
         raise RuntimeError(
-            "Draco frames need the DracoPy binding: pip install 'DracoPy'"
+            "Draco frames need the DracoPy binding: pip install 'open4d[draco]'"
         ) from error
 
     written: list[Path] = []
@@ -196,7 +198,6 @@ def from_source(
     out_dir = Path(out_dir).expanduser().resolve()
     declared = inspect_sequence(source).timing_source
     with open4d.load(source, fps=fps if declared == "default" else None) as sequence:
-        playback_fps = sequence.fps or 30.0
         clip = from_sequence(
             sequence,
             out_dir,
@@ -215,6 +216,6 @@ def from_source(
         title=f"{clip.representation} — {clip.name}",
         source=str(source),
         clips=[clip],
-        fps=playback_fps,
+        fps=int(fps) if fps else 30,
     )
     return out_dir

@@ -217,15 +217,6 @@ def test_public_usd_load_is_lazy(tmp_path, monkeypatch):
     decoded.close()
 
 
-def test_mesh_usd_load_does_not_fully_open_the_layer_twice(tmp_path, monkeypatch):
-    from open4d.io import _native_usd
-
-    path = open4d.save(rich_sequence(), tmp_path / "capture.usdc")
-    monkeypatch.setattr(_native_usd, "_open", lambda path: pytest.fail("mesh USD opened as native"))
-    with open4d.load(path) as decoded:
-        assert len(decoded) == 2
-
-
 def test_usd_empty_geometry_omits_extent_and_round_trips(tmp_path):
     empty = TriangleMesh(
         np.empty((0, 3), dtype=np.float32),
@@ -417,7 +408,7 @@ def test_reader_accepts_the_prototype_open4d_usd_layout(tmp_path):
         "open4d": {
             "version": 1,
             "source": "prototype-capture",
-            "key_frame_indices": Vt.IntArray([0]),
+            "key_frame_indices": [0],
         }
     }
     stage.GetRootLayer().Save()

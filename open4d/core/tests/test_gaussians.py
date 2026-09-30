@@ -326,40 +326,19 @@ def test_real_vega_round_trip(tmp_path):
 
 def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch):
     import open4d
-    from open4d.codec import inspect_vmesh
-    from open4d.native import NativeSequence
+    from types import SimpleNamespace
 
     frames = [splats(), splats()]
-    output = tmp_path / "capture.vmesh"
+    output = tmp_path / "capture.vega"
     calls = []
-
     def encode(values, path, **options):
         calls.append((values, path, options))
-        native_bitstream(path)
-        return gaussians.VegaRun(path, tmp_path, sys.executable)
-
+        return SimpleNamespace(path=path)
     monkeypatch.setattr(gaussians, "encode_gaussians", encode)
+    monkeypatch.setattr(gaussians, "decode_gaussians", lambda path, **options: tuple(frames))
     assert open4d.encode(frames, output, codec="vega", key_iterations=10) == output
-    assert calls[0][0] is frames
-    assert calls[0][1].name == "native"
-    assert calls[0][2] == {"key_iterations": 10}
-    assert not calls[0][1].exists()
-    assert inspect_vmesh(output)["codec"] == "vega"
-    with open4d.decode(output) as restored:
-        assert isinstance(restored, NativeSequence)
-        assert restored.codec == "vega"
-        assert restored.frame_indices == (0, 1)
-        assert restored.timestamps == (0, 1 / 30)
-
-
-@pytest.mark.parametrize("extension", ["vega", "o4d", ""])
-def test_public_vega_output_requires_vmesh(tmp_path, monkeypatch, extension):
-    import open4d
-    monkeypatch.setattr(gaussians, "encode_gaussians", lambda *args, **kwargs: pytest.fail("native encoder launched"))
-    output = tmp_path / (f"capture.{extension}" if extension else "capture")
-    with pytest.raises(ValueError, match=".vmesh"):
-        open4d.encode([splats(), splats()], output, codec="vega")
-    assert not output.exists()
+    assert calls == [(frames, output, {"key_iterations": 10})]
+    assert open4d.decode(output) == tuple(frames)
 
 
 def test_public_reconstruction_dispatch(tmp_path, monkeypatch):

@@ -110,7 +110,7 @@ one and say so.
 | Folder of `.obj` or `.ply` frames | nothing |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
-| Standalone `.vmesh` with a mesh profile | the codec's configured decoder/runtime |
+| Raw MPEG V-DMC bitstream (`.vmesh`) | a compatible native V-DMC decoder |
 | One mesh file | as above |
 
 Frames are ordered by **the last number in the filename**, so `frame_2.obj` comes
@@ -118,11 +118,9 @@ before `frame_10.obj` — but `frame_003_qp9.obj` sorts on 9, not 3. A codec tha
 puts a parameter last will silently misalign every frame and look far worse than
 it is; rename before comparing. A frame with no faces is drawn as a point cloud.
 
-### Compressed VMESH sequences
+### Raw V-DMC bitstreams
 
-The VMESH descriptor selects the codec and preserves frame indices, timestamps
-and coordinate metadata. Configure that codec's runtime before loading. For
-example, a V-DMC profile needs its native decoder:
+Raw `.vmesh` input needs a compatible native decoder:
 
 ```bash
 export OPEN4D_VDMC_DECODER=/path/to/vmesh-decoder
@@ -130,10 +128,10 @@ export OPEN4D_VDMC_DECODER_CONFIG=/path/to/decoder.cfg  # optional
 python examples/visualization/visualize_sequence.py capture.vmesh --info
 ```
 
-The viewer displays decoded geometry. Open4D removes temporary decoded files
-when the sequence closes. `--fps N` overrides playback speed without replacing
-the stored VMESH timestamps. Native Gaussian and neural-field profiles use
-their representation-specific decode/render paths rather than this mesh viewer.
+This path is read-only and geometry-only. It defaults to 30 fps, accepts
+`--fps N`, and displays the coordinates emitted by the decoder. Open4D removes
+the temporary decoded OBJ files when the sequence closes. Use `.v4d` when the
+sequence also needs Open4D timestamps, metadata, and coordinate bounds.
 
 ## Flags
 
@@ -171,7 +169,7 @@ with open4d.load("capture.usdc") as sequence:
     print(len(sequence), sequence.duration, sequence.fps)
     open4d.visualize(sequence)
 
-open4d.visualize("capture.vmesh")
+open4d.visualize("capture.o4d")
 ```
 
 Loading and playback are lazy — frames decode on access. Frame directories and

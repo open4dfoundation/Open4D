@@ -6,7 +6,7 @@
     python examples/visualization/visualize_sequence.py my_capture.usdc
 
 Point it at your own data. A source is normally a whole-sequence file such as
-`.vmesh` with a mesh codec profile or a time-sampled `.usdc`. A folder
+`.o4d`, a time-sampled `.usdc`, or a raw V-DMC `.vmesh` bitstream. A folder
 holding one mesh per frame and a standalone mesh remain useful import paths.
 Meshes and point clouds are both handled: a frame with no faces is drawn as a
 point cloud.
@@ -131,7 +131,7 @@ def main() -> None:
         "path",
         type=Path,
         nargs="?",
-        help="your sequence: a .vmesh mesh profile or USD file; a frame "
+        help="your sequence: an .o4d, USD, or raw .vmesh file; a frame "
         "directory; or a standalone mesh import",
     )
     parser.add_argument(
@@ -141,8 +141,8 @@ def main() -> None:
         "--fps",
         type=float,
         default=None,
-        help="override playback; manifest-free frame directories or raw native "
-        "inputs also use this for imported timestamps (default: 30 fps)",
+        help="override playback; for a manifest-free frame directory or raw "
+        ".vmesh this also defines imported timestamps (default: 30 fps)",
     )
     parser.add_argument(
         "--up",

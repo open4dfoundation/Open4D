@@ -1,8 +1,6 @@
 import torch
 
-from open4d.codecs.n4mc.losses.tsdf_losses import (
-    compute_rd_loss, narrow_band_loss, sign_consistency_loss, ssim_loss,
-)
+from losses.tsdf_losses import compute_rd_loss, narrow_band_loss, sign_consistency_loss, ssim_loss
 
 
 def test_narrow_band_loss_focuses_on_surface():

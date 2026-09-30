@@ -47,12 +47,10 @@ namespace TVMEditor.Editing.CenterDeformation
                 }
 
                 // Divide by sum of weights
-                if (!float.IsFinite(weightSum) || weightSum < 0)
-                    throw new ArgumentException("Center deformation requires finite nonnegative affinity weights");
-                if (weightSum == 0)
-                    weightedDifference = DualQuaternion.Identity();
-                else
-                    weightedDifference = (weightedDifference / weightSum).Normalize();
+                weightedDifference /= weightSum;
+                // weightedDifference /= newPositions.Length;
+                // Normalize DQ
+                weightedDifference = weightedDifference.Normalize();
 
                 // Apply transformation to original center
                 newTransformations[i] = weightedDifference;

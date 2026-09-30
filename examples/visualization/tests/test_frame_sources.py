@@ -24,13 +24,13 @@ def test_example_helpers_treat_codec_artifacts_as_whole_sequences(tmp_path, monk
     from open4d.codec import _api
     from open4d.codec._npz import NumPyZipCodec
 
-    monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
+    monkeypatch.setitem(_api._CODECS, "fixture", NumPyZipCodec())
     mesh = TriangleMesh(
         [[0.0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]
     )
     artifact = open4d.save(
         Sequence(MemoryFrameProvider([Frame(0, 0.0, mesh)])),
-        tmp_path / "capture.vmesh", codec="npz",
+        tmp_path / "capture.o4d", codec="fixture",
     )
 
     assert frame_sources.source_kind(artifact) == "sequence-file"
@@ -72,11 +72,9 @@ def test_raw_vmesh_fps_is_forwarded_to_the_public_loader(tmp_path, monkeypatch):
     assert received == {"path": bitstream, "fps": 24}
 
 
-def test_standalone_vmesh_uses_artifact_timing(tmp_path, monkeypatch):
-    from open4d.codec._npz import NumPyZipCodec
-    mesh = TriangleMesh([[0., 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]])
-    source = NumPyZipCodec().encode(Sequence(MemoryFrameProvider([Frame(0, 1.25, mesh)])),
-                                   tmp_path / "capture.vmesh")
+def test_native_directory_uses_artifact_timing(tmp_path, monkeypatch):
+    source = tmp_path / "capture.tvmc"
+    source.mkdir()
     received = {}
     monkeypatch.setattr(frame_sources, "_open_sequence",
                         lambda path, **options: received.update(path=path, **options))

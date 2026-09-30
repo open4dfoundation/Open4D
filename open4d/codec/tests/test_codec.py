@@ -73,7 +73,7 @@ def sequence() -> Sequence:
 
 def test_numpy_zip_round_trip_is_lazy_and_preserves_geometry(tmp_path, monkeypatch):
     source = sequence()
-    artifact = encode_sequence(source, tmp_path / "take.vmesh", codec=REFERENCE)
+    artifact = encode_sequence(source, tmp_path / "take.o4d", codec=REFERENCE)
     calls = []
     import open4d.codec._npz as implementation
 
@@ -107,7 +107,7 @@ def test_numpy_zip_round_trip_is_lazy_and_preserves_geometry(tmp_path, monkeypat
 
 def test_numpy_zip_preserves_reversed_view_timing_policy(tmp_path):
     source = sequence()[::-1]
-    artifact = encode_sequence(source, tmp_path / "reversed.vmesh", codec=REFERENCE)
+    artifact = encode_sequence(source, tmp_path / "reversed.o4d", codec=REFERENCE)
 
     decoded = decode_sequence(artifact, codec=REFERENCE)
 
@@ -132,24 +132,25 @@ def test_n4mc_component_filter_is_disabled_by_default():
 
 
 def test_encode_refuses_to_overwrite_and_decode_rejects_corruption(tmp_path):
-    artifact = encode_sequence(sequence(), tmp_path / "take.vmesh", codec=REFERENCE)
+    artifact = encode_sequence(sequence(), tmp_path / "take.o4d", codec=REFERENCE)
     with pytest.raises(FileExistsError):
         encode_sequence(sequence(), artifact, codec=REFERENCE)
-    broken = tmp_path / "broken.vmesh"
+    broken = tmp_path / "broken.o4d"
     broken.write_bytes(b"not a zip")
-    with pytest.raises(CodecError, match="VMESH"):
+    with pytest.raises(CodecError, match="invalid Open4D artifact"):
         decode_sequence(broken, codec=REFERENCE)
 
 
-@pytest.mark.parametrize("codec", (REFERENCE, DRACO_CODEC, None))
-def test_non_object_codec_manifests_are_codec_errors(tmp_path, codec):
-    from open4d.codec import _vmesh_format
-    artifact = tmp_path / "invalid.vmesh"
-    with artifact.open("wb") as stream:
-        stream.write(_vmesh_format._MAGIC)
-        _vmesh_format._write_record(stream, 0, 0, 0, b"[]")
+@pytest.mark.parametrize(("suffix", "codec"), (
+    (".o4d", REFERENCE), (".d4d", DRACO_CODEC), (".v4d", None),
+))
+def test_non_object_codec_manifests_are_codec_errors(tmp_path, suffix, codec):
+    artifact = tmp_path / f"invalid{suffix}"
+    with ZipFile(artifact, "w") as archive:
+        archive.writestr("manifest.json", "[]")
+
     options = {} if codec is None else {"codec": codec}
-    with pytest.raises(CodecError, match="schema"):
+    with pytest.raises(CodecError, match="manifest|no known codec"):
         decode_sequence(artifact, **options)
 
 
@@ -157,7 +158,7 @@ def test_encode_failure_removes_partial_artifact(tmp_path):
     bad = Sequence(
         MemoryFrameProvider(tuple(sequence()), metadata={"bad": object()})
     )
-    destination = tmp_path / "bad.vmesh"
+    destination = tmp_path / "bad.o4d"
 
     with pytest.raises(CodecError, match="not serializable"):
         encode_sequence(bad, destination, codec=REFERENCE)
@@ -178,7 +179,7 @@ def test_codec_import_does_not_load_optional_dependencies():
 @pytest.mark.parametrize("codec", REFERENCE_CODECS)
 def test_reference_codecs_remain_usable_privately(tmp_path, codec):
     source = sequence()
-    artifact = encode_sequence(source, tmp_path / f"{codec}.vmesh", codec=codec)
+    artifact = encode_sequence(source, tmp_path / f"{codec}.o4d", codec=codec)
     decoded = decode_sequence(artifact, codec=codec)
 
     assert len(decoded) == len(source)
@@ -208,7 +209,7 @@ def test_public_registry_contains_research_codecs_only():
 
 
 @pytest.mark.parametrize("codec,suffix", (
-    (TEMPORAL_DELTA_CODEC, ".vmesh"), (TEMPORAL_PCA_CODEC, ".vmesh"),
+    (TEMPORAL_DELTA_CODEC, ".td4d"), (TEMPORAL_PCA_CODEC, ".tp4d"),
 ))
 def test_temporal_codecs_fresh_decode_without_processes(tmp_path, codec, suffix):
     frames = [Frame(
@@ -245,7 +246,7 @@ def test_encode_accepts_a_supported_path_without_codec_specific_io(tmp_path):
         "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="ascii"
     )
 
-    artifact = encode_sequence(source, tmp_path / "frame.vmesh", fps=24, codec=REFERENCE)
+    artifact = encode_sequence(source, tmp_path / "frame.o4d", fps=24, codec=REFERENCE)
     decoded = decode_sequence(artifact, codec=REFERENCE)
 
     assert len(decoded) == 1
@@ -255,14 +256,13 @@ def test_encode_accepts_a_supported_path_without_codec_specific_io(tmp_path):
 
 def test_path_reader_options_are_rejected_for_an_open_sequence(tmp_path):
     with pytest.raises(TypeError, match="apply only to path inputs"):
-        encode_sequence(sequence(), tmp_path / "frame.vmesh", fps=24, codec=REFERENCE)
+        encode_sequence(sequence(), tmp_path / "frame.o4d", fps=24, codec=REFERENCE)
 
 
-def test_caller_supplied_codec_is_used_without_a_registry(tmp_path, monkeypatch):
-    import open4d.codec._api as implementation
+def test_caller_supplied_codec_is_used_without_a_registry(tmp_path):
     class Codec:
         id = "memory-test"
-        suffixes = (".vmesh",)
+        suffixes = (".test",)
 
         def encode(self, value, destination, **options):
             self.value = value
@@ -275,8 +275,7 @@ def test_caller_supplied_codec_is_used_without_a_registry(tmp_path, monkeypatch)
             return sequence()
 
     codec = Codec()
-    destination = tmp_path / "sequence.vmesh"
-    monkeypatch.setattr(implementation, "probe_codec", lambda path: codec.id)
+    destination = tmp_path / "sequence.test"
     assert encode_sequence(sequence(), destination, codec=codec, level=2) == destination
     assert codec.options == {"level": 2}
     assert len(decode_sequence(destination, codec=codec, verify=True)) == 2
@@ -290,7 +289,7 @@ def test_registered_codec_can_be_selected_by_name(tmp_path, monkeypatch):
 
     class RegisteredCodec:
         id = "registered-test"
-        suffixes = (".vmesh",)
+        suffixes = (".registered",)
 
         def encode(self, value, destination, **options):
             return destination
@@ -301,8 +300,7 @@ def test_registered_codec_can_be_selected_by_name(tmp_path, monkeypatch):
     codec = RegisteredCodec()
     register_codec(codec)
 
-    destination = tmp_path / "sequence.vmesh"
-    monkeypatch.setattr(implementation, "probe_codec", lambda path: codec.id)
+    destination = tmp_path / "sequence.registered"
     assert encode_sequence(sequence(), destination, codec=codec.id) == destination
     assert len(decode_sequence(destination)) == 2
     with pytest.raises(ValueError, match="already registered"):
@@ -317,8 +315,7 @@ def test_missing_research_source_has_an_actionable_error(tmp_path, monkeypatch):
         research_module("klt.klt")
 
 
-@pytest.mark.parametrize("identifier,suffix", [("vdmc", ".vmesh"), ("faster_vdmc", ".vmesh")])
-def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch, identifier, suffix):
+def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch):
     import open4d.codec._vmesh as implementation
 
     mesh = TriangleMesh([[-2.0, 3, 4], [2, 3, 4], [-2, 7, 4]], [[0, 1, 2]])
@@ -349,9 +346,9 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
             )
 
     monkeypatch.setattr(implementation, "_run", native_call)
-    codec = VMeshCodec(identifier)
+    codec = VMeshCodec("native-test")
     artifact = codec.encode(
-        clean, tmp_path / ("sequence" + suffix), encoder=executable,
+        clean, tmp_path / "sequence.v4d", encoder=executable,
     )
     decoded = codec.decode(artifact, decoder=executable)
 
@@ -363,7 +360,7 @@ def test_vmesh_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch
     assert decoded.has_vertex_correspondence is None
     assert decoded.timestamps == clean.timestamps
     assert [label for _, label in calls] == [
-        f"{identifier} encoder", f"{identifier} decoder"
+        "native-test encoder", "native-test decoder"
     ]
     assert all(isinstance(command, list) for command, _ in calls)
     assert "--encodeDisplacements=1" in calls[0][0]
@@ -423,8 +420,7 @@ def test_vmesh_decodes_a_raw_bitstream_without_an_open4d_manifest(
     assert not decoded_directory.exists()
 
 
-@pytest.mark.parametrize("requested", ["cpu", "auto"])
-def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, requested):
+def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch):
     import open4d.codec._klt as implementation
 
     source = Sequence(MemoryFrameProvider([
@@ -441,11 +437,9 @@ def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, req
 
     def compress(args, *, verify_decode):
         calls.append(("encode", args.num_frames, verify_decode))
-        native = Path(args.output_path) / "compressed"
-        native.mkdir(parents=True)
-        (native / "decoder_context.pt").write_bytes(b"saved-klt-context")
-        (native / "000000_quantized_indices.zst").write_bytes(b"indices")
-        (native / "000000_quantized_metadata.npz").write_bytes(b"quantizer")
+        Path(args.output_path).mkdir()
+        with ZipFile(Path(args.output_path) / "compressed_archive.zip", "w") as archive:
+            archive.writestr("decoder_context.pt", b"saved-klt-context")
 
     def decompress(source, destination, device):
         calls.append(("decode", (source / "decoder_context.pt").read_bytes(), device))
@@ -455,15 +449,11 @@ def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, req
         )
 
     monkeypatch.setattr(implementation, "write_tsdf_sequence", prepare)
-    if requested == "auto":
-        torch = pytest.importorskip("torch")
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
     monkeypatch.setattr(implementation, "_backend", lambda: SimpleNamespace(
         run_compression=compress, decode_compressed=decompress,
     ))
-    artifact = encode_sequence(source, tmp_path / "take.vmesh", codec="klt")
-    decoded = decode_sequence(artifact, device=requested)
+    artifact = encode_sequence(source, tmp_path / "take.k4d", codec="klt")
+    decoded = decode_sequence(artifact, device="cpu")
 
     assert calls == [
         ("prepare", 1, 63), ("encode", 1, False),
@@ -477,7 +467,7 @@ def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, req
 def test_encode_rejects_text_overwrite_flag_without_changing_output(tmp_path):
     from open4d.codec._npz import NumPyZipCodec
 
-    output = tmp_path / "existing.vmesh"
+    output = tmp_path / "existing.o4d"
     output.write_bytes(b"original")
     with pytest.raises(TypeError, match="overwrite"):
         encode_sequence(sequence(), output, codec=NumPyZipCodec(), overwrite="false")

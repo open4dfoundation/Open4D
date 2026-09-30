@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from open4d.core import Sequence
 from open4d.gaussians import GaussianSplats, NeuralGaussianFrame, VEGA_CODEC
@@ -14,15 +13,9 @@ from collections.abc import Iterable
 from ._klt import KLT_CODEC
 from ._n4mc import N4MC_CODEC
 from ._protocol import Codec, CodecError
-from ._metadata import require_vmesh_destination
 from ._qndf import QNDF_CODEC, QNDF_INT8_CODEC
 from ._tracked import TVMC_CODEC, TSMC_CODEC
 from ._vmesh import FASTER_VDMC_CODEC, VDMC_CODEC
-from ._vmesh_format import probe_codec
-from ._native_temporal import QUEEN_CODEC, GSTREAM_CODEC, RERF_CODEC
-
-if TYPE_CHECKING:
-    from open4d.native import NativeSequence
 
 
 @dataclass(frozen=True)
@@ -39,7 +32,6 @@ _CODECS: dict[str, Codec] = {
     codec.id: codec for codec in (
         KLT_CODEC, N4MC_CODEC, QNDF_CODEC, QNDF_INT8_CODEC,
         VDMC_CODEC, FASTER_VDMC_CODEC, TVMC_CODEC, TSMC_CODEC, VEGA_CODEC,
-        QUEEN_CODEC, GSTREAM_CODEC, RERF_CODEC,
     )
 }
 
@@ -87,9 +79,6 @@ def _codec(value: str | Codec | None, path: Path) -> Codec:
             if callable(getattr(codec, "can_decode", None)) and codec.can_decode(path)
         ]
         if not detected:
-            # can_decode is a boolean probe; surface why a damaged, archived or
-            # retired-wrapper file was rejected before the generic error.
-            probe_codec(path)
             raise CodecError(f"invalid Open4D artifact {path}: no known codec manifest")
         matches = detected
     if len(matches) != 1:
@@ -106,16 +95,14 @@ def encode_sequence(
     fps: float | None = None,
     **options,
 ) -> Path:
-    """Encode mesh/Gaussian data, or carry native temporal neural outputs."""
+    """Encode meshes (Sequence or path), or GaussianSplats frames with Vega."""
     if "overwrite" in options and not isinstance(options["overwrite"], bool):
         raise TypeError("overwrite must be bool")
-    path = require_vmesh_destination(destination)
+    path = Path(destination)
     implementation = _codec(codec, path)
-    if getattr(implementation, "representation", "triangle_mesh") != "triangle_mesh":
-        if input_format is not None:
-            raise TypeError("input_format applies only to mesh path inputs")
-        if fps is not None:
-            options["fps"] = fps
+    if getattr(implementation, "representation", "triangle_mesh") == "gaussian_splats":
+        if input_format is not None or fps is not None:
+            raise TypeError("input_format and fps apply only to mesh path inputs")
         return implementation.encode(sequence, path, **options)
     if isinstance(sequence, Sequence):
         if input_format is not None or fps is not None:
@@ -131,32 +118,7 @@ def encode_sequence(
 
 def decode_sequence(
     source: str | Path, *, codec: str | Codec | None = None, **options
-) -> Sequence | NativeSequence | tuple[NeuralGaussianFrame, ...]:
-    """Open mesh reconstructions, native temporal state."""
+) -> Sequence | tuple[NeuralGaussianFrame, ...]:
+    """Decode a mesh Sequence or Vega frames using a named or inferred codec."""
     path = Path(source)
-    if path.suffix.lower() == ".vmesh" and not path.is_dir():
-        detected = probe_codec(path)
-        if detected is not None:
-            selected = codec if isinstance(codec, str) else getattr(codec, "id", None)
-            if selected is not None and selected != detected:
-                raise CodecError(f".vmesh contains {detected}, but codec={selected!r} was requested")
-            if "fps" in options:
-                raise TypeError("VMESH stores frame timestamps; fps cannot override them")
-            if detected == "frames":
-                if options:
-                    raise TypeError("frame delivery VMESH accepts no native decoder options")
-                from open4d._streamer import _require
-                _require()
-                from streamer.sequence import open_frames
-                return open_frames(path)
-            if detected not in _CODECS and (codec is None or codec == detected):
-                from ._npz import REFERENCE_CODECS
-                from ._draco import DRACO_CODEC
-                from ._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC
-                private = {item.id: item for item in (*REFERENCE_CODECS, DRACO_CODEC, TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC)}
-                codec = private.get(detected, detected)
-            else:
-                codec = detected if codec is None else codec
-        elif codec is None:
-            codec = "vdmc"
     return _codec(codec, path).decode(path, **options)
