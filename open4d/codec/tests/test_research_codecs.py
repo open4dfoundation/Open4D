@@ -14,6 +14,34 @@ from open4d.io import open_sequence, write_sequence
 pytestmark = [pytest.mark.gpu, pytest.mark.slow]
 
 
+def test_tsmc_gpu_solver_repeats_exactly():
+    import subprocess
+
+    python = os.environ.get("OPEN4D_TEST_TSMC_PYTHON")
+    if not python:
+        pytest.skip("set OPEN4D_TEST_TSMC_PYTHON to the CUDA TSMC environment")
+    backend = Path(__file__).resolve().parents[2] / "codecs/tsmc/tsmc"
+    subprocess.run([python, "-c", """
+import sys
+import numpy as np
+import cupy as cp
+import cupyx.scipy.sparse as sparse
+sys.path.insert(0, sys.argv[1])
+from util import solve_sparse_least_squares_cg
+rng = np.random.default_rng(41)
+A = rng.normal(size=(257, 128)).astype(np.float32)
+A[rng.random(A.shape) < .7] = 0
+expected = rng.normal(size=(128, 3)).astype(np.float32)
+matrix = sparse.csr_matrix(cp.asarray(A))
+rhs = cp.asarray(A @ expected)
+results = [cp.asnumpy(solve_sparse_least_squares_cg(
+    matrix, rhs, maxiter=500, tol=1e-6)) for _ in range(6)]
+np.testing.assert_allclose(results[0], expected, rtol=1e-4, atol=1e-4)
+for result in results[1:]:
+    np.testing.assert_array_equal(result, results[0])
+""", str(backend)], check=True, timeout=120)
+
+
 def surface_rms_fraction(expected, actual, seed):
     pcu = pytest.importorskip("point_cloud_utils")
     clouds = []
@@ -73,8 +101,8 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
             num_layers=3, batch_size=256, device="cuda:0",
         ),
     }
-    suffix = {"klt": ".k4d", "n4mc": ".n4d", "qndf": ".q4d",
-              "qndf-int8": ".qi4d"}[codec]
+    suffix = {"klt": ".vmesh", "n4mc": ".vmesh", "qndf": ".vmesh",
+              "qndf-int8": ".vmesh"}[codec]
     artifact = encode_sequence(
         input_path, tmp_path / f"rafa-{codec}{suffix}",
         codec=codec,
@@ -96,6 +124,7 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
         exported = write_sequence(
             first, tmp_path / f"{codec}-{input_format}-{output_format}",
             format=output_format,
+            allow_lossy=output_format == "stl",
         )
         assert len(open_sequence(exported)) == 2
     first.close()

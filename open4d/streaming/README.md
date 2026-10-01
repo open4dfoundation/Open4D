@@ -43,6 +43,9 @@ source .venv/bin/activate
 python -m pip install numpy opencv-python zstandard
 ```
 
+From an Open4D checkout, `python -m pip install -e '.[capture]'` installs the
+Python capture dependencies, including Open3D and Zstandard.
+
 Install a CUDA-enabled Open3D build in that environment. The standard pip wheel
 may not include CUDA. Verify the installation:
 

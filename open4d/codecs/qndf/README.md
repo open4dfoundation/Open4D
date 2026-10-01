@@ -45,6 +45,12 @@ all connected components, and simplifies, subdivides, and projects each componen
 independently. A JSON transform is saved beside the training pair so decoded
 vertices can be restored to the input coordinate system.
 
+The coarse-face budget specifies a target. If decimation removes every triangle
+of a component, the builder increases that component's target until it retains
+valid faces, keeping the original component as the final fallback. This can
+exceed the requested budget. Transform metadata records each allocated and used
+target, `actual_coarse_faces`, and `coarse_face_budget_overshoot`.
+
 Run the complete basketball sequence with:
 
 ```bash

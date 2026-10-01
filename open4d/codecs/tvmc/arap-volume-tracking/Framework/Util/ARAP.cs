@@ -21,6 +21,8 @@ namespace Framework
         public static Transform GetTransformUnweighted(Vector4[] pts1, Vector4[] pts2, List<int> ind)
         {
             int n = ind.Count;
+            if (n == 0)
+                throw new ArgumentException("ARAP requires at least one point", nameof(ind));
 
             Vector4[] a = new Vector4[n];
             Vector4[] b = new Vector4[n];
@@ -94,6 +96,8 @@ namespace Framework
             Vector4 cB = new Vector4();
             float wSum = 0;
             int n = a.Length;
+            if (n == 0)
+                throw new ArgumentException("ARAP requires at least one point", nameof(a));
 
             //Compute weighted centroids
             for (int i = 0; i < n; i++)
@@ -102,6 +106,9 @@ namespace Framework
                 cA += weights[i] * a[i];
                 cB += weights[i] * b[i];
             }
+
+            if (!float.IsFinite(wSum) || wSum <= 0)
+                throw new ArgumentException("ARAP requires a finite positive total weight", nameof(weights));
 
             cA /= wSum;
             cB /= wSum;

@@ -1143,7 +1143,10 @@ def read_triangle_mesh_with_trimesh(avatar_name, enable_post_processing=False):
     return mesh
 
 def solve_sparse_least_squares_cg(L_star_gpu, D_hat_gpu, maxiter=500, tol=1e-6):
-    A_T = L_star_gpu.transpose()
+    L_star_gpu = L_star_gpu.astype(cp.float64)
+    D_hat_gpu = cp.asarray(D_hat_gpu, dtype=cp.float64)
+    # CSC dense multiplication uses unordered GPU accumulation; CSR is repeatable.
+    A_T = L_star_gpu.transpose().tocsr()
     AtA = A_T @ L_star_gpu
     AtB = A_T @ D_hat_gpu
 

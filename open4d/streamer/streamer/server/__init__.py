@@ -218,11 +218,11 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         # A packed clip is opaque: the frames inside keep their own type, which
         # the manifest names, so guessing one for the container would only be
         # wrong. See streamer/sequence.py.
-        ".seq": "application/octet-stream",
+        ".vmesh": "application/octet-stream",
     }
 
     def do_GET(self):  # noqa: N802 - the base class names it
-        if self.path in VIEWER_ROUTES:
+        if self.path.split("?", 1)[0] in VIEWER_ROUTES:
             return self._send_viewer()
         if self.path.split("?", 1)[0] == STATS_ROUTE:
             return self._send_stats()
@@ -245,7 +245,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_HEAD(self):  # noqa: N802
-        if self.path in VIEWER_ROUTES:
+        if self.path.split("?", 1)[0] in VIEWER_ROUTES:
             return self._send_viewer(body=False)
         self._offer_ranges = True
         return super().do_HEAD()

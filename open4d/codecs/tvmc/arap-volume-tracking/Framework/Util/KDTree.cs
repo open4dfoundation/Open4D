@@ -70,6 +70,10 @@ namespace Framework
 
         public KDTree(Vector4[] points)
         {
+            for (int i = 0; i < points.Length; i++)
+                if (!float.IsFinite(points[i].X) || !float.IsFinite(points[i].Y) || !float.IsFinite(points[i].Z))
+                    throw new ArgumentException("KD-tree points must have finite XYZ coordinates", nameof(points));
+
             this.pnts = points;
             List<int> list = new List<int>();
             for (int i = 0; i < points.Length; i++)
