@@ -135,9 +135,10 @@ def eventually(predicate, timeout: float = 5.0):
 # -------------------------------------------------------------- sending ---
 
 
-def test_root_serves_the_client_page(served):
+@pytest.mark.parametrize("route", ["/", "/?validation=1", "/index.html?validation=1", "/viewer.html?validation=1"])
+def test_root_serves_the_client_page(served, route):
     _, base, _ = served
-    status, body, content_type = get(base + "/")
+    status, body, content_type = get(base + route)
     assert status == 200
     assert content_type.startswith("text/html")
     assert b"REPRESENTATIONS" in body
