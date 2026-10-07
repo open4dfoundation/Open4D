@@ -90,6 +90,7 @@ versions may change the public API.
 
 ### Fixed
 
+- TSMC compression retains a matrix when only one PCA component is selected.
 - 3DGStream native import fills omitted decoder settings from the run's saved
   arguments when a partial training configuration is supplied.
 - Release checks accept a reviewed ledger with recorded maintainer approval;

@@ -327,6 +327,7 @@ jobs:
           python -m pip install 'build>=1.2'
           python -m build --outdir "$RUNNER_TEMP/extras-dist"
           python -m venv "$RUNNER_TEMP/extras"
+          "$RUNNER_TEMP/extras/bin/python" -m pip install --upgrade pip
           "$RUNNER_TEMP/extras/bin/python" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           wheel=("$RUNNER_TEMP"/extras-dist/open4d-*.whl)
           "$RUNNER_TEMP/extras/bin/python" -m pip install "${wheel[0]}[all]"

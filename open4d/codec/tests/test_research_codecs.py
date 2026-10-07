@@ -42,6 +42,35 @@ for result in results[1:]:
 """, str(backend)], check=True, timeout=120)
 
 
+def test_tsmc_single_component_survives_fresh_process_decode(tmp_path):
+    import subprocess
+    import sys
+    from open4d.codec import unpack_o4d
+
+    source = os.environ.get("OPEN4D_TEST_TSMC_SEQUENCE")
+    if not source:
+        pytest.skip("set OPEN4D_TEST_TSMC_SEQUENCE to a prepared two-frame mesh sequence")
+    artifact = encode_sequence(source, tmp_path / "single.o4d", codec="tsmc",
+                               num_centers=40, grid_resolution=32, components=1)
+    native = unpack_o4d(artifact, tmp_path / "native")
+    with np.load(native / "entropy_model.npz", allow_pickle=False) as model:
+        assert model["shape"][1] == 1
+    exported = tmp_path / "fresh.usdc"
+    subprocess.run([sys.executable, "-c", """
+import sys
+import open4d
+with open4d.decode(sys.argv[1]) as sequence:
+    assert len(sequence) == 2
+    assert all(len(f.geometry.positions) and len(f.geometry.triangles) for f in sequence)
+    open4d.save(sequence, sys.argv[2])
+""", str(artifact), str(exported)], check=True, timeout=300)
+    with open_sequence(source) as original, open_sequence(exported) as fresh, decode_sequence(artifact) as repeated:
+        assert fresh.timestamps == repeated.timestamps == original.timestamps
+        for expected, actual in zip(fresh, repeated, strict=True):
+            np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
+            np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
+
+
 def surface_rms_fraction(expected, actual, seed):
     pcu = pytest.importorskip("point_cloud_utils")
     clouds = []

@@ -163,7 +163,7 @@ mesh.compute_adjacency_list()
 
 
 # Reduced trajectory matrix from PCA
-S = np.loadtxt(os.path.join(output_path, "S_matrix.txt"))
+S = np.loadtxt(os.path.join(output_path, "S_matrix.txt"), ndmin=2)
 #print(S.shape, S)
 # Select anchor points
 anchor_indices = np.linspace(0, len(mesh.vertices)-1, 2000, dtype=int)
