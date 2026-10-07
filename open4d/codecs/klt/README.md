@@ -2,8 +2,7 @@
 
 KLT (Karhunen–Loève Transform) baseline for time-varying mesh compression via
 TSDF volumes. This is the classical linear-transform baseline used to benchmark
-the neural codecs in Open4D (N4MC, QNDF). It was promoted out of `N4MC` into a
-self-contained module.
+the neural codecs in Open4D (N4MC, QNDF).
 
 ## Method
 
@@ -59,9 +58,6 @@ python klt.py \
     --num_components 128 --block_size 8 --voxel_grid_res 127 \
     --k_total 16384 --training_frames 1 --num_frames 100
 ```
-
-Reference operating points (block_size 8): `num_components 16 → ~2.4 Mbps`,
-`32 → ~4 Mbps`, `128 → ~7 Mbps`.
 
 Add evaluation against ground-truth meshes (needs the `SSIM/view_0*.json`
 viewpoint files under the dataset root):

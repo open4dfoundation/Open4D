@@ -39,6 +39,14 @@ The pieces, smallest first:
     Any `open4d.Sequence` as a bundle -- which is how Open4D's own mesh and
     point-cloud sequences, in any format `open4d.load` reads, reach this
     client.
+``gaussians``
+    The same for Open4D's Gaussian sequences: a QUEEN or 3DGStream
+    `GaussianRun`, a Gaussian `NativeSequence`, Vega's decoded frames, or a
+    list of `GaussianSplats`, written as 3DGS PLY or ``.splat`` frames.
+``score``
+    What each rung of a mesh or point-cloud clip is worth, measured against the
+    sequence it came from with `open4d.compare_sequences`. `metrics` is the
+    pixel counterpart, for clips that have a captured reference instead.
 ``adopt``
     Frames a method exported in another interpreter, taken into a bundle. Some
     methods cannot be driven from here at all: ReRF's entropy coder is a
@@ -95,11 +103,13 @@ from . import (
     client,
     codecs,
     export,
+    gaussians,
     link,
     live,
     monitor,
     playback,
     representations,
+    score,
     server,
     session,
     transfer,
@@ -154,6 +164,7 @@ __all__ = [
     "client",
     "codecs",
     "export",
+    "gaussians",
     "link",
     "live",
     "fetch",
@@ -164,6 +175,7 @@ __all__ = [
     "monitor",
     "playback",
     "representations",
+    "score",
     "server",
     "serve",
     "session",

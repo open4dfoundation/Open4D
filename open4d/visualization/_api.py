@@ -76,14 +76,14 @@ def _open_source(source: Sequence | str | os.PathLike[str]) -> tuple[Sequence, b
     if isinstance(source, (str, os.PathLike)):
         from open4d import _api as public_api
 
-        from open4d.codec import available_codecs
+        from open4d.codec._vmesh_format import is_mesh_profile
 
         suffix = Path(source).suffix.lower()
-        if any(suffix in info.suffixes and info.representation != "triangle_mesh"
-               for info in available_codecs()):
+        if suffix == ".vmesh" and not is_mesh_profile(source):
             raise TypeError("the Qt viewer takes mesh sequences; Gaussian runs need their native renderer")
         sequence = public_api.load(source)
         if not isinstance(sequence, Sequence):
+            sequence.close()
             raise TypeError("the Qt viewer takes an open4d.Sequence")
         return sequence, True
     raise TypeError("source must be an open4d.Sequence or path-like sequence source")

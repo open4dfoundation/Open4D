@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a new capability or a change to existing behavior.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How the API, command or output would look. A short code sketch helps.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use now, or other designs you considered.
+  - type: textarea
+    id: context
+    attributes:
+      label: Data and environment
+      description: |
+        Input type (mesh sequence, RGB-D capture, camera images, Gaussian splats), sequence
+        size, codec, and hardware, if they matter for the request.

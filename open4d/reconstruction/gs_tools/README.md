@@ -1,16 +1,13 @@
 # gs-tools
 
-- `environment.yml` — the one environment both are built and run in.
-- `simple-knn/` — one copy, QUEEN's, whose added `<float.h>`/`<cfloat>` includes
-  are what let it compile under GCC 13. Both trees import it as `simple_knn._C`,
-  by module name, so moving it here changed nothing in either.
-- `glm/` — one copy. All three rasterizers vendored byte-identical trees, and it
-  is header-only, so sharing it is only an `-I` path.
-- `SIBR_viewers/` — one copy of the interactive viewer, 3DGStream's, which is a
-  strict superset of QUEEN's: the 463 files they shared were byte-identical and
-  the 63 extra are documentation images. Not needed to train or evaluate.
-  `src/projects/gaussianviewer` is the one that renders Gaussian splats; it is
-  force-added, because SIBR's own `.gitignore` excludes `src/projects/*`.
+Shared CUDA environment, rasterizers, exporters and comparison viewer for QUEEN,
+3DGStream, Vega and ReRF.
+
+- `environment.yml`: training environment for QUEEN and 3DGStream.
+- `simple-knn/`: QUEEN's copy, with GCC 13 include fixes.
+- `glm/`: shared header-only dependency for the three rasterizers.
+- `SIBR_viewers/`: optional Linux viewer; not needed for training or evaluation.
+  `src/projects/gaussianviewer` is tracked despite SIBR's ignore rule.
 
 ## Setup
 
@@ -30,30 +27,30 @@ Then build the five CUDA extensions from `open4d/reconstruction/`, all with
 
 Build on ext4. On an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter`.
 
+Run `gs-tools doctor` to check the environment and test each rasterizer at a
+distance of one unit. Older builds cull splats within four units, leaving
+object-scale scenes black.
+
+For MiDaS (`timm==0.6.13`), create a separate environment using
+`requirements-midas.txt`, run QUEEN's `scripts/patch_timm.py` there, and download
+weights with `scripts/setup.sh --midas-weights`. Cache one depth map per camera
+in `depth_priors/`, then enable the cache during training:
+
+    gs-tools depth-prior -s scene --python /path/to/midas-env/bin/python
+    gs-tools train --method queen -s scene -m run --depth-priors
+
 ## Comparing methods: Explore and Compare
 
-`gs-tools view` is a comparison tool, not a file browser. Clips are grouped by
-**scene** and **method**, several methods share one viewport, and there are two
-modes because there are two honest ways to put reconstructions side by side:
+`gs-tools view` groups clips by scene and method in a shared viewport:
 
-**Explore** — a free camera, shared by every pane. Only methods that ship
-Gaussians can appear, because there is nothing else to aim a free camera at. Any
-difference you see between panes is the reconstruction, not the viewpoint.
+- **Explore:** shared free camera for Gaussian outputs.
+- **Compare:** captured camera poses, with independent camera and time controls.
+  Renders Gaussians and ReRF (`--rig-views`) beside the captured photographs.
+  `A|B` enables a draggable wipe between panes.
 
-**Compare** — the scene's own **capture rig** as the camera path, with camera and
-time scrubbed independently. Gaussian methods are rendered at the selected rig
-pose; ReRF is rendered there too (`--rig-views`); and the captured photograph is
-shown as a third method. This is the mode a volumetric representation and a
-photograph can both join, and the one a PSNR/SSIM number could be attached to.
-`A|B` wipes between two panes with a draggable handle.
+`gs_tools/cameras.py` reads the eight ORBIT camera poses from `transforms.json`.
+Vega uses ORBIT world coordinates; ReRF renders at its training views.
 
-The camera path is not invented. `gs_tools/cameras.py` reads it out of the ORBIT
-corpus's own `transforms.json` — the eight cameras that captured the scene —
-which is what makes ground truth available at every station and means nothing
-has to be registered: Vega's Gaussians are already in ORBIT world coordinates,
-and ReRF is rendered at its own training views, which *are* those cameras.
-
-    # everything, in one page: 9 Vega objects, ReRF at 8 rig cameras, the photographs
     gs-tools view \
       -i results/vega-gaussian/prepared-final \
          /media/frozzzen/DataDrive/ORBIT_datasets_gaussian \
@@ -63,79 +60,50 @@ and ReRF is rendered at its own training views, which *are* those cameras.
     # just Vega, free camera
     gs-tools view -i results/vega-gaussian/prepared-final --objects basketball
 
-The whole view state lives in the URL fragment, so a particular comparison is a
-link:
+The URL fragment stores the comparison state:
 
     #scene=basketball&mode=compare&camera=0&methods=vega,rerf,captured&wipe=1
 
-### What the comparison does and does not license
+### Comparison limits
 
-- **No held-out view.** All eight cameras were training views for both Vega and
-  ReRF (`nevo_corpus.json` records no holdout, and Vega refines against all
-  eight). This measures reconstruction, not generalisation. A real held-out view
-  means re-preparing the corpus with a holdout and retraining.
-- **Vega colour is baked** — see below. Its *geometry* at a rig pose is exact.
-- **ReRF's framing differs from the captured pane.** The pose matches; the crop
-  does not, because ReRF renders at its training images' size and intrinsics
-  (1920x1080) while the corpus captured 4:3. Compare content, not pixel
-  positions. Aligning the intrinsics is the obvious next step and is not done.
-- **The rig is eight coplanar cameras.** Neither silhouette carving nor a
-  photometric fit recovers what no camera saw, so a path far off that plane
-  makes every method look broken for reasons belonging to the capture.
-  `cameras.ring_path` stays on the ring.
+- All eight rig cameras were training views for Vega and ReRF. These comparisons
+  measure reconstruction; held-out evaluation requires retraining with a holdout.
+- Vega exports bake colour from one direction (see below).
+- ReRF uses its training intrinsics at 1920x1080; captured images are 4:3. Poses
+  match, but crops and pixel positions differ.
+- The eight cameras are coplanar. Reconstruction outside the observed plane is
+  limited; `cameras.ring_path` stays on the ring.
 
 ## Viewing output: Vega and ReRF
 
-`SIBR_gaussianViewer_app` below opens a 3DGS run directory on a Linux box with a
-display. Two of the things in `open4d/reconstruction` cannot be opened that way
-at all, for different reasons, and `gs-tools export` / `gs-tools view` are what
-make them viewable:
+Exports are directories of frames plus `view.json`, played by the browser client
+in `streamer.client`:
 
-- **Vega** stores per-object `frame_XXXX.pt` chunks holding geometry only, with
-  colour in a hierarchical hash grid queried per Gaussian per view direction at
-  render time. Nothing but Vega can read it. The exporter drives Vega's own
-  `StreamingPlayer` and colour model and writes **one 3DGS PLY per frame**, so
-  the result opens in the bundled viewer, in SuperSplat, or in SIBR.
-- **ReRF** (what the NeVo baseline vendors and streams) stores a DCT-coded,
-  arithmetic-coded feature voxel grid -- not Gaussians, so there is no PLY to
-  write. Its only decoder is its own, and that only runs under Python 3.8. The
-  adapter runs `rerf_render.py` and bundles the **images** it produces.
+| Method | Export |
+| --- | --- |
+| Vega | `StreamingPlayer` decodes geometry and evaluates colour into one 3DGS PLY per frame |
+| ReRF | `rerf_render.py` produces images using its Python 3.8 runtime |
+| QUEEN / 3DGStream | copies saved 3DGS PLYs and writes a manifest |
 
-- **QUEEN and 3DGStream** already store 3DGS PLYs, so the exporter copies them
-  and writes a manifest -- no decode, no conversion. Three unrelated on-disk
-  layouts are resolved by `gs_tools.outputs.gaussian_frames`: QUEEN's
-  `frames/NNNN/`, 3DGStream's per-frame `frameNNNNNN/point_cloud/iteration_N/`,
-  and a single frame's `point_cloud/iteration_N/`. The highest iteration is the
-  frame; 3DGStream's `added/` is skipped, since it holds only that frame's new
-  Gaussians rather than the scene.
+`gs_tools.outputs.gaussian_frames` resolves QUEEN's `frames/NNNN/`, 3DGStream's
+`frameNNNNNN/point_cloud/iteration_N/`, and single-frame
+`point_cloud/iteration_N/` layouts. It selects the highest iteration; standalone
+`added/` files contain only the new Gaussians and are not full frames.
 
-All land in the same shape -- a directory of frames plus a `view.json` -- and
-`gs-tools view` serves it to the browser client in `streamer.client`, which is
-the point: the GPU box usually has no display, and SIBR needs one (X11
-forwarding does not help, see below). The streaming half of this -- the manifest,
-the server and that client -- lives in `../streamer`; this module produces
-bundles and does not serve them.
-
-    # a 3DGS run, its own PLYs, copied
     gs-tools view -i ~/runs/coffee_martini --scene-name coffee_martini --method-name queen
 
-    # the same run at 32 bytes per Gaussian instead of 248
     gs-tools export -i ~/runs/coffee_martini --frame-format splat -o /tmp/bundle
 
-`--frame-format splat` re-encodes to `gs_tools.io.splat`'s fixed 32 bytes:
-measured 5.2x smaller on a degree-3 QUEEN run (73.8 MB -> 14.1 MB a frame).
-Position and scale survive exactly; colour, opacity and rotation quantise to 8
-bits; **every SH band above degree 0 is dropped**, so appearance stops changing
-with view direction. Worth it for delivery, wrong as an archive -- the PLY stays
-the source of truth.
+`--frame-format splat` uses 32 bytes per Gaussian. Positions and scales remain
+exact; colour, opacity and rotation are quantized to 8 bits. SH bands above
+degree 0 are dropped, removing view-dependent appearance. Keep PLY for archival
+use.
 
-`--scene-name` is what lets a 3DGS run share a `Compare` viewport with another
-method's clip of the same subject. Without it the scene is named after the run
-directory, because a 3DGS run records its subject nowhere reliable. Note that
-`--scene-name` and `--method-name` apply to *every* source in one invocation, so
-two runs of different subjects want two `export` calls.
+Set `--scene-name` to compare runs of the same subject. Otherwise the run's
+directory supplies its scene name. `--scene-name` and `--method-name` apply to
+all sources in one invocation; export different subjects separately.
 
-    # what is this directory?
+    # Inspect a reconstruction run
     gs-tools inspect -i ~/nevo_runs/g_basketball
 
     # Vega: decode one object's 30 frames to PLY and serve them
@@ -158,40 +126,23 @@ note that the server has no authentication of any kind. Without `-o` the bundle
 goes to a cache directory keyed by the source path, and a second `view` of the
 same source reuses it; `--force` rebuilds.
 
-### What the exports do and do not preserve
+### Export limits
 
-- **Vega colour is baked.** A PLY's `f_dc` is one colour per Gaussian; Vega's is
-  view-dependent. Colour is evaluated once from `--bake-azimuth` (default 0°)
-  and frozen, so orbiting in the viewer does not change appearance the way a
-  real Vega client would. Re-export at another azimuth to see it from
-  elsewhere. The export is `sh_degree 0` and says so in the viewer.
-- **Vega geometry is exact.** Position, scale, rotation and opacity round-trip
-  bit-for-bit; verified against `diff_gaussian_rasterization` on the decoded
-  Gaussians.
-- **ReRF gets no free camera.** The clip is whatever camera it was rendered at
-  -- upstream's orbit, or the rig cameras with `--rig-views`. Turning occupied
-  voxels into one Gaussian each would give a free camera, but its appearance
-  would not be what ReRF reconstructs, so it is not offered.
-- **`--render_360 N` is not a full orbit.** Upstream computes
-  `angle = 2*pi*i/360`, so 30 frames sweep 29 degrees, and it advances time with
-  the camera -- the two cannot be separated. `--rig-views` renders at the capture
-  cameras instead, and advances the decode once per *timestep* rather than once
-  per image, so every view of one instant comes from the same decoded volume.
-- **ReRF's codec settings are inferred, not remembered.** Upstream requires
-  `--pca`/`--pca_chs`/`--group_size` to match between compress and render and
-  nothing enforces it, so `gs_tools.methods.rerf.bitstream_info` reads them back
-  off the per-frame headers: entry count and channel split give the PCA
-  configuration, single-entry frames give the key frames. Override with
-  `--pca-chs`, `--group-size`, `--no-pca` if the inference is ever wrong.
-- **`render_360_rerf_<n>` does not name a bitstream.** Two bitstreams in one run
-  render to the same directory and the second overwrites the first. A bundle
-  keeps them apart; the run directory does not. This is why bundling existing
-  renders is the default and `--bitstream` is required to render one of several.
+- **Vega:** colour is evaluated once at `--bake-azimuth` (default 0°), producing
+  `sh_degree 0` PLYs. Positions, scales, rotations and opacity remain exact.
+- **ReRF images:** viewpoints are fixed by the renders. `--rig-views` renders
+  each timestep at the capture cameras from the same decoded volume.
+- **`--render_360 N`:** upstream uses `angle = 2*pi*i/360`, so 30 frames cover
+  29 degrees and advance time with the camera.
+- **ReRF configuration:** `gs_tools.methods.rerf.bitstream_info` infers PCA
+  channels and group keys from per-frame headers. Override with `--pca-chs`,
+  `--group-size` or `--no-pca` when needed.
+- **ReRF output directories:** different bitstreams can overwrite the same
+  `render_360_rerf_<n>` directory. Bundles separate them; `--bitstream` is required
+  when rendering one of several bitstreams.
 
-ReRF runs in its own Python 3.8 environment (`conda activate nevo`; see
-`../nevo/README.md`). `gs-tools` finds that interpreter as a sibling conda
-environment of the current one -- override with `$OPEN4D_RERF_PYTHON` or
-`--rerf-python`.
+ReRF needs a separate Python 3.8 environment. See
+[`../rerf/README.md`](../rerf/README.md) for its dependencies.
 
 ## The SIBR viewer
 
@@ -209,27 +160,6 @@ X11 forwarding does not help: XQuartz offers indirect GLX at roughly OpenGL 2.1.
 That produces `install/bin/SIBR_gaussianViewer_app`, plus `SIBR_remoteGaussian_app`
 for attaching to a training run. Point it at a 3DGS-format model directory.
 
-Upstream SIBR last shipped 2024-01-30 and does not build on a current
-distribution, so this copy carries fixes. Four are in-tree:
-
-- `core/video/FFmpegVideoEncoder.cpp` — FFmpeg 5 removed `av_register_all`,
-  `AVStream::codec` and `avcodec_encode_video2`. Ported to
-  `avcodec_send_frame`/`avcodec_receive_packet` with a separately allocated
-  context copied into `codecpar`.
-- `core/video/VideoUtils.hpp` — a structured binding over `std::vector<uint>`,
-  copy-pasted from the `std::map` template. Also returned an uninitialised value
-  when every bin was empty.
-- `core/raycaster/Raycaster.{hpp,cpp}` — Embree 4 renamed `RTCIntersectContext`
-  and moved it behind an arguments struct. Selected by `__has_include`, so
-  Embree 3 and 4 both work.
-- `core/raycaster/CMakeLists.txt` — linked `-lembree`, which no distribution
-  ships; now `find_library` over `embree4 embree3 embree`.
-
-The fifth, the `<cstdint>` above, cannot be committed: `extlibs/` is line 1 of
-SIBR's own `.gitignore` and is re-fetched by cmake.
-
-Verified 2026-08-13: builds clean on Ubuntu 24.04 / GCC 13.3 / Embree 4.3,
-binary links with no unresolved libraries and starts. Rendering was not
-exercised — that needs a display, and the box had none free.
-
-
+This copy includes FFmpeg 5 API fixes, an empty-bin fix in `VideoUtils.hpp`, and
+Embree 3/4 compatibility and library discovery in `core/raycaster/`. The
+`<cstdint>` fix above must be reapplied after CMake fetches `extlibs/`.

@@ -10,6 +10,7 @@ from open4d.core import Sequence
 
 if TYPE_CHECKING:
     from open4d.gaussians import GaussianSplats, NeuralGaussianFrame
+    from open4d.native import NativeSequence
 
 
 class CodecError(RuntimeError):
@@ -26,5 +27,7 @@ class Codec(Protocol):
     def encode(self, sequence: Sequence | Iterable[GaussianSplats], destination: Path, **options) -> Path:
         """Encode *sequence* into *destination*."""
 
-    def decode(self, source: Path, **options) -> Sequence | tuple[NeuralGaussianFrame, ...]:
+    def decode(
+        self, source: Path, **options
+    ) -> Sequence | NativeSequence | tuple[NeuralGaussianFrame, ...]:
         """Open a decoded sequence backed by *source*."""

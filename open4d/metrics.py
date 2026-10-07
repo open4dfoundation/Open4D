@@ -7,6 +7,7 @@ on vertex density. SciPy is required only when a comparison runs.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import os
 from typing import NamedTuple
 
 import numpy as np
@@ -267,9 +268,40 @@ class SequenceComparison:
         return int(np.argmax([frame.symmetric_rms for frame in self.frames]))
 
 
+def _describe(loaded: object) -> str:
+    representation = getattr(loaded, "representation", None)
+    if representation is not None:
+        codec = getattr(loaded, "codec", None)
+        suffix = f" ({codec})" if codec else ""
+        return f"a {representation} representation{suffix}"
+    if isinstance(loaded, tuple):
+        kinds = sorted({type(item).__name__ for item in loaded})
+        return f"a tuple of {', '.join(kinds) or 'nothing'}"
+    return f"a {type(loaded).__name__}"
+
+
+def _open_mesh_sequence(source: object, role: str, opened: list[Sequence]) -> Sequence:
+    """Return a caller-owned Sequence as is, or open a path and record it."""
+    if isinstance(source, Sequence):
+        return source
+    from ._api import load  # Deferred: open4d._api imports most of the package.
+
+    loaded = load(source)
+    if isinstance(loaded, Sequence):
+        opened.append(loaded)
+        return loaded
+    close = getattr(loaded, "close", None)
+    if callable(close):
+        close()
+    raise TypeError(
+        f"{role} {os.fspath(source)!r} opened as {_describe(loaded)}, not a mesh "
+        "Sequence; compare_sequences measures triangle mesh vertices only"
+    )
+
+
 def compare_sequences(
-    reference: Sequence,
-    decoded: Sequence,
+    reference: Sequence | str | os.PathLike[str],
+    decoded: Sequence | str | os.PathLike[str],
     *,
     metric: str = "point",
     peak: float | None = None,
@@ -277,15 +309,45 @@ def compare_sequences(
 ) -> SequenceComparison:
     """Compare equal-length sequences with matching timestamps, in order.
 
+    Each input is an open4d.Sequence or a path that open4d.load opens as a
+    mesh Sequence, such as a frame folder, a mesh .vmesh, or a .usdc. Paths
+    are opened with default load options and closed before returning; pass
+    a Sequence to choose options. Caller-owned sequences remain open. Paths
+    that hold Gaussian or neural-field data raise TypeError.
+
     timestamp_tolerance is an absolute tolerance in seconds. No alignment or
     resampling is performed. By default, peak is the largest reference frame's
-    bounding-box diagonal. Input sequences remain open; only errors are retained.
+    bounding-box diagonal. Only errors are retained.
     """
     _validate_options(metric, peak)
-    if not isinstance(reference, Sequence) or not isinstance(decoded, Sequence):
-        raise TypeError("reference and decoded must be Sequence objects")
+    accepted = (Sequence, str, os.PathLike)
+    if not isinstance(reference, accepted) or not isinstance(decoded, accepted):
+        raise TypeError(
+            "reference and decoded must be Sequence objects or paths (str or os.PathLike)"
+        )
     if not np.isfinite(timestamp_tolerance) or timestamp_tolerance < 0:
         raise ValueError("timestamp_tolerance must be finite and nonnegative")
+    opened: list[Sequence] = []
+    try:
+        reference = _open_mesh_sequence(reference, "reference", opened)
+        decoded = _open_mesh_sequence(decoded, "decoded", opened)
+        return _compare_open_sequences(
+            reference, decoded, metric=metric, peak=peak,
+            timestamp_tolerance=timestamp_tolerance,
+        )
+    finally:
+        for sequence in reversed(opened):
+            sequence.close()
+
+
+def _compare_open_sequences(
+    reference: Sequence,
+    decoded: Sequence,
+    *,
+    metric: str,
+    peak: float | None,
+    timestamp_tolerance: float,
+) -> SequenceComparison:
     if len(reference) != len(decoded):
         raise ValueError("sequences must have the same frame count")
     if len(reference) == 0:

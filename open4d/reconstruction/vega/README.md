@@ -1,50 +1,27 @@
 # Vega (ORBIT adaptation)
 
-A lean baseline implementing the core techniques of:
+Adaptation of:
 
 > Gunjoong Kim, Seonghoon Park, Jeho Lee, Chanyoung Jung, Hyungchol Jun, Hojung Cha.
 > **"Vega: Fully Immersive Mobile Volumetric Video Streaming with 3D Gaussian Splatting."**
 > ACM MobiCom 2025.
 
-Vega is a 3D Gaussian Splatting (3DGS) volumetric video system, structurally
-different from every other baseline in this repo (which stream Draco-encoded
-point clouds or HEVC-encoded RGBD video). This directory only implements the
-paper itself, driven by the real ORBIT corpus:
+CUDA implementation of Vega's encoding and rendering algorithms for ORBIT:
 
-- **Mobile-friendly 3DGS video encoding** (paper §5): Group-of-Volumes (GOV)
-  key/residual structure, hierarchical color encoding (Instant-NGP-style big
-  hash for key frames / tiny hash for residual frames + a shared MLP),
-  dynamicity-based object filtering (Eq. 1-4), and a greedy GOV
-  rate-distortion optimizer (Eq. 5-7).
-- **View-adaptive rendering pipeline** (paper §6): object-level early culling
-  against the view frustum, and priority-based task scheduling across
-  simulated CPU/GPU/NPU processors under a per-frame deadline (Eq. 8-9),
-  using per-task latencies **actually measured** on this workstation's GPU/CPU
-  (see `vega/profiling.py`) rather than a real mobile SoC.
+- GOV key/residual frames, hierarchical hash-grid colour encoding, dynamicity
+  filtering, and greedy rate-distortion optimisation (paper §5, Eq. 1–7).
+- Frustum culling and deadline-based scheduling across simulated CPU/GPU/NPU
+  processors (paper §6, Eq. 8–9).
 
-## What this deliberately does *not* do
-
-Unlike DeltaStream/ViVo/LiVo/NAVA, this baseline does **not**:
-- implement the paper's Android/Java/C++/OpenGL ES/QNN mobile player app —
-  there's no Android device or SDK in this environment;
-- speak this repo's V4DS wire protocol, plug into `system/Server` (Node), or
-  appear in `scripts/user_study.py`'s Quest-headset conditions.
-
-Those would require either physical Android/Quest hardware or reproducing a
-large amount of the harness's live-streaming machinery for a representation
-(3D Gaussians) it wasn't designed to carry. Kept out on purpose, so this stays
-a lean, direct implementation of the paper rather than a strained fit into
-the mesh/point-cloud ladder harness.
-
-What it *does* give you: a real encoder driven by the real ORBIT dataset, and
-a live demo — encode + decode + render pipeline running on this GPU box,
-streamed as MJPEG to a browser on any other machine — so the whole thing is
-watchable end-to-end, not just unit-tested.
+Task latencies come from workstation profiling in `vega/profiling.py`, not a
+mobile SoC. The Android player, OpenGL ES/QNN implementation, and on-device
+measurements are not included. `orbitvega.live_demo` provides browser playback
+through MJPEG.
 
 ## Layout
 
 ```
-vega/            vendored engine (see vega/ENGINE_README.md for full detail)
+vega/            vendored engine
   datasets/orbit_gaussian.py   loader for ORBIT_datasets_gaussian (default)
   datasets/orbit.py            loader for ORBIT_datasets_rgbd
 vega_tests/       the engine's own unit/integration tests
@@ -56,16 +33,15 @@ citation.txt
 
 ## Usage
 
-From the repo root, in an environment with torch+CUDA, tinycudann,
-`diff_gaussian_rasterization`, and `simple_knn` (this project used the
-`open4d-gs` conda env already present on the GPU machine):
+From the repo root, use an environment with PyTorch/CUDA, `tinycudann`,
+`diff_gaussian_rasterization` and `simple_knn`; see
+[`../gs_tools/README.md`](../gs_tools/README.md) for setup.
 
 ```bash
 pip install -e .
 export PYTHONPATH="$PWD/open4d/reconstruction/vega${PYTHONPATH:+:$PYTHONPATH}"
 
-# Rebuild after updating native source. Old binaries can still have the
-# incorrect four-unit near cutoff and render calibrated ORBIT views black.
+# Rebuild after native source updates to apply the near-plane fix.
 python -m pip install --no-build-isolation --no-deps --force-reinstall \
   open4d/reconstruction/gs_tools/rasterizers/diff-gaussian-rasterization
 
@@ -94,11 +70,9 @@ Both entry points take `--dataset-format`, defaulting to `gaussian`:
 | `gaussian` | `/media/frozzzen/DataDrive/ORBIT_datasets_gaussian` | 8 calibrated RGB views per frame, no depth — geometry from silhouette carving + a short photometric fit |
 | `rgbd` | `/media/frozzzen/DataDrive/ORBIT_datasets_rgbd/level_1` | 4 RGBD cameras per frame — geometry unprojected from depth |
 
-`gaussian` is the default because `ORBIT_datasets_gaussian` is the corpus this
-project built *for* Gaussian training: per object, 30 frames x 8 views of
-4096x3072 RGB on a black background, with OpenCV intrinsics/extrinsics in
-nerfstudio-style `transforms.json` files, and no depth or point clouds at all
-(`contains_depth: false`, `contains_pointclouds: false`).
+The Gaussian corpus contains 30 frames per object, eight 4096x3072 RGB views
+on black backgrounds, and OpenCV calibration in nerfstudio-style
+`transforms.json`. It has no depth or point clouds.
 
 Since there is no depth to unproject, `vega/datasets/orbit_gaussian.py`
 recovers each frame's geometry from the 8 silhouettes:
@@ -116,16 +90,9 @@ recovers each frame's geometry from the 8 silhouettes:
    `--refine-iters` (default 200) iterations of photometric 3DGS fitting
    against the 8 real views using the paper's own loss (Eq. 2).
 
-An 8-view coplanar ring cannot carve concavities that are only visible from
-above or below (under a chin, an arm held against a torso); the photometric
-refinement mops up some of that, and a full 3DGS training run with
-densification would do better — deliberately out of scope, since the point
-here is Vega's encoder and rendering pipeline, not a reconstruction
-contribution.
-
-Everything Vega itself contributes — segmentation, GOV key/residual
-structure, hierarchical color encoding, dynamicity filtering, view-adaptive
-rendering — runs downstream of the loader and is identical for both corpora.
+Coplanar cameras cannot recover concavities visible only from above or below.
+Photometric refinement does not include a full densification training pass.
+Both loaders feed the same encoder and rendering pipeline.
 
 ## Scene objects
 

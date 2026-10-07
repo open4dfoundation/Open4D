@@ -7,8 +7,9 @@ codec vendors. Runnable from anywhere:
     python examples/streaming_demo.py
 
 Needs three things beyond the base install: the optional `open4d-streamer`
-package (``pip install -e open4d/streamer``), `open4d[draco]` for the Draco
-rungs, and SciPy for the nearest-neighbour search the quality column uses.
+package (``pip install -e open4d/streamer``), `DracoPy` for the Draco
+rungs, and SciPy for the nearest-neighbour search `open4d.compare_sequences`
+scores each rung with.
 
 Output goes to ``examples/out/``, which the repository ignores.
 """
@@ -16,21 +17,17 @@ Output goes to ``examples/out/``, which the repository ignores.
 from __future__ import annotations
 
 import json
-import math
 import sys
 import urllib.request
 from pathlib import Path
 
-import numpy as np
 import open4d
 
 try:
     import streamer
-    from streamer import link, playback, policy
+    from streamer import link, playback, policy, score
 except ImportError:  # pragma: no cover - depends on the environment
     sys.exit("this example needs: pip install -e open4d/streamer")
-
-from scipy.spatial import cKDTree
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player"
@@ -40,64 +37,18 @@ RUNGS = ["ply", "draco", "draco@11"]
 
 
 def build() -> dict:
-    """Write the sequence as one clip at three qualities."""
+    """Write the sequence as one clip at three qualities, each one scored.
+
+    ``score=True`` measures every rung against the sequence it was written
+    from with `open4d.compare_sequences`, and records it where `policy` reads
+    it. Positions are what this bundle has, so it is geometry that is scored;
+    `streamer.metrics` is the pixel counterpart for a captured reference.
+    """
     with open4d.load(SOURCE, fps=FPS) as sequence:
         with streamer.Bundle(OUT, title="Basketball", source=SOURCE, fps=FPS) as clips:
-            clips.add(sequence, name="player", scene="basketball", rungs=RUNGS)
+            clips.add(sequence, name="player", scene="basketball", rungs=RUNGS,
+                      score=True)
     return json.loads((OUT / "view.json").read_text())
-
-
-def reference_frames() -> list[np.ndarray]:
-    with open4d.load(SOURCE, fps=FPS) as sequence:
-        return [np.asarray(sequence[i].geometry.positions, dtype=np.float64)
-                for i in range(len(sequence))]
-
-
-def rung_frames(frames: list[str]) -> list[np.ndarray]:
-    """Vertex positions per frame, whichever format the rung is in."""
-    if frames[0].endswith(".drc"):
-        import DracoPy
-        return [np.asarray(DracoPy.decode((OUT / f).read_bytes()).points,
-                           dtype=np.float64) for f in frames]
-    # No `fps=`: write_sequence left a manifest here, and open4d refuses an
-    # override of timing a source already declares.
-    with open4d.load(OUT / Path(frames[0]).parent) as sequence:
-        return [np.asarray(sequence[i].geometry.positions, dtype=np.float64)
-                for i in range(len(sequence))]
-
-
-def quality_db(reference: list[np.ndarray], decoded: list[np.ndarray]) -> float:
-    """RMS vertex deviation as dB below the model's diagonal.
-
-    `streamer.metrics` scores *pixels* against a captured reference, and says
-    so for a mesh clip. Positions are what this bundle has, so this scores
-    those. Nearest-neighbour rather than index-wise: Draco merges duplicate
-    vertices, so the two sets are not the same length.
-    """
-    span = float(np.linalg.norm(np.ptp(np.vstack(reference), axis=0)))
-    squared, count = 0.0, 0
-    for ref, got in zip(reference, decoded):
-        distance, _ = cKDTree(ref).query(got, k=1)
-        squared += float(np.sum(distance ** 2))
-        count += len(got)
-    rms = math.sqrt(squared / count)
-    return 20 * math.log10(span / rms) if rms else float("inf")
-
-
-def ladder_of(clip: dict) -> list[policy.Rung]:
-    """Every rung, with its measured bitrate and its measured quality."""
-    reference = reference_frames()
-    seconds = len(clip["frames"]) / FPS
-    renditions = [(clip["detail"]["rung"], clip["frames"])]
-    renditions += [(v["name"], v["frames"]) for v in clip["variants"]]
-
-    rungs = []
-    for name, frames in renditions:
-        size = sum((OUT / f).stat().st_size for f in frames)
-        score = quality_db(reference, rung_frames(frames))
-        rungs.append(policy.Rung("player", name, size * 8 / seconds,
-                                 {"psnr": min(score, 99.0)}))
-    return sorted(rungs, key=lambda rung: rung.bits_per_second)
 
 
 def serve_and_count(clip: dict) -> dict:
@@ -117,11 +68,12 @@ def main() -> None:
     print(f"bundle   {OUT.relative_to(ROOT)}/ — {len(clip['frames'])} frames, "
           f"{clip['representation']}, {len(clip['variants']) + 1} rungs\n")
 
-    ladder = ladder_of(clip)
+    (ladder,) = policy.measured_rungs(OUT)
     print(f"{'rung':<10}{'Mbit/s':>9}{'quality dB':>12}")
     for rung in ladder:
-        print(f"{rung.variant:<10}{rung.bits_per_second / 1e6:9.2f}"
-              f"{rung.quality['psnr']:12.1f}")
+        print(f"{rung.variant or clip['detail']['rung']:<10}"
+              f"{rung.bits_per_second / 1e6:9.2f}"
+              f"{rung.quality[score.METRIC]:12.1f}")
 
     counters = serve_and_count(clip)
     print(f"\nserved   {counters['requests']} requests, "
@@ -129,8 +81,9 @@ def main() -> None:
 
     print("\nwhat a budget buys:")
     for budget in (2e6, 5e6, 20e6, 100e6):
-        chosen = policy.choose([ladder], budget=budget)
-        picked = (chosen.choices[0].variant if chosen.choices
+        chosen = policy.choose([ladder], budget=budget, metric=score.METRIC)
+        picked = ((chosen.choices[0].variant or clip["detail"]["rung"])
+                  if chosen.choices
                   else f"nothing — dropped {chosen.dropped[0]}")
         print(f"  {budget / 1e6:6.0f} Mbit/s -> {picked}")
 
@@ -140,7 +93,8 @@ def main() -> None:
         capacity=30e6, latency=0.03, clock=lambda: clock[0],
         trace=link.Trace(at=(0.0, 15.0), capacity=(30e6, 2.5e6), loop=False))
     report = playback.Playback(
-        [ladder], constrained, fps=FPS, clock=lambda: clock[0]).run(30.0).as_dict()
+        [ladder], constrained, fps=FPS, metric=score.METRIC,
+        clock=lambda: clock[0]).run(30.0).as_dict()
     for key in ("stalled_seconds", "frozen_seconds", "switches", "mean_quality"):
         print(f"  {key:<17}{report[key]}")
     print(f"  {'queueing':<17}{report['link']['queueing_fraction']:.1%} of the delay")

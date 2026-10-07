@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from check_provenance import (
+    EXPLICIT_REQUIRED_LEDGER_PATHS,
     discover_required_ledger_paths,
     parse_gitmodule_paths,
     uncovered_component_paths,
@@ -48,8 +49,7 @@ def test_component_discovery_covers_new_directories_and_submodules(tmp_path: Pat
     )
 
     assert discover_required_ledger_paths(tmp_path) == {
-        "integrations/unity",
-        "open4d/streaming",
+        *EXPLICIT_REQUIRED_LEDGER_PATHS,
         "open4d/codecs/existing",
         "open4d/codecs/faster_vdmc",
         "open4d/reconstruction/capture",
@@ -69,8 +69,7 @@ def test_nested_submodules_are_covered_by_their_top_level_component(tmp_path: Pa
     )
 
     assert discover_required_ledger_paths(tmp_path) == {
-        "integrations/unity",
-        "open4d/streaming",
+        *EXPLICIT_REQUIRED_LEDGER_PATHS,
         "open4d/codecs/qndf",
     }
 
@@ -81,8 +80,7 @@ def test_component_discovery_ignores_generated_and_hidden_directories(tmp_path: 
     (tmp_path / "open4d/codecs/.pytest_cache").mkdir()
 
     assert discover_required_ledger_paths(tmp_path) == {
-        "integrations/unity",
-        "open4d/streaming",
+        *EXPLICIT_REQUIRED_LEDGER_PATHS,
         "open4d/codecs/qndf",
     }
 

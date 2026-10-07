@@ -7,24 +7,18 @@ Step 1. Fetch the pinned libigl submodule and build `ssp_remesh`, following
 git submodule update --init --recursive open4d/codecs/qndf/ssp_remesh/libigl
 ```
 
-Step 2. Install the repository-wide environment. QNDF reads and writes OBJ
-through `open4d.torch_ops`, which replaced this codec's earlier PyTorch3D
-dependency, so there is no compiled mesh extension to install:
+Step 2. Install the shared codec environment (`dahuffman` and `tqdm` included).
+QNDF reads and writes OBJ through `open4d.torch_ops`:
 
 ```bash
 conda env create -f ../../../environment.yml   # or: conda activate open4d
 pip install -e ../../..
 ```
 
-Step 3. No additional Python install is required; `dahuffman` and `tqdm` are in
-the shared codec environment.
+Step 3. Put input `.obj` files in `objs_original/`, or pass `--source-dir` to use
+another folder, such as the TVMC basketball sequence below.
 
-Step 4. Create `objs_original/` and place the `.obj` files to be compressed in
-it. QNDF does not ship its own input meshes — this codec's `.gitignore` excludes
-`*.obj` — so source your own or point `--source-dir` at another repository
-fixture, such as the TVMC basketball sequence used below.
-
-Step 5. Run:
+Step 4. Run:
 
  ```python compress.py [mesh name] -ns [number of subdivisons] -cs [coarse mesh size] -hd [hidden dim size of INR] -nl [layers in INR]```
 
@@ -44,6 +38,12 @@ meshes. It removes zero-area triangles, allocates the coarse-face budget across
 all connected components, and simplifies, subdivides, and projects each component
 independently. A JSON transform is saved beside the training pair so decoded
 vertices can be restored to the input coordinate system.
+
+The coarse-face budget specifies a target. If decimation removes every triangle
+of a component, the builder increases that component's target until it retains
+valid faces, keeping the original component as the final fallback. This can
+exceed the requested budget. Transform metadata records each allocated and used
+target, `actual_coarse_faces`, and `coarse_face_budget_overshoot`.
 
 Run the complete basketball sequence with:
 

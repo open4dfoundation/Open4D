@@ -28,12 +28,13 @@ player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy"]
 open3d = ["open3d>=0.19,<0.20", "pillow>=9"]
 usd    = ["usd-core>=24.3"]
 torch  = ["torch"]
-klt    = ["torch", "trimesh", "zstd", "tqdm", "point-cloud-utils"]
+klt    = ["torch", "trimesh", "zstd", "zstandard", "tqdm", "point-cloud-utils"]
 n4mc   = ["torch", "trimesh", "scikit-image", "point-cloud-utils"]
 qndf   = ["torch", "open3d>=0.19,<0.20", "trimesh", "tqdm"]
-gaussians = ["plyfile"]
+gaussians = ["plyfile", "pillow>=9"]
+capture = ["opencv-python", "zstandard", "open3d>=0.19,<0.20", "pillow>=9"]
 dev    = ["build>=1.2", "pytest>=8", "scipy", "tomli>=2; python_version < '3.11'"]
-all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19,<0.20", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image"]
+all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19,<0.20", "pillow>=9", "usd-core>=24.3", "scipy", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image", "opencv-python", "zstandard"]
 
 [tool.setuptools]
 include-package-data = false
@@ -42,7 +43,9 @@ packages = [
     "open4d.codec",
     "open4d.core",
     "open4d.io",
-    "open4d.streaming",
+    "open4d.reconstruction",
+    "open4d.reconstruction.rgbd",
+    "open4d.transport",
     "open4d.torch_ops",
     "open4d.visualization",
     "integrations",
@@ -55,7 +58,8 @@ testpaths = [
     "open4d/core/tests",
     "open4d/codec/tests",
     "open4d/io/tests",
-    "open4d/streaming/tests",
+    "open4d/reconstruction/rgbd/tests",
+    "open4d/transport/tests",
     "open4d/torch_ops/tests",
     "open4d/visualization/tests",
     "examples/visualization/tests",

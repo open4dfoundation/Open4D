@@ -1,8 +1,7 @@
 # Open4D to Open3D adapter
 
 Converts decoded Open4D geometry into standard Open3D `TriangleMesh` or
-`PointCloud` objects. It is an adapter, not a loader — decoding is somebody
-else's job, and this turns the result into Open3D types.
+`PointCloud` objects. Decode the sequence before conversion.
 
 ## Installation
 

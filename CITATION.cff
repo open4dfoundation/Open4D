@@ -4,3 +4,7 @@ message: "If you use Open4D in your research, please cite it."
 authors:
   - name: Mallesham Dasari
     affiliation: Northeastern University
+version: 0.1.0
+date-released: 2026-08-05
+license: MIT
+repository-code: "https://github.com/open4dfoundation/Open4D"

@@ -1,0 +1,121 @@
+name: Publish
+
+# Trusted publishing (OIDC): no API token is stored in the repository.
+# Before the first run, register this workflow as a pending publisher on
+# test.pypi.org and pypi.org (workflow "publish.yml", environments "testpypi"
+# and "pypi"), and protect both GitHub environments with required reviewers.
+# The gate job fails while THIRD_PARTY.md has unresolved BLOCK entries.
+
+on:
+  workflow_dispatch:
+    inputs:
+      index:
+        description: Package index to publish to
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Require cleared provenance ledger
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify containment and release clearance
+        run: |
+          python scripts/check_provenance.py
+          python scripts/check_release_gate.py
+
+  build:
+    name: Build and check distributions
+    needs: gate
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build once
+        run: |
+          python -m pip install 'build>=1.2'
+          python -m build --outdir dist
+      - name: Check distribution contents
+        run: |
+          python scripts/check_wheel_contents.py dist/open4d-*.whl
+          python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
+      - name: Match the release tag to the package version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          tag = os.environ["TAG"]
+          assert tag == f"v{version}", f"release tag {tag} does not match version {version}"
+          PY
+      - name: Test the wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/bin/python" -m pip install dist/open4d-*.whl
+          "$RUNNER_TEMP/smoke/bin/python" -m pip check
+          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/smoke/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.index == 'testpypi'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/open4d/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: Publish to PyPI
+    needs: build
+    if: github.event_name == 'release' || inputs.index == 'pypi'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/open4d/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -55,16 +55,14 @@ Change the data_path in configs/configs.txt, then run the following command,
 
 default `voxel_grid_res: 127`  `embed_hwd: 4` if you want to change voxel resolution, remember to change embedded features' resolultion.
 
-(How to use 2 4090s simultaneously?)
-
 The outout will be stored in `./log`. The meshes will be compressed into embedded features and a neural network decoder.
 
-## New TSDF Codec Baseline
+## TSDF codec
 
-The preferred path for the clean restart now lives in modular packages:
+The maintained implementation uses these packages:
 
 - `data/`: TSDF dataset loading and validation
-- `models/`: fresh 3D codec, quantization, and entropy proxy
+- `models/`: 3D codec, quantization, and entropy proxy
 - `losses/`: reconstruction, narrow-band, sign-aware, and SSIM losses
 - `training/`: train and validation entry points
 - `evaluation/`: TSDF reconstruction, marching cubes, and mesh metrics
@@ -128,3 +126,21 @@ python -m evaluation.restore_sequence \
   --normalization datasets/basketball_normalized/normalization.npz \
   --output-dir outputs/basketball_sequence_n4mc/original_scale
 ```
+
+## VMESH export
+
+The public N4MC adapter writes `.vmesh`:
+
+```python
+import open4d
+
+open4d.encode("input.usdc", "output.vmesh", codec="n4mc", device="cpu")
+with open4d.load("output.vmesh", options={"device": "cpu"}) as decoded:
+    open4d.save(decoded, "reconstructed.usdc")
+open4d.migrate_legacy("existing.n4d", "migrated.vmesh")
+```
+
+This carries the shared checkpoint and independent quantized TSDF latents,
+including normalization and timing. See the
+[mesh codec notebook](../../../examples/vmesh/02_mesh_codecs.ipynb) for preserving
+compressed bytes in native USDC without neural evaluation.

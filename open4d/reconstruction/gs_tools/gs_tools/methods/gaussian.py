@@ -29,6 +29,7 @@ Two things it does not attempt:
 from __future__ import annotations
 
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,7 @@ from streamer import bundle
 
 from .. import io
 from ..io import ply, splat
-from ..outputs import Kind, detect, gaussian_frames
+from ..outputs import Kind, added_gaussians, detect, gaussian_frames
 
 name = "gaussian"
 #: No upstream tree of its own: this reads output, and several trainers write it.
@@ -82,6 +83,18 @@ def _method_name(source: Path, found, options: GaussianExportOptions) -> str:
     return recorded or "gaussian"
 
 
+def _merge(frame: Path, added: Path, target: Path) -> Path:
+    """One PLY holding a frame's Gaussians followed by its added ones."""
+    first, second = ply.read(frame), ply.read(added)
+    if first["sh_degree"] != second["sh_degree"]:
+        raise ValueError(f"{added} uses a different SH degree from {frame}")
+    fields = {name: np.concatenate([first[name], second[name]])
+              for name in ("xyz", "scale_raw", "rot_raw", "opacity_raw", "sh_dc")}
+    if "sh_rest" in first:
+        fields["sh_rest"] = np.concatenate([first["sh_rest"], second["sh_rest"]])
+    return ply.write(target, **fields)
+
+
 def build_clips(
     source: Path | str,
     out_dir: Path | str,
@@ -121,7 +134,14 @@ def build_clips(
     upper = np.full(3, -np.inf)
     degrees: set[int] = set()
 
+    merged_dir = None
     for index, ply_path in entries:
+        added = added_gaussians(ply_path)
+        if added is not None:
+            # A 3DGStream frame is its propagated model plus what stage two added.
+            if merged_dir is None:
+                merged_dir = Path(tempfile.mkdtemp(prefix="gs-tools-merge-"))
+            ply_path = _merge(ply_path, added, merged_dir / f"frame_{index:06d}.ply")
         if options.frame_format == "splat":
             cloud = splat.from_ply(ply_path)
             target = splat.write(frames_at / f"frame_{index:04d}.splat", cloud)
@@ -147,10 +167,14 @@ def build_clips(
             flush=True,
         )
 
+    if merged_dir is not None:
+        shutil.rmtree(merged_dir, ignore_errors=True)
     notes = [
         f"3DGS run, {len(written)} frames, read from {source.name} as-is — "
         "not retrained or resampled",
     ]
+    if merged_dir is not None:
+        notes.append("3DGStream frames include the Gaussians each frame's second stage added")
     if options.frame_format == "splat":
         notes.append(
             "frames re-encoded to .splat (32 bytes per Gaussian): every "

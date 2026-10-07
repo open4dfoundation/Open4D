@@ -1,8 +1,7 @@
-"""Lossless reference sequence codec using NumPy arrays inside ZIP."""
+"""Lossless array profiles using standard NPZ payloads inside VMESH."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from io import BytesIO
 import json
 import math
@@ -21,67 +20,15 @@ from zipfile import (
 import numpy as np
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
-from open4d._files import publish_file as _publish_file
 
 from ._protocol import CodecError
+from ._metadata import _json_value
+from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
 
-_SCHEMA = "open4d.numpy-zip/v1"
+_MAX_ARRAY_BYTES = 256 * 1024 * 1024
+# Worst-case RLE doubles its input, plus its length prefix and the NPY header.
+_MAX_RLE_MEMBER_BYTES = 2 * _MAX_ARRAY_BYTES + 8 + 4096
 _FIELDS = ("positions", "triangles", "colors", "normals", "texture_coordinates")
-
-
-def _json_value(value, name: str):
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise CodecError(f"{name} metadata numbers must be finite")
-        return value
-    if isinstance(value, np.generic):
-        return _json_value(value.item(), name)
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, Mapping):
-        if any(not isinstance(key, str) for key in value):
-            raise CodecError(f"{name} metadata keys must be strings")
-        return {key: _json_value(item, f"{name}.{key}") for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item, name) for item in value]
-    raise CodecError(f"{name} metadata value {type(value).__name__} is not serializable")
-
-
-def _validate_manifest(manifest, *, schema: str | None, codec: str) -> dict:
-    if not isinstance(manifest, dict):
-        raise CodecError("artifact manifest root must be an object")
-    if manifest.get("schema") != schema or manifest.get("codec") != codec:
-        raise CodecError(f"unsupported {codec} artifact schema or codec")
-    frames = manifest.get("frames")
-    if not isinstance(frames, list):
-        raise CodecError("artifact manifest must contain a frame list")
-    nonmonotonic = manifest.get("allow_nonmonotonic_timestamps", False)
-    if not isinstance(nonmonotonic, bool):
-        raise CodecError("allow_nonmonotonic_timestamps must be boolean")
-    for name in ("has_constant_vertex_count", "has_vertex_correspondence"):
-        if manifest.get(name) is not None and not isinstance(manifest[name], bool):
-            raise CodecError(f"{name} must be boolean or null")
-    if not isinstance(manifest.get("metadata", {}), dict):
-        raise CodecError("sequence metadata must be an object")
-    _json_value(manifest.get("metadata", {}), "sequence")
-    previous = None
-    for ordinal, record in enumerate(frames):
-        if not isinstance(record, dict):
-            raise CodecError(f"invalid frame record {ordinal}")
-        index, timestamp = record.get("frame_index"), record.get("timestamp")
-        if type(index) is not int or index < 0:
-            raise CodecError(f"invalid frame index at {ordinal}")
-        if type(timestamp) not in (int, float) or not math.isfinite(timestamp):
-            raise CodecError(f"invalid frame timestamp at {ordinal}")
-        if previous is not None and not nonmonotonic and timestamp < previous:
-            raise CodecError("frame timestamps must be nondecreasing")
-        previous = timestamp
-        if not isinstance(record.get("metadata", {}), dict):
-            raise CodecError(f"frame {ordinal} metadata must be an object")
-        _json_value(record.get("metadata", {}), f"frame {ordinal}")
-    return manifest
 
 
 def _array_bytes(array: np.ndarray) -> bytes:
@@ -90,20 +37,40 @@ def _array_bytes(array: np.ndarray) -> bytes:
     return stream.getvalue()
 
 
+def _array_from_bytes(payload: bytes) -> np.ndarray:
+    stream = BytesIO(payload)
+    version = np.lib.format.read_magic(stream)
+    readers = {(1, 0): np.lib.format.read_array_header_1_0,
+               (2, 0): np.lib.format.read_array_header_2_0}
+    if version not in readers:
+        raise CodecError("unsupported array NPY version")
+    shape, _, dtype = readers[version](stream, max_header_size=4096)
+    if dtype.hasobject or math.prod(shape) * dtype.itemsize != len(payload) - stream.tell():
+        raise CodecError("array NPY size/type disagrees with payload")
+    return np.load(BytesIO(payload), allow_pickle=False, max_header_size=4096)
+
+
 def _read_array(archive: ZipFile, name: str, codec: "NumPyZipCodec") -> np.ndarray:
     try:
-        payload = archive.read(name)
-    except KeyError as error:
-        raise CodecError(f"artifact is missing {name}") from error
-    return np.load(BytesIO(codec.unpack(payload)), allow_pickle=False)
+        member = archive.getinfo(f"{name}.npy")
+        limit = _MAX_RLE_MEMBER_BYTES if codec.rle else _MAX_ARRAY_BYTES
+        if not 0 < member.file_size <= limit:
+            raise CodecError("array payload outside limits")
+        value = _array_from_bytes(archive.read(member))
+        if codec.rle:
+            if value.dtype != np.uint8 or value.ndim != 1:
+                raise CodecError("RLE array payload must contain encoded bytes")
+            value = _array_from_bytes(codec.unpack(value.tobytes()))
+        return value
+    except (BadZipFile, KeyError, ValueError, TypeError) as error:
+        raise CodecError(f"invalid array payload {name}: {error}") from error
 
 
 class _ZipProvider:
     def __init__(
-        self, source: Path, archive: ZipFile, manifest: dict, codec: "NumPyZipCodec"
+        self, temporary, native: Path, manifest: dict, codec: "NumPyZipCodec"
     ) -> None:
-        self.source = source
-        self.archive = archive
+        self.temporary, self.native = temporary, native
         self.codec = codec
         self.frames = manifest["frames"]
         self.metadata = MappingProxyType(manifest.get("metadata", {}))
@@ -133,15 +100,20 @@ class _ZipProvider:
         except IndexError as error:
             raise IndexError("frame index out of range") from error
         arrays = record["arrays"]
-        values = {
-            name: _read_array(self.archive, path, self.codec)
-            for name, path in arrays.items()
-            if name != "attributes"
-        }
-        attributes = {
-            name: _read_array(self.archive, path, self.codec)
-            for name, path in arrays.get("attributes", {}).items()
-        }
+        try:
+            archive = ZipFile(self.native / f"frame_{index:06d}.npz")
+        except BadZipFile as error:
+            raise CodecError(f"invalid array payload frame {index}: {error}") from error
+        with archive:
+            values = {
+                name: _read_array(archive, path, self.codec)
+                for name, path in arrays.items()
+                if name != "attributes"
+            }
+            attributes = {
+                name: _read_array(archive, path, self.codec)
+                for name, path in arrays.get("attributes", {}).items()
+            }
         return Frame(
             frame_index=record["frame_index"],
             timestamp=record["timestamp"],
@@ -150,13 +122,13 @@ class _ZipProvider:
         )
 
     def close(self) -> None:
-        self.archive.close()
+        self.temporary.cleanup()
 
 
 class NumPyZipCodec:
-    """Losslessly store canonical Open4D arrays in a portable `.o4d` ZIP."""
+    """Losslessly carry standard NumPy frame arrays in standalone VMESH."""
 
-    suffixes = (".o4d",)
+    suffixes = (".vmesh",)
     backend = "python"
     lossless = True
     preserves = (*_FIELDS, "attributes")
@@ -196,18 +168,26 @@ class NumPyZipCodec:
             raise CodecError("invalid RLE payload")
         expected = int.from_bytes(payload[:8], "little")
         pairs = np.frombuffer(payload[8:], dtype=np.uint8).reshape(-1, 2)
-        decoded = np.repeat(pairs[:, 1], pairs[:, 0]).tobytes()
-        if len(decoded) != expected:
-            raise CodecError("RLE payload length does not match its header")
-        return decoded
+        if (expected > _MAX_ARRAY_BYTES or np.any(pairs[:, 0] == 0)
+                or int(pairs[:, 0].sum(dtype=np.int64)) != expected):
+            raise CodecError("RLE payload length does not match its bounded header")
+        return np.repeat(pairs[:, 1], pairs[:, 0]).tobytes()
+
+    def _member(self, value: np.ndarray, label: str) -> bytes:
+        # Enforce the decoder's bound here so encode never publishes an
+        # artifact that its own decoder would reject.
+        payload = _array_bytes(value)
+        if len(payload) > _MAX_ARRAY_BYTES:
+            raise CodecError(
+                f"{self.id} array {label} is {len(payload)} bytes; the limit is {_MAX_ARRAY_BYTES}"
+            )
+        payload = self.pack(payload)
+        if self.rle:
+            payload = _array_bytes(np.frombuffer(payload, dtype=np.uint8))
+        return payload
 
     def can_decode(self, source: Path) -> bool:
-        try:
-            with ZipFile(source, "r") as archive:
-                manifest = json.loads(archive.read("manifest.json"))
-                return isinstance(manifest, Mapping) and manifest.get("codec") == self.id
-        except (OSError, BadZipFile, KeyError, ValueError, TypeError):
-            return False
+        return contains_codec(source, self.id)
 
     def encode(
         self,
@@ -223,12 +203,14 @@ class NumPyZipCodec:
         if level is not None and not 0 <= level <= 9:
             raise ValueError("compression_level must be in [0, 9]")
         destination = Path(destination).absolute()
+        if destination.suffix.lower() != ".vmesh":
+            raise ValueError("array destination must have a .vmesh extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
-            "schema": _SCHEMA,
-            "codec": self.id,
+            "version": 1, "codec": self.id,
+            "native": {"profile": f"{self.id}/1", "rle": self.rle},
             "metadata": _json_value(sequence.metadata, "sequence"),
             "topology": sequence.topology.value,
             "has_constant_vertex_count": sequence.has_constant_vertex_count,
@@ -236,67 +218,63 @@ class NumPyZipCodec:
             "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
             "frames": [],
         }
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{destination.name}.", suffix=".tmp",
-            dir=destination.parent, delete=False,
-        ) as stream:
-            temporary = Path(stream.name)
-        try:
-            with ZipFile(
-                temporary, "w", compression=self.compression,
-                compresslevel=level,
-            ) as archive:
-                for ordinal, frame in enumerate(sequence):
-                    prefix = f"frames/{ordinal:06d}"
-                    arrays = {}
+        with tempfile.TemporaryDirectory(prefix="open4d-arrays-") as directory:
+            native = Path(directory)
+            for ordinal, frame in enumerate(sequence):
+                arrays = {}
+                with ZipFile(native / f"frame_{ordinal:06d}.npz", "w", compression=self.compression,
+                             compresslevel=level) as archive:
                     for name in _FIELDS:
                         value = getattr(frame.geometry, name)
                         if value is not None:
-                            member = f"{prefix}/{name}.npy"
-                            archive.writestr(member, self.pack(_array_bytes(value)))
-                            arrays[name] = member
+                            archive.writestr(f"{name}.npy", self._member(value, f"frame {ordinal} {name}"))
+                            arrays[name] = name
                     attributes = {}
                     for number, (name, value) in enumerate(frame.geometry.attributes.items()):
-                        member = f"{prefix}/attribute_{number:04d}.npy"
-                        archive.writestr(member, self.pack(_array_bytes(value)))
-                        attributes[name] = member
+                        key = f"attribute_{number:04d}"
+                        archive.writestr(f"{key}.npy", self._member(value, f"frame {ordinal} attribute {name!r}"))
+                        attributes[name] = key
                     arrays["attributes"] = attributes
-                    manifest["frames"].append(
-                        {
-                            "frame_index": frame.frame_index,
-                            "timestamp": frame.timestamp,
-                            "metadata": _json_value(frame.metadata, f"frame {ordinal}"),
-                            "arrays": arrays,
-                        }
-                    )
-                archive.writestr(
-                    "manifest.json",
-                    json.dumps(manifest, separators=(",", ":"), sort_keys=True),
-                )
-            _publish_file(temporary, destination, overwrite=overwrite)
-        except Exception:
-            temporary.unlink(missing_ok=True)
-            raise
+                manifest["frames"].append({
+                    "frame_index": frame.frame_index, "timestamp": frame.timestamp,
+                    "metadata": _json_value(frame.metadata, f"frame {ordinal}"), "arrays": arrays,
+                })
+            (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
+            pack_vmesh(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path) -> Sequence:
         source = Path(source).absolute()
-        if not source.is_file():
-            raise FileNotFoundError(f"codec artifact does not exist: {source}")
-        archive = None
+        if source.suffix.lower() != ".vmesh":
+            raise CodecError("array decoding requires .vmesh; re-encode older private artifacts")
+        if probe_codec(source) != self.id:
+            raise CodecError(f"VMESH does not contain {self.id}")
+        temporary = tempfile.TemporaryDirectory(prefix="open4d-arrays-decode-")
         try:
-            archive = ZipFile(source, "r")
-            manifest = json.loads(archive.read("manifest.json"))
-            _validate_manifest(manifest, schema=_SCHEMA, codec=self.id)
-            return Sequence(_ZipProvider(source, archive, manifest, self))
-        except Exception as error:
-            if archive is not None:
-                archive.close()
-            if isinstance(error, CodecError):
-                raise
-            if not isinstance(error, (BadZipFile, KeyError, ValueError, TypeError)):
-                raise
-            raise CodecError(f"invalid Open4D artifact {source}: {error}") from error
+            native = Path(temporary.name) / "native"
+            unpack_vmesh(source, native)
+            manifest = json.loads((native / "metadata.json").read_text(encoding="utf-8"))
+            for ordinal, frame in enumerate(manifest["frames"]):
+                arrays = frame.get("arrays")
+                if (not isinstance(arrays, dict) or not {"positions", "triangles"} <= set(arrays)
+                        or not set(arrays) <= {*_FIELDS, "attributes"}
+                        or any(value != name for name, value in arrays.items() if name != "attributes")):
+                    raise CodecError("invalid mesh array field index")
+                attributes = arrays.get("attributes", {})
+                if (not isinstance(attributes, dict) or not all(isinstance(name, str) for name in attributes)
+                        or list(attributes.values()) != [f"attribute_{i:04d}" for i in range(len(attributes))]):
+                    raise CodecError("invalid mesh attribute field index")
+                expected = {f"{key}.npy" for key in arrays if key != "attributes"}
+                expected.update(f"{key}.npy" for key in attributes.values())
+                with ZipFile(native / f"frame_{ordinal:06d}.npz") as archive:
+                    members = archive.namelist()
+                    if len(members) != len(set(members)) or set(members) != expected:
+                        raise CodecError("unexpected NPZ frame arrays")
+            decoder = NumPyZipCodec(self.id, rle=manifest["native"]["rle"])
+            return Sequence(_ZipProvider(temporary, native, manifest, decoder))
+        except BaseException:
+            temporary.cleanup()
+            raise
 
 
 REFERENCE_CODECS = (

@@ -14,10 +14,7 @@ before configuring:
 git submodule update --init --recursive open4d/codecs/qndf/ssp_remesh/libigl
 ```
 
-The pin is deliberate and not a lagging one. `cmake/FindLIBIGL.cmake` ends with
-`include(libigl)`, and v2.4.0 rewrote libigl's CMake so that including
-`cmake/libigl.cmake` directly is a `FATAL_ERROR`. v2.3.0 is the last release this
-build script speaks to.
+The build uses `include(libigl)`, which libigl v2.4.0 no longer supports.
 
 Install Eigen from your package manager:
 
@@ -26,12 +23,8 @@ sudo apt install libeigen3-dev   # Ubuntu
 brew install eigen               # macOS
 ```
 
-Eigen is the one external libigl still needs here, and a system copy is strongly
-preferred over letting libigl fetch its own. libigl's downloader generates a
-helper project pinned at `cmake_minimum_required(VERSION 3.2)` and configures it
-in a nested `cmake` call that forwards no policy flags, so on CMake 4 — which
-removed compatibility with anything below 3.5 — the fetch fails and no flag on
-the outer command can rescue it.
+Use system Eigen on CMake 4. libigl's nested downloader requires CMake 3.2
+compatibility and fails because CMake 4 requires at least 3.5.
 
 If you would rather vendor Eigen than install it, place it where libigl expects
 and skip the downloader entirely:

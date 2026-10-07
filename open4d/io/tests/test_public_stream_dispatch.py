@@ -36,3 +36,13 @@ def test_browser_requests_report_missing_optional_streamer(monkeypatch, tmp_path
         source = tmp_path/'capture.ply' if use_path else frames
         with pytest.raises(open4d.StreamerDependencyError, match="pip install -e open4d/streamer"):
             open4d.stream(source, name="capture", out_dir=tmp_path/'bundle', open_browser=False, block=False)
+
+
+def test_an_unstreamable_source_is_a_type_error_without_the_streamer(monkeypatch, tmp_path):
+    # Checked before the optional import: what a source is does not depend on
+    # whether the package that would serve it is installed.
+    monkeypatch.setitem(sys.modules, "streamer", None)
+    with mesh_sequence(side=3, frames=1) as frames:
+        single = frames[0].geometry
+        with pytest.raises(TypeError, match="is one frame"):
+            open4d.stream(single, name="x", out_dir=tmp_path, block=False)

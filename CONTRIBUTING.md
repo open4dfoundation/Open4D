@@ -1,5 +1,9 @@
 # Contributing to Open4D
 
+Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md). Use the
+issue forms for bugs and feature requests, and report vulnerabilities as
+described in [SECURITY.md](SECURITY.md).
+
 ## Setup
 
 ```bash
@@ -18,15 +22,16 @@ For research and reconstruction tests on Python 3.12:
 ```bash
 python -m pip install -e '.[dev,klt,n4mc,qndf,open3d,gaussians]'
 python -m pytest open4d/codec/tests/test_research_cpu.py -m 'not gpu'
-python -m pytest open4d/streaming/tests integrations/open3d/tests
+python -m pytest open4d/reconstruction/rgbd/tests integrations/open3d/tests
 ```
 
 ## Code
 
 - Keep the base install NumPy-only and import optional dependencies when used.
 - Put public mesh codec adapters in `open4d/codec`, Gaussian APIs in
-  `open4d/gaussians.py`, and transport/reconstruction in `open4d/streaming`.
-- Preserve the research implementations under `open4d/codecs` and
+  `open4d/gaussians.py`, RGB-D reconstruction in `open4d/reconstruction/rgbd`,
+  and TCP frame transport in `open4d/transport`.
+- Preserve the research implementations under `open4d/codecs` and the rest of
   `open4d/reconstruction`. Connect them through small adapters.
 - A decoded artifact must work without the original input or hidden encoder
   files. Keep native backends separate from the installed Python package.
@@ -38,7 +43,7 @@ python -m pytest open4d/streaming/tests integrations/open3d/tests
 
 ```bash
 python -m pytest
-python -m compileall -q open4d/*.py open4d/streaming/*.py open4d/codec open4d/core open4d/io open4d/torch_ops open4d/visualization integrations/__init__.py integrations/open3d examples/visualization scripts
+python -m compileall -q open4d/*.py open4d/reconstruction/*.py open4d/reconstruction/rgbd/*.py open4d/transport open4d/codec open4d/core open4d/io open4d/torch_ops open4d/visualization integrations/__init__.py integrations/open3d examples/visualization scripts
 python scripts/check_markdown_links.py
 python scripts/check_provenance.py
 python scripts/check_release_gate.py --expect-blocked

@@ -7,16 +7,17 @@ sequences independently of their storage format:
 import open4d
 
 with open4d.load("capture.usdc") as sequence:
-    open4d.save(sequence, "capture.o4d")
+    open4d.save(sequence, "capture-copy.usdc")
     open4d.visualize(sequence)
 
 # A path can go straight to the lazy viewer; it is closed when the window exits.
-open4d.visualize("capture.o4d")
+open4d.visualize("capture-copy.usdc")
 ```
 
 `.usd`, `.usda`, `.usdc`, and `.usdz` are OpenUSD interchange containers.
-`.o4d` and the registered codec suffixes are codec artifacts. Both carry whole
-sequences and use the same `Sequence` interface. `open4d.unload(sequence)` is an
+All registered compression methods use `.vmesh`; its descriptor identifies the
+codec. Mesh profiles expose `Sequence`, while native Gaussian and field profiles
+expose `NativeSequence`. `open4d.unload(sequence)` is an
 explicit, idempotent alternative to the context manager.
 
 Frame folders and individual meshes remain supported as import paths; frames
@@ -32,17 +33,14 @@ with open_sequence("path/to/frames", fps=30.0) as sequence:
 
 ## Representations
 
-What a decoded frame *is* is deliberately separate from the codec that produced
-it: a triangle mesh is a mesh whether it arrived as OBJ, as a Draco payload, or
-out of a V-DMC bitstream. `open4d.Representation` is the axis to gate on, and
-`MESH`, `POINTS`, and `GAUSSIANS` have concrete types — `TriangleMesh`,
-`PointCloud`, and `GaussianCloud`. Already-rendered pixels are named in the
-taxonomy but have no concrete type yet; they land with the camera model they
-need in order to be comparable at a known pose.
+`open4d.Representation` identifies the decoded frame type independently of its
+codec: `MESH`, `POINTS`, and `GAUSSIANS` correspond to `TriangleMesh`,
+`PointCloud`, and `GaussianCloud`. Rendered pixels have no concrete type yet;
+comparison requires their camera model.
 
-The containers and codecs described below are the mesh path, and the one most
-completely covered. Check a specific codec before assuming it round-trips
-points or Gaussians.
+The mesh codecs accept triangle meshes. Native Gaussian and field methods require
+their own trained states or calibrated reconstruction inputs; a mesh file alone
+does not provide those inputs.
 
 ## Writing sequences
 
@@ -55,11 +53,40 @@ Single mesh-file exports require `allow_lossy=True` because that storage cannot
 preserve sequence timing, metadata, or topology declarations. Trimesh-backed
 OFF/GLB/glTF color export also requires that opt-in because OFF drops vertex
 color and GLB/glTF quantize canonical float colors to eight bits.
+STL also requires `allow_lossy=True`: it discards unused vertices and vertex
+identity, so exported manifests clear correspondence and topology guarantees.
+STL/GLB/glTF reject geometry without triangles. Gaussian clouds cannot be
+exported through these mesh writers. Ordinary USD geometry writing accepts
+triangle meshes; compressed VMESH USD interchange is described below.
 
-OpenUSD is the public interchange container. `--pack-usd out.usdc` packs any
-source into one compressed `.usdc` file carrying the frame rate, the key-frame
-index, and per-frame streams alongside the geometry — see the
-[visualization guide](../examples/visualization/README.md#the-openusd-container).
+### OpenUSD sequence layout
+
+OpenUSD is the public interchange container. `open4d.save(sequence,
+"capture.usdc")` writes one `UsdGeom.Mesh` prim at `/Open4D/Sequence`; any
+ordinary USD reader sees an animated mesh. Frame `n` (zero-based) is stored at
+time code `n`, the stage's time codes and frames per second are the sequence
+frame rate (30 when it has none), and interpolation is held. `up_axis="y"` or
+`"z"` sets the stage up axis. The prim carries:
+
+| Attribute | Contents |
+| --- | --- |
+| `points`, `extent` | Positions and bounds per frame |
+| `faceVertexCounts`, `faceVertexIndices` | Triangles, written only when the topology changes |
+| `primvars:displayColor`, `primvars:displayOpacity` | Vertex RGB and alpha, when present |
+| `normals` | Vertex normals, when present |
+| `open4d:vertexUV`, `open4d:cornerUV` | Vertex or per-corner texture coordinates |
+| `open4d:frameIndex`, `open4d:timestamp` | The source frame index and timestamp in seconds |
+| `open4d:frameDescriptor` | JSON frame metadata and the names of custom attributes |
+| `open4d:attributeNNNN` | Custom per-vertex attributes as float, int or bool arrays |
+
+The root layer's `customLayerData["open4d"]` records the
+`open4d.usd-sequence/v1` schema and a JSON manifest with the frame rate, up
+axis, key-frame indices, sequence metadata and topology declarations, so
+`open4d.load` restores exact timestamps and frame indices. Other USD files load
+one time-sampled geometry prim; select it with
+`options={"prim_path": "/World/Mesh"}`.
+Compressed `.vmesh` artifacts use a separate custom prim, described under
+[USD interchange](#usd-interchange).
 
 ## Streaming
 
@@ -69,69 +96,304 @@ index, and per-frame streams alongside the geometry — see the
 import open4d
 
 open4d.stream("capture.usdc")
-open4d.stream("capture.usdc", rungs=["draco", "draco@11"], out_dir="bundle/")
+open4d.stream("capture.usdc", rungs=["draco", "draco@11", "klt/draco"],
+              score=True, out_dir="bundle/")
+open4d.stream(gaussian_run)          # QUEEN / 3DGStream run, Gaussian .vmesh, or splats
 ```
+
+Accepted inputs are mesh or point-cloud `Sequence` values, `GaussianRun`,
+Gaussian `NativeSequence`, decoded Vega frames, lists of `GaussianSplats`,
+and paths supported by `open4d.load`. Single frames and ReRF fields raise
+`TypeError` before writing output.
 
 For a loaded sequence, pass browser options such as `name="capture"` and
 `out_dir="bundle/"`. `open4d.send(sequence, host, port)` explicitly selects
 decoded-mesh TCP transport and pairs with `open4d.receive`. Existing
 `open4d.stream(sequence, host, port)` calls, and frame iterables without browser
 options, retain that TCP behavior without requiring `open4d-streamer`.
+The TCP default is `127.0.0.1:47004`; pass port 7000 explicitly when talking to
+an older Open4D receiver.
 
-`rungs` is the quality ladder. The first is the rendition a client plays by
-default and the rest are what it can switch to mid-playback, so a one-entry
-list is a fixed-quality stream and says so. A spec is a frame format —
-`ply` for interchange, `draco` for delivery — optionally with a position
-quantisation, as in `draco@11`. Sizes are measured off disk rather than
-predicted; quality is left unscored until something scores it.
+### Recording, stopping and measuring a TCP stream
 
-[`examples/streaming_demo.py`](../examples/streaming_demo.py) runs the whole
-of it on the ten basketball frames the TVMC codec vendors: three rungs
-built and scored, served over HTTP with the counters read back, then thirty
-seconds simulated over a link that collapses mid-run.
+A receiver accepts one sender. `receiver.record(max_frames=None,
+duration=None)` collects frames into an in-memory `Sequence` until the sender
+ends the stream, `max_frames` frames arrive, or a frame's timestamp is
+`duration` seconds or more after the first recorded frame (stream time, not
+wall time). A frame that ends the duration window is kept for the next `next()`
+or `record()` call, and stopping at a limit leaves the receiver open. Save the
+result with `open4d.save(recording, "capture.usdc")` or encode it to `.vmesh`.
 
-The implementation is the separate `open4d-streamer` package, imported on the
-call rather than at load: it depends on `open4d`, so `open4d` must not depend
-on it. Without it installed the call raises `open4d.StreamerDependencyError`
-saying how to install it. For several clips in one bundle, a constrained link,
-or the delivered-quality metrics, use that package directly —
-`streamer.Bundle`, `streamer.Link`, `streamer.serve`.
+`receiver.close()` may be called from another thread: a waiting `next()` stops
+with `StopIteration` and a waiting `record()` returns the frames it has. If the
+receiver closes first, `send` raises `ConnectionError`. A sender that
+disconnects without ending the stream raises `EOFError` on the receiver, and
+`timeout` bounds every wait.
 
-Separately, [`open4d/webclients`](../open4d/webclients) is the vendored
-browser-client research tree that compares five delivery systems against each
-other. It is not this API and shares no code with it.
+`receiver.stats` returns an `open4d.transport.StreamStats` snapshot: `frames`,
+`payload_bytes` (array bytes), `wire_bytes` (headers and arrays), `elapsed`
+(seconds from the first frame's arrival to the latest frame), `fps` and
+`bits_per_second`. The rates are `None` until two frames have arrived.
+
+`rungs` defines the quality ladder; the first rung is the default, and a
+single rung gives fixed-quality playback. Each spec selects a frame format
+(`ply` or `draco`), optionally with a position
+quantisation, as in `draco@11`. It can also start with one of Open4D's mesh
+codecs: `klt` or `tsmc/draco@11` encodes with that codec, decodes on the server
+and serves the decoded frames. Gaussian
+rungs are `ply` (the default for Gaussians) or `splat`, optionally keeping only
+the most significant share of each frame's Gaussians, as in `splat@25%`.
+Without `rungs`, meshes and points get `draco`.
+
+Sizes are measured from the output files. With `score=True`, every
+mesh or point-cloud rung is scored against the source with
+`open4d.compare_sequences` and saved as `point_psnr`, which
+`streamer.policy` and `streamer.playback` can rank by
+(`metric="point_psnr"`). `link=streamer.Link(...)` shapes what the server
+sends and `monitor=streamer.Monitor()` counts it.
+
+[`examples/streaming_demo.py`](../examples/streaming_demo.py) builds and scores
+three rungs from ten vendored basketball frames, serves them over HTTP, and
+simulates playback over a changing link.
+
+Browser streaming requires the separate `open4d-streamer` package, imported
+when called. If it is missing, `open4d.StreamerDependencyError` gives installation
+instructions. For several clips in one bundle, budgets and
+simulated playback, use that package directly — `streamer.Bundle`,
+`streamer.policy`, `streamer.playback`.
+
+Separately, [`open4d/streamer/study`](../open4d/streamer/study) is the vendored
+browser-client research tree for comparing delivery systems.
 
 ## Codecs
 
-Five lossless, in-process reference codecs are included: `raw`, `deflate`,
-`bzip2`, `lzma`, and byte-level `rle` (`npz` remains the default DEFLATE alias).
-They share a safe NumPy-array container so they compare storage strategies, not
-research geometry models.
+Every public codec encodes to a single `.vmesh` file:
 
-Source checkouts register in-process adapters for `klt`, `n4mc`, `qndf`, and
-`qndf-int8`; the lightweight wheel omits them until their provenance review is
-complete. Open4D's separate `temporal-delta` and `temporal-pca` experiments are
-not the repository's TVMC or TSMC pipelines. The V-DMC adapters do not execute
+```python
+open4d.encode("capture.usdc", "capture.vmesh", codec="tvmc")
+with open4d.load("capture.vmesh") as sequence:
+    open4d.save(sequence, "decoded.usdc")
+```
+
+The embedded codec is detected on load. The standalone [VMESH format](#vmesh-format)
+preserves native compressed payloads and timing. See the [native `.vmesh` notebook](../examples/vmesh/01_container_and_usdc.ipynb)
+for inspection, packing, extraction, and an exact compressed-state USDC round trip.
+The [mesh example](../examples/vmesh/02_mesh_codecs.ipynb) demonstrates encoding
+and saving decoded geometry as USDC.
+
+Vega, QUEEN, 3DGStream and ReRF carry native compressed models. Import a
+research run with `open4d.import_native(run, codec="queen", config=...)`, or
+use `open4d.encode(run, "capture.vmesh", codec="queen", config=...)`.
+Loading returns a `NativeSequence`; `native.decode(runtime=..., python=...)`
+evaluates the actual temporal models. Saving it to USDC preserves the exact
+compressed representation using the custom `VMESH` USD prim. See the linked guide
+for required model/configuration files and representation-specific outputs.
+
+KLT, N4MC, QNDF and QNDF-int8 accept mesh sequences or mesh USDC, for example
+`open4d.encode(..., codec="n4mc")`. Loading reconstructs a mesh `Sequence`.
+N4MC carries independent quantized TSDF latents sharing one model. KLT carries a
+shared transform basis and compressed frame coefficients. QNDF carries coarse meshes and independent
+displacement models; QNDF-int8 uses quantized model weights.
+
+`available_codecs()` lists the public research adapters: `klt`, `n4mc`, `qndf`,
+`qndf-int8`, `vdmc`, `faster_vdmc`, `tvmc`, `tsmc`, `vega`, `queen`,
+`3dgstream`, and `rerf`. Native payloads include NumPy archives, model
+checkpoints and Draco files.
+
+The lightweight wheel includes the adapters but excludes their research
+implementations. KLT, N4MC and QNDF need a source checkout and their optional
+dependencies; set `OPEN4D_RESEARCH_ROOT` to that checkout when using an installed
+wheel. Internal benchmark experiments are not public codec choices. The V-DMC adapters do not execute
 shell scripts, but they do invoke configured native encoder and decoder
 processes once per sequence. Callers can also register another
 `open4d.codec.Codec`.
+Native mesh processes run without a time limit by default; set
+`OPEN4D_NATIVE_TIMEOUT` to a positive number of seconds to bound them.
 
-For an all-registered-codec attempt using `4d_files/Rafa_Approves_hd_4k`, open
-[`examples/open4d_sequence_codec.ipynb`](../examples/open4d_sequence_codec.ipynb).
-Set `OPEN4D_NOTEBOOK_REQUIRE_ALL=1` in a fully provisioned environment to make
-any codec failure stop the notebook instead of appearing only in its result
-table.
+[`examples/open4d_sequence_codec.ipynb`](../examples/open4d_sequence_codec.ipynb)
+walks through encoding, decoding, reconstruction and streaming one call at a
+time.
+
+### Backend locations
+
+Adapters find their native programs and research sources through keyword
+arguments first, then environment variables. In a source checkout the default
+locations are the codec and reconstruction trees.
+
+| Variable | Used by | Default |
+| --- | --- | --- |
+| `OPEN4D_RESEARCH_ROOT` | KLT, N4MC, QNDF, QNDF-int8 | This checkout, if present |
+| `OPEN4D_VDMC_ENCODER`, `OPEN4D_VDMC_DECODER` | `vdmc` (`encoder=`, `decoder=`) | None; required |
+| `OPEN4D_FASTER_VDMC_ENCODER`, `OPEN4D_FASTER_VDMC_DECODER` | `faster_vdmc` | None; required |
+| `OPEN4D_VDMC_DECODER_CONFIG`, `OPEN4D_FASTER_VDMC_DECODER_CONFIG` | V-DMC decoding (`decoder_config=`) | The carried `decoder.cfg` |
+| `OPEN4D_TVMC_ROOT`, `OPEN4D_TSMC_ROOT` | TVMC, TSMC (`backend=`) | `open4d/codecs/tvmc`, `open4d/codecs/tsmc` |
+| `OPEN4D_TVMC_PYTHON`, `OPEN4D_TSMC_PYTHON` | TVMC, TSMC (`python=`) | The backend's `.venv`, else this interpreter |
+| `DRACO_ENCODER`, `DRACO_DECODER` | TVMC, TSMC | The backend's `draco/build` |
+| `OPEN4D_GS_ROOT` | QUEEN and 3DGStream reconstruction (`runtime=`) | `open4d/reconstruction/gs_tools` |
+| `OPEN4D_VEGA_ROOT` | Vega encoding and decoding (`runtime=`) | `open4d/reconstruction/vega` |
+| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`) | `open4d/reconstruction/<codec>` |
+| `OPEN4D_<CODEC>_PYTHON` | `NativeSequence.decode` (`python=`) | This interpreter |
+| `OPEN4D_NATIVE_TIMEOUT` | Native mesh encoder and decoder processes | No limit |
+
+An installed wheel contains none of these trees, so every research codec needs
+its variable or keyword argument there.
 
 ### Device selection
 
 The N4MC and QNDF adapters accept `device="auto"` (CUDA, then Apple Metal/MPS,
 then CPU), or an explicit `"cuda"`, `"mps"`, or `"cpu"`. QNDF-int8 can train on
-CUDA or Metal, but its quantized decoder remains CPU-only. Override the notebook
-selection with `OPEN4D_NOTEBOOK_DEVICE=mps` when needed.
+CUDA or Metal, but its quantized decoder remains CPU-only.
+KLT decoding also accepts `device="auto"`.
 
 ### Test coverage
 
 Normal CI runs dependency-complete CPU encode/fresh-decode contracts for KLT,
-N4MC, QNDF, and QNDF-int8. The larger two-format Rafa quality/export matrix is
+N4MC, QNDF, and QNDF-int8. The larger Rafa quality/export matrix is
 an additional CUDA acceptance test gated by `OPEN4D_TEST_RESEARCH_CODECS=1` and
-`OPEN4D_RAFA_DATASET`; it is not presented as part of ordinary CI coverage.
+`OPEN4D_RAFA_DATASET`.
+
+## Comparing sequences
+
+`open4d.compare_sequences` measures a decoded sequence against its source,
+frame by frame. It needs SciPy (`open4d[metrics]`). Either argument can be a
+mesh `Sequence` or a path that `open4d.load` opens as meshes:
+
+```python
+result = open4d.compare_sequences("input_frames/", "capture.vmesh")
+print(result.symmetric_psnr_db, result.hausdorff, result.worst_frame)
+```
+
+Sequences must have the same length and matching timestamps within
+`timestamp_tolerance` seconds; nothing is aligned or resampled. Distances run
+from each vertex to the nearest vertex of the other mesh, in both directions.
+`metric="plane"` projects each offset onto the normals of the mesh it is
+measured against. `peak` only affects PSNR; by default it is the largest
+reference bounding-box diagonal, shared by every frame.
+
+The result has `symmetric_rms` (each frame's worse-direction RMS, combined with
+equal frame weights), `hausdorff` (largest error in any frame or direction),
+`symmetric_psnr_db`, `worst_frame`, the per-frame `MeshComparison` objects in
+`frames`, and `timestamps`, `peak` and `metric`. `compare_meshes` compares two
+`TriangleMesh` objects the same way.
+
+Paths are opened with default options and closed before returning; sequences
+you pass stay open. Pass a `Sequence` when a source needs load options. Gaussian
+and neural-field artifacts raise `TypeError`.
+
+## Command line
+
+```bash
+open4d demo wave/                 # 60 PLY frames with a LICENSE and README
+open4d inspect wave/
+open4d inspect capture.vmesh --json
+open4d view capture.vmesh         # requires open4d[player]
+```
+
+`inspect` on a `.vmesh`, or a USD file carrying a VMESH prim, reads only the
+container header: codec, stored representation, dependency mode, frame count,
+timing and payload sizes. It works for every profile without a codec backend;
+payload hashes are verified but nothing is decoded. `--decode` also decodes a
+mesh profile and reports its topology and first frame, which needs the codec
+backend. With `--json`, container details are under `container`. `view` plays
+triangle-mesh profiles and refuses Gaussian and field profiles.
+
+## VMESH format
+
+VMESH is a custom container for compressed sequences, with a versioned header,
+metadata, codec profiles and native payload records. It is not MPEG V-DMC
+interchange; a V-DMC profile carries an encoder-produced V3C bitstream as its
+native payload.
+
+The Python API uses `Sequence` or `NativeSequence` to expose a file. Those are
+in-memory interfaces, not data types embedded in the file.
+
+### Binary layout
+
+All integers in the container are unsigned and big endian. The file starts with
+eight bytes: `56 4d 45 53 48 00 01 00` (`VMESH`, zero, version 1, reserved zero).
+Each following record is:
+
+| Field | Bytes | Meaning |
+| --- | --- | --- |
+| Record length | 4 | Length of the record header plus its data |
+| Record version | 1 | Must be 1 |
+| Kind | 1 | 0 = manifest, 1 = native payload chunk, 2 = end |
+| File ID | 4 | Zero-based native file index; zero for manifest/end |
+| Offset | 8 | Offset within the native payload; zero for manifest/end |
+| Data | variable | JSON manifest, native bytes, or end digest |
+
+There is exactly one manifest, followed by all payload chunks in manifest file
+order, followed by exactly one end record. The end data is the 32-byte SHA-256
+of the exact manifest bytes. No trailing bytes are permitted.
+
+The UTF-8 JSON manifest has `schema: "vmesh/1"`, `codec`, `native_version: 1`,
+`representation`, `dependency_mode`, `frame_count`, `sequence`, `files`, and
+codec-specific `native` settings when required. `sequence` contains version 1,
+the codec ID, frame indices, timestamps in seconds, JSON metadata, and optional
+normalization/topology fields. It cannot carry an application `schema` field.
+Each file record contains `id`, `name`, `role`, byte `size`, and hexadecimal
+`sha256`. Filenames and roles must exactly match the selected codec profile;
+input cannot supply arbitrary extraction paths.
+
+The manifest is at most 16 MiB; payload chunks are at most 1 MiB. Frame and
+profile file counts are bounded at 65,536 (including the generated adapter
+metadata in the profile file limit). Some profiles have lower frame limits
+because they require several files per frame. Duplicate JSON keys, non-finite
+numbers, reordered chunks, offsets, unknown versions, hash failures and extra
+records are rejected. These hashes detect corruption; they do not authenticate
+a publisher or make an executable research payload safe to decode.
+
+### Native profiles
+
+| Codec | Native payloads | Dependencies |
+| --- | --- | --- |
+| KLT | `decoder_context.pt`, `<ordinal>_quantized_indices.zst`, `<ordinal>_quantized_metadata.npz` | Shared basis, independent coefficients |
+| QNDF / QNDF-int8 | `frame_<ordinal>.pt`: subdivided base mesh, displacement context and model | Independent frames; int8 decode on CPU |
+| N4MC | `checkpoint.pt`, `frame_<ordinal>.npz` | Shared model, independent TSDF latents |
+| TVMC | `reference.drc`, `displacement_<ordinal>.drc` and `.npy` | Shared mesh reference; displacement and vertex order |
+| TSMC | `reference.drc`, `B_matrix.txt`, `T_matrix.txt`, `delta_trajectories_encoded.npy`, `entropy_model.npz` | Whole temporal group |
+| V-DMC / faster V-DMC | `sequence.vmesh`, optional `decoder.cfg` | Actual native encoder bitstream |
+| Vega | `manifest.json`, `color_model.pt`, `frame_<ordinal>.pt` | Shared appearance and key/residual state |
+| QUEEN | `initial.ply`, `frame_<ordinal>.pkl` for residual frames | Previous Gaussian frame |
+| 3DGStream | `initial.ply`, `ntc_config.json`, `ntc_<ordinal>.pth`, optional `added_<ordinal>.ply` | Previous frame and transform architecture |
+| ReRF | Field/model configuration, `rgb_net.tar`, headers, occupancy/channel entropy files, optional PCA/motion | Previous field and group keys |
+
+Frame ordinals are zero-padded to six digits except Vega's four-digit native
+index. ReRF uses its declared native frame IDs and channel suffixes. The profile
+defines exact names and order.
+The separate `frames` delivery profile carries standard per-frame PLY, Draco,
+splat or image payloads and is not another research compression method.
+
+Native files are copied verbatim. A directory's `metadata.json` is parsed into
+the manifest and regenerated for the codec adapters on extraction; its JSON
+whitespace is not preserved.
+
+Use `open4d.codec.inspect_vmesh`, `pack_vmesh`, and `unpack_vmesh` to inspect,
+create and extract files without loading native models. Inspection verifies
+all hashes. Extraction is staged and published only after complete validation.
+
+### USD interchange
+
+Compressed interchange uses a custom prim of type `VMESH` at `/VMESH`, with
+`vmesh:schema = "vmesh.usd/1"`, timeline samples in `vmesh:frameIndex`, and
+static `vmesh:payload:chunkNNNNNN` byte arrays. `vmesh:payloadManifest` describes
+the exact carried VMESH file and its hash. Rendering requires native decoding.
+
+### Compatibility
+
+Normal load, save, encode and decode accept standalone VMESH for compressed
+sequences. Convert older artifacts with `open4d.migrate_legacy`; changing the
+extension alone is insufficient. Use `open4d.import_native` for supported trained
+native runs and `pack_vmesh` for validated profile directories. Compressed USD
+state uses the custom `VMESH` prim described above.
+Raw native MPEG V-DMC bitstreams remain supported as read/import inputs using
+external frame timing; new compressed output is always standalone VMESH.
+
+```python
+open4d.migrate_legacy("older_artifact", "converted.vmesh", fps=30.0)
+```
+
+Migration covers earlier research-codec exports and packed browser clips. Older
+private benchmark artifacts must be re-encoded from their original geometry.
+`overwrite=False` protects an existing destination, and `fps` supplies timing
+only when the old input did not carry it.

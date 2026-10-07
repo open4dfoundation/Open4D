@@ -71,7 +71,14 @@ if [[ "${OS:-}" == "Windows_NT" ]]; then
 fi
 
 if [[ "$SKIP_DRACO" -eq 0 && ! -x "$DRACO_ENCODER" ]]; then
-  if [[ ! -e "$ROOT/draco/.git" ]]; then
+  if [[ ! -e "$ROOT/draco/.git" && ! -f "$ROOT/draco/CMakeLists.txt" ]]; then
+    if ! git -C "$ROOT/../../.." rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      # A copied tree (an export, a server snapshot) has no submodule to update.
+      echo "error: $ROOT/draco is empty and this is not a Git checkout." >&2
+      echo "Clone https://github.com/google/draco there at the commit pinned by" >&2
+      echo "open4d/codecs/tsmc/draco in the repository, or run from a checkout." >&2
+      exit 1
+    fi
     git -C "$ROOT/../../.." submodule update --init --recursive open4d/codecs/tsmc/draco
   fi
   cmake -S "$ROOT/draco" -B "$ROOT/draco/build" -DCMAKE_BUILD_TYPE=Release

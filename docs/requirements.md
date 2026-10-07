@@ -13,8 +13,7 @@
 
 `pip install -e .` needs only NumPy, and reads `.obj` and `.ply` with no further
 dependencies. Extras add optional readers and viewers. The comparison program
-additionally needs SciPy, which the `[player]` extra installs, for its
-nearest-neighbour search — the same `cKDTree` query TVMC's own evaluation uses.
+additionally needs SciPy for nearest-neighbour search; `[player]` installs it.
 
 Open3D ships no 3.13 wheels, capping `.[open3d]` and the codecs at 3.12.
 
@@ -40,12 +39,11 @@ python -m pip install -e .
 Optional local tooling is available through extras:
 
 ```bash
-python -m pip install -e ".[player]"   # the example viewer (PyQt6 + pyqtgraph)
+python -m pip install -e ".[player]"   # the viewer and GIF export (PyQt6 + pyqtgraph)
 python -m pip install -e ".[usd]"      # OpenUSD containers
 python -m pip install -e ".[tools]"    # trimesh, for extra mesh formats
 python -m pip install -e ".[open3d]"   # Open3D adapter; Python 3.12 or older
 python -m pip install -e ".[qndf]"     # QNDF/QNDF-INT8 in-process adapters
-python -m pip install -e ".[temporal]" # experimental temporal-delta/PCA codecs
 python -m pip install -e ".[all]"
 ```
 
@@ -73,9 +71,7 @@ pip install -e .
 ```
 
 The Python set is Python 3.12, NumPy 1.26.4, Open3D 0.19, and PyTorch 2.7.0.
-Native projects use one external .NET 10 SDK. This replaces three Python
-versions, two Open3D versions, two PyTorch versions, and three .NET targets. The
-Python pins themselves live in
+Native projects use the .NET 10 SDK. Python pins live in
 [`requirements-codecs.txt`](../requirements-codecs.txt), which `environment.yml`
 installs; it lists direct dependencies only, so inside an existing Python 3.12
 environment `pip install -r requirements-codecs.txt` is equivalent.
@@ -84,17 +80,11 @@ Codec-local setup scripts may create a convenience virtual environment, but
 they must use these same Python and package pins rather than defining a second
 dependency baseline. Native tools and GPU extensions remain separate.
 
-### The .NET SDK trap
+### .NET SDK selection
 
-One trap worth naming, because its error message points the wrong way. The .NET
-projects target `net10.0`, and a distribution's own `dotnet` under
-`/usr/lib/dotnet` will shadow a newer SDK in `~/.dotnet` on `PATH`. The build
-then fails with `NETSDK1045: The current .NET SDK does not support targeting
-.NET 10.0`, which reads as a missing SDK when the SDK is usually installed and
-merely second in line. Check with `dotnet --list-sdks` before installing
-anything. Downgrading the projects to `net9.0` is not the fix: .NET 9 left
-support in May 2026, and moving off end-of-life targets is why they are on
-`net10.0`.
+Projects target `net10.0`. If an older `/usr/lib/dotnet` precedes `~/.dotnet` on
+`PATH`, builds fail with `NETSDK1045`. Check `dotnet --list-sdks`, then put the
+.NET 10 installation first on `PATH`.
 
 ## Compiled GPU extensions
 
@@ -121,10 +111,27 @@ build. Those are optional and separate, with install commands in
 | `codecs/klt` | `kaolin` and an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
 | `codecs/draco` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
 | `codecs/vdmc`, `codecs/faster_vdmc` | The MPEG reference and optimized test models' own build requirements |
-| `streaming` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
+| `reconstruction/rgbd` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
 | `reconstruction/gs_tools`, `queen`, `3dgstream`, `vega` | The separate `open4d-gs` conda environment and five CUDA extensions built with `--no-build-isolation`, per [`gs_tools`](../open4d/reconstruction/gs_tools/README.md). Build on ext4; on an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter` |
 | `reconstruction/rerf` | Python 3.8, because `ac_dc/ncvv_ac_dc.cpython-38-*.so` ships without sources and cannot be rebuilt for a newer interpreter. Plus torch with CUDA, mmcv, bitarray, Pillow, NumPy — a separate environment from every other module here |
 | `integrations/unity` | Unity, plus a C++ toolchain to rebuild the backend for anything other than the prebuilt macOS and Android/Quest 3 plugins |
+
+### Building V-DMC on macOS
+
+The V-DMC CMake files assume x86-64. On macOS, including Apple Silicon, use the
+build script. It needs the Xcode Command Line Tools, CMake 3.17 or newer, and
+network access on the first run, when CMake downloads the dependencies.
+
+```bash
+git submodule update --init open4d/codecs/vdmc   # or open4d/codecs/faster_vdmc
+./scripts/build_vdmc_macos.sh vdmc               # or faster_vdmc
+```
+
+The script patches the x86-only compiler flags and a few macOS build errors,
+keeping a `.open4d-orig` copy of each edited file (`--revert` restores them).
+It builds `encode` and `decode` into `<submodule>/build/Release/bin` and prints
+the `OPEN4D_VDMC_ENCODER`/`OPEN4D_VDMC_DECODER` (or `OPEN4D_FASTER_VDMC_*`)
+lines to export. `--source` and `--build-dir` select other locations.
 
 ## RGB-D capture on Windows
 
@@ -132,9 +139,8 @@ The RGB-D capture host is Windows and only encodes and forwards frames, so it
 needs no NVIDIA GPU: just the camera vendor SDK (tested: Orbbec K4A Wrapper
 1.10.5, SDK 1.10.28, two Femto Bolts), both cameras on separate USB 3 ports with
 a sync hub, and an OpenSSH client. Close Orbbec Viewer first or the sender fails
-with `Hardware MFT failed to start`. 5 synchronized pairs/s held over Wi-Fi and
-VPN; 15 did not.
+with `Hardware MFT failed to start`. Start with the sender's default 5 FPS.
 
 Calibration layout and the step-by-step session walkthrough are in
-[`open4d/streaming/README.md`](../open4d/streaming/README.md),
+[`open4d/reconstruction/rgbd/README.md`](../open4d/reconstruction/rgbd/README.md),
 which covers how to run the pipeline and leaves requirements to this page.

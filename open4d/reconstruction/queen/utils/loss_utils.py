@@ -24,7 +24,9 @@ def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
 def mse_loss(network_output, gt):
-    return torch.sqrt(torch.sum((network_output - gt) ** 2, dim=0)).mean()
+    # The epsilon keeps sqrt's gradient finite where a pixel matches exactly, as
+    # black backgrounds do; otherwise backward returns inf * 0 = NaN.
+    return torch.sqrt(torch.sum((network_output - gt) ** 2, dim=0) + 1e-12).mean()
 
 def lp_loss(network_output, gt, p = 4):
     return ((network_output - gt) ** p).mean()
