@@ -91,7 +91,7 @@ def test_sequence_weights_frames_equally_and_uses_one_peak():
 
 def test_comparison_after_codec_round_trip(tmp_path):
     with mesh_sequence(side=4, frames=3) as reference:
-        artifact = save(reference, tmp_path / "wave.vmesh", codec=NumPyZipCodec())
+        artifact = save(reference, tmp_path / "wave.o4d", codec=NumPyZipCodec())
         with load(artifact, codec=NumPyZipCodec()) as decoded:
             result = compare_sequences(reference, decoded, peak=10)
     assert result.symmetric_rms == 0
@@ -133,13 +133,13 @@ def test_paths_and_sequences_are_interchangeable(tmp_path, monkeypatch):
     assert not reference.closed and not decoded.closed
 
 
-def test_frame_folder_compares_with_vmesh_path(tmp_path, monkeypatch):
+def test_frame_folder_compares_with_o4d_path(tmp_path, monkeypatch):
     from open4d.codec import _api
 
     monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
     folder = write_demo(tmp_path / "frames", side=4, frames=3)
     with mesh_sequence(side=4, frames=3) as source:
-        artifact = save(source, tmp_path / "wave.vmesh", codec="npz")
+        artifact = save(source, tmp_path / "wave.o4d", codec="npz")
     opened = recording_load(monkeypatch)
     result = compare_sequences(folder, artifact, metric="plane")
     assert result.metric == "plane"
@@ -170,7 +170,7 @@ def test_non_mesh_paths_are_rejected_and_closed(tmp_path, monkeypatch):
     (root / "cfg_args.json").write_text(json.dumps(dict(sh_degree=1, rotate_sh=True, only_mlp=False, iterations_s2=0)))
     (root / "ntc_config.json").write_text(json.dumps(dict(network={}, encoding={})))
     with open4d.import_native(root, codec="3dgstream", timestamps=[0, 1 / 30]) as native:
-        artifact = save(native, tmp_path / "splats.vmesh")
+        artifact = save(native, tmp_path / "splats.o4d")
     folder = write_demo(tmp_path / "frames", side=3, frames=2)
     opened = recording_load(monkeypatch)
     with pytest.raises(TypeError, match=r"decoded .*gaussian_splats representation \(3dgstream\)"):
@@ -187,7 +187,7 @@ def test_other_inputs_are_rejected_before_opening(monkeypatch):
     with pytest.raises(TypeError, match="Sequence objects or paths"):
         compare_sequences("frames", 3)
     with pytest.raises(ValueError, match="metric"):
-        compare_sequences("frames", "decoded.vmesh", metric="hausdorff")
+        compare_sequences("frames", "decoded.o4d", metric="hausdorff")
     assert opened == []
 
 

@@ -16,7 +16,7 @@ pytestmark = pytest.mark.cpu
 def _round_trip(mesh: TriangleMesh, tmp_path) -> TriangleMesh:
     source = Sequence(MemoryFrameProvider([Frame(7, 1.25, mesh)]))
     decoded = DRACO_CODEC.decode(
-        DRACO_CODEC.encode(source, tmp_path / "attributes.vmesh")
+        DRACO_CODEC.encode(source, tmp_path / "attributes.o4d")
     )
     assert decoded[0].frame_index == 7
     assert decoded[0].timestamp == 1.25
@@ -93,7 +93,7 @@ def test_draco_recomputes_declarations_after_uv_corner_splitting(tmp_path):
     ))
 
     decoded = DRACO_CODEC.decode(DRACO_CODEC.encode(
-        source, tmp_path / "mixed-layout.vmesh"
+        source, tmp_path / "mixed-layout.o4d"
     ))
 
     assert [len(frame.geometry.positions) for frame in decoded] == [4, 6]

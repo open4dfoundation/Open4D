@@ -13,7 +13,7 @@ body:
     attributes:
       label: Area
       options:
-        - encode / decode (.vmesh)
+        - encode / decode (.o4d)
         - load / save (OpenUSD, PLY, OBJ, frame folders)
         - reconstruct (RGB-D)
         - reconstruct (QUEEN, 3DGStream, Vega)

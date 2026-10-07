@@ -11,10 +11,10 @@ from ._klt import KLTCodec
 from ._n4mc import N4MCCodec
 from ._protocol import Codec, CodecError
 from ._qndf import QNDFCodec
-from ._vmesh import VMeshCodec
+from ._o4d import O4DCodec
 from ._tracked import TrackedMeshCodec
 from ._migration import migrate_legacy
-from ._vmesh_format import inspect_vmesh, pack_vmesh, unpack_vmesh
+from ._o4d_format import inspect_o4d, pack_o4d, unpack_o4d
 
 __all__ = [
     "Codec",
@@ -23,14 +23,14 @@ __all__ = [
     "KLTCodec",
     "N4MCCodec",
     "QNDFCodec",
-    "VMeshCodec",
+    "O4DCodec",
     "TrackedMeshCodec",
     "available_codecs",
     "decode_sequence",
     "encode_sequence",
     "register_codec",
-    "inspect_vmesh",
-    "pack_vmesh",
+    "inspect_o4d",
+    "pack_o4d",
     "migrate_legacy",
-    "unpack_vmesh",
+    "unpack_o4d",
 ]

@@ -13,7 +13,7 @@ from .io import open_sequence, write_sequence
 from .native import NativeSequence, save_native
 
 _USD_SUFFIXES = frozenset((".usd", ".usda", ".usdc", ".usdz"))
-_VMESH_SUFFIX = ".vmesh"
+_O4D_SUFFIX = ".o4d"
 
 
 def _options(value: Mapping[str, object] | None) -> dict[str, object]:
@@ -48,19 +48,19 @@ def load(
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
 ) -> Sequence | NativeSequence | tuple[NeuralGaussianFrame, ...]:
-    """Open VMESH, native V-DMC input, or a geometry source."""
+    """Open O4D, native V-DMC input, or a geometry source."""
     if format is not None and codec is not None:
         raise TypeError("format and codec are mutually exclusive")
     values = _options(options)
     path = Path(source)
     if codec is not None:
-        if fps is not None and path.suffix.lower() != _VMESH_SUFFIX:
+        if fps is not None and path.suffix.lower() != _O4D_SUFFIX:
             raise TypeError("fps applies to I/O sources, not codec artifacts")
         _set_raw_fps(values, fps)
         return decode_sequence(path, codec=codec, **values)
-    if not path.is_dir() and path.suffix.lower() == _VMESH_SUFFIX:
+    if not path.is_dir() and path.suffix.lower() == _O4D_SUFFIX:
         if format is not None:
-            raise TypeError("format cannot select a .vmesh bitstream")
+            raise TypeError("format cannot select a .o4d bitstream")
         _set_raw_fps(values, fps)
         return decode_sequence(path, **values)
     if path.suffix.lower() in _codec_suffixes():

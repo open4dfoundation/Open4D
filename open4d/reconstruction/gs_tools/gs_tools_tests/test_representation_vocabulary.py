@@ -103,7 +103,7 @@ def test_the_client_does_not_decode_what_python_says_is_server_side():
 
     worker = _codec_table(_worker_source())
     # Code only: the page's comments explain why a container suffix such as
-    # `.vmesh` must never reach a decoder, and naming it there is not decoding it.
+    # `.o4d` must never reach a decoder, and naming it there is not decoding it.
     page = _without_comments(_viewer_source())
     for spec in codecs.known():
         if spec.decodes == "server":

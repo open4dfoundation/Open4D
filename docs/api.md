@@ -15,7 +15,7 @@ open4d.visualize("capture-copy.usdc")
 ```
 
 `.usd`, `.usda`, `.usdc`, and `.usdz` are OpenUSD interchange containers.
-All registered compression methods use `.vmesh`; its descriptor identifies the
+All registered compression methods use `.o4d`; its descriptor identifies the
 codec. Mesh profiles expose `Sequence`, while native Gaussian and field profiles
 expose `NativeSequence`. `open4d.unload(sequence)` is an
 explicit, idempotent alternative to the context manager.
@@ -57,7 +57,7 @@ STL also requires `allow_lossy=True`: it discards unused vertices and vertex
 identity, so exported manifests clear correspondence and topology guarantees.
 STL/GLB/glTF reject geometry without triangles. Gaussian clouds cannot be
 exported through these mesh writers. Ordinary USD geometry writing accepts
-triangle meshes; compressed VMESH USD interchange is described below.
+triangle meshes; compressed O4D USD interchange is described below.
 
 ### OpenUSD sequence layout
 
@@ -85,7 +85,7 @@ axis, key-frame indices, sequence metadata and topology declarations, so
 `open4d.load` restores exact timestamps and frame indices. Other USD files load
 one time-sampled geometry prim; select it with
 `options={"prim_path": "/World/Mesh"}`.
-Compressed `.vmesh` artifacts use a separate custom prim, described under
+Compressed `.o4d` artifacts use a separate custom prim, described under
 [USD interchange](#usd-interchange).
 
 ## Streaming
@@ -98,7 +98,7 @@ import open4d
 open4d.stream("capture.usdc")
 open4d.stream("capture.usdc", rungs=["draco", "draco@11", "klt/draco"],
               score=True, out_dir="bundle/")
-open4d.stream(gaussian_run)          # QUEEN / 3DGStream run, Gaussian .vmesh, or splats
+open4d.stream(gaussian_run)          # QUEEN / 3DGStream run, Gaussian .o4d, or splats
 ```
 
 Accepted inputs are mesh or point-cloud `Sequence` values, `GaussianRun`,
@@ -122,7 +122,7 @@ ends the stream, `max_frames` frames arrive, or a frame's timestamp is
 `duration` seconds or more after the first recorded frame (stream time, not
 wall time). A frame that ends the duration window is kept for the next `next()`
 or `record()` call, and stopping at a limit leaves the receiver open. Save the
-result with `open4d.save(recording, "capture.usdc")` or encode it to `.vmesh`.
+result with `open4d.save(recording, "capture.usdc")` or encode it to `.o4d`.
 
 `receiver.close()` may be called from another thread: a waiting `next()` stops
 with `StopIteration` and a waiting `record()` returns the frames it has. If the
@@ -153,7 +153,7 @@ mesh or point-cloud rung is scored against the source with
 sends and `monitor=streamer.Monitor()` counts it.
 
 [`examples/streaming_demo.py`](../examples/streaming_demo.py) builds and scores
-three rungs from ten vendored basketball frames, serves them over HTTP, and
+three rungs from the generated wave sequence, serves them over HTTP, and
 simulates playback over a changing link.
 
 Browser streaming requires the separate `open4d-streamer` package, imported
@@ -167,26 +167,26 @@ browser-client research tree for comparing delivery systems.
 
 ## Codecs
 
-Every public codec encodes to a single `.vmesh` file:
+Every public codec encodes to a single `.o4d` file:
 
 ```python
-open4d.encode("capture.usdc", "capture.vmesh", codec="tvmc")
-with open4d.load("capture.vmesh") as sequence:
+open4d.encode("capture.usdc", "capture.o4d", codec="tvmc")
+with open4d.load("capture.o4d") as sequence:
     open4d.save(sequence, "decoded.usdc")
 ```
 
-The embedded codec is detected on load. The standalone [VMESH format](#vmesh-format)
-preserves native compressed payloads and timing. See the [native `.vmesh` notebook](../examples/vmesh/01_container_and_usdc.ipynb)
+The embedded codec is detected on load. The standalone [O4D format](#o4d-format)
+preserves native compressed payloads and timing. See the [native `.o4d` notebook](../examples/o4d/01_container_and_usdc.ipynb)
 for inspection, packing, extraction, and an exact compressed-state USDC round trip.
-The [mesh example](../examples/vmesh/02_mesh_codecs.ipynb) demonstrates encoding
+The [mesh example](../examples/o4d/02_mesh_codecs.ipynb) demonstrates encoding
 and saving decoded geometry as USDC.
 
 Vega, QUEEN, 3DGStream and ReRF carry native compressed models. Import a
 research run with `open4d.import_native(run, codec="queen", config=...)`, or
-use `open4d.encode(run, "capture.vmesh", codec="queen", config=...)`.
+use `open4d.encode(run, "capture.o4d", codec="queen", config=...)`.
 Loading returns a `NativeSequence`; `native.decode(runtime=..., python=...)`
 evaluates the actual temporal models. Saving it to USDC preserves the exact
-compressed representation using the custom `VMESH` USD prim. See the linked guide
+compressed representation using the custom `O4D` USD prim. See the linked guide
 for required model/configuration files and representation-specific outputs.
 
 KLT, N4MC, QNDF and QNDF-int8 accept mesh sequences or mesh USDC, for example
@@ -259,7 +259,7 @@ frame by frame. It needs SciPy (`open4d[metrics]`). Either argument can be a
 mesh `Sequence` or a path that `open4d.load` opens as meshes:
 
 ```python
-result = open4d.compare_sequences("input_frames/", "capture.vmesh")
+result = open4d.compare_sequences("input_frames/", "capture.o4d")
 print(result.symmetric_psnr_db, result.hausdorff, result.worst_frame)
 ```
 
@@ -285,11 +285,11 @@ and neural-field artifacts raise `TypeError`.
 ```bash
 open4d demo wave/                 # 60 PLY frames with a LICENSE and README
 open4d inspect wave/
-open4d inspect capture.vmesh --json
-open4d view capture.vmesh         # requires open4d[player]
+open4d inspect capture.o4d --json
+open4d view capture.o4d         # requires open4d[player]
 ```
 
-`inspect` on a `.vmesh`, or a USD file carrying a VMESH prim, reads only the
+`inspect` on a `.o4d`, or a USD file carrying an O4D prim, reads only the
 container header: codec, stored representation, dependency mode, frame count,
 timing and payload sizes. It works for every profile without a codec backend;
 payload hashes are verified but nothing is decoded. `--decode` also decodes a
@@ -297,9 +297,9 @@ mesh profile and reports its topology and first frame, which needs the codec
 backend. With `--json`, container details are under `container`. `view` plays
 triangle-mesh profiles and refuses Gaussian and field profiles.
 
-## VMESH format
+## O4D format
 
-VMESH is a custom container for compressed sequences, with a versioned header,
+O4D is a custom container for compressed sequences, with a versioned header,
 metadata, codec profiles and native payload records. It is not MPEG V-DMC
 interchange; a V-DMC profile carries an encoder-produced V3C bitstream as its
 native payload.
@@ -311,6 +311,8 @@ in-memory interfaces, not data types embedded in the file.
 
 All integers in the container are unsigned and big endian. The file starts with
 eight bytes: `56 4d 45 53 48 00 01 00` (`VMESH`, zero, version 1, reserved zero).
+The signature and manifest schema retain their original wire identifiers;
+renaming the public format to O4D does not change encoded bytes.
 Each following record is:
 
 | Field | Bytes | Meaning |
@@ -368,29 +370,34 @@ Native files are copied verbatim. A directory's `metadata.json` is parsed into
 the manifest and regenerated for the codec adapters on extraction; its JSON
 whitespace is not preserved.
 
-Use `open4d.codec.inspect_vmesh`, `pack_vmesh`, and `unpack_vmesh` to inspect,
+Use `open4d.codec.inspect_o4d`, `pack_o4d`, and `unpack_o4d` to inspect,
 create and extract files without loading native models. Inspection verifies
 all hashes. Extraction is staged and published only after complete validation.
 
 ### USD interchange
 
-Compressed interchange uses a custom prim of type `VMESH` at `/VMESH`, with
-`vmesh:schema = "vmesh.usd/1"`, timeline samples in `vmesh:frameIndex`, and
-static `vmesh:payload:chunkNNNNNN` byte arrays. `vmesh:payloadManifest` describes
-the exact carried VMESH file and its hash. Rendering requires native decoding.
+Compressed interchange uses a custom prim of type `O4D` at `/O4D`, with
+`o4d:schema = "o4d.usd/1"`, timeline samples in `o4d:frameIndex`, and
+static `o4d:payload:chunkNNNNNN` byte arrays. `o4d:payloadManifest` describes
+the exact carried O4D file and its hash. Rendering requires native decoding.
 
 ### Compatibility
 
-Normal load, save, encode and decode accept standalone VMESH for compressed
-sequences. Convert older artifacts with `open4d.migrate_legacy`; changing the
-extension alone is insufficient. Use `open4d.import_native` for supported trained
-native runs and `pack_vmesh` for validated profile directories. Compressed USD
-state uses the custom `VMESH` prim described above.
+Normal load, save, encode and decode accept standalone O4D for compressed
+sequences. Existing standalone `.vmesh` files can be renamed to `.o4d` without
+conversion. The `VMESH` USD prim and its `vmesh:*` attributes remain readable;
+new USD exports use the `O4D` prim. Native MPEG payload filenames, including
+`sequence.vmesh`, are unchanged inside the container.
+
+Convert retired ZIP and private V3C wrappers with `open4d.migrate_legacy`;
+those older layouts require conversion. Use `open4d.import_native` for supported trained
+native runs and `pack_o4d` for validated profile directories. Compressed USD
+state uses the custom `O4D` prim described above.
 Raw native MPEG V-DMC bitstreams remain supported as read/import inputs using
-external frame timing; new compressed output is always standalone VMESH.
+external frame timing; new compressed output is always standalone O4D.
 
 ```python
-open4d.migrate_legacy("older_artifact", "converted.vmesh", fps=30.0)
+open4d.migrate_legacy("older_artifact", "converted.o4d", fps=30.0)
 ```
 
 Migration covers earlier research-codec exports and packed browser clips. Older

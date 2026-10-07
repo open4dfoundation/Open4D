@@ -7,7 +7,7 @@ import shutil
 import pytest
 
 import open4d
-from open4d.codec import CodecError, inspect_vmesh, pack_vmesh, unpack_vmesh
+from open4d.codec import CodecError, inspect_o4d, pack_o4d, unpack_o4d
 from open4d.codec._native_profiles import NEURAL_CODECS, layout
 
 pytestmark = pytest.mark.cpu
@@ -116,7 +116,7 @@ def test_native_import_excludes_dense_exports_and_survives_source_removal(tmp_pa
                              metadata={"units": "m"}, frame_metadata=[{"label": "key"}, {"label": "later"}], **options) as native:
         expected = native.path.read_bytes()
         shutil.rmtree(source)
-        artifact = open4d.save(native, tmp_path / "isolated.vmesh")
+        artifact = open4d.save(native, tmp_path / "isolated.o4d")
     assert artifact.read_bytes() == expected
     with open4d.load(artifact) as loaded:
         assert isinstance(loaded, open4d.NativeSequence)
@@ -128,7 +128,7 @@ def test_native_import_excludes_dense_exports_and_survives_source_removal(tmp_pa
         assert sorted(p.name for p in extracted.iterdir()) == sorted(expected_names)
         assert not any(p.suffix == ".obj" for p in extracted.iterdir())
         assert not (extracted / "frame000001/point_cloud.ply").exists()
-        repacked = pack_vmesh(extracted, tmp_path / "repacked.vmesh")
+        repacked = pack_o4d(extracted, tmp_path / "repacked.o4d")
         assert repacked.read_bytes() == expected
     with pytest.raises(ValueError, match="closed"):
         loaded.decode()
@@ -145,8 +145,9 @@ def test_self_contained_usdc_restores_identical_native_bytes_without_runtime(tmp
         usd = open4d.save(original, tmp_path / "take.usdc")
     from pxr import Usd
     stage = Usd.Stage.Open(str(usd))
-    prim = stage.GetPrimAtPath("/VMESH")
-    assert prim.GetTypeName() == "VMESH"
+    prim = stage.GetPrimAtPath("/O4D")
+    assert prim.GetTypeName() == "O4D"
+    assert prim.GetAttribute("o4d:schema").Get() == "o4d.usd/1"
     assert all(not attr.GetName().startswith("open4d:") for attr in prim.GetAttributes())
     assert not stage.GetPrimAtPath("/Open4DNative")
     del stage
@@ -155,21 +156,70 @@ def test_self_contained_usdc_restores_identical_native_bytes_without_runtime(tmp
         assert restored.timestamps == (1.125, 3.75)
         assert restored.frame_indices == (5, 11)
         assert restored.path.read_bytes() == expected
-        output = open4d.save(restored, tmp_path / "again.vmesh")
+        output = open4d.save(restored, tmp_path / "again.o4d")
     assert output.read_bytes() == expected
-    output2 = open4d.encode(usd, tmp_path / "encode.vmesh", codec=codec)
+    output2 = open4d.encode(usd, tmp_path / "encode.o4d", codec=codec)
     assert output2.read_bytes() == expected
+
+
+@pytest.mark.parametrize("suffix", [".usda", ".usdc"])
+def test_legacy_compressed_usd_restores_bytes_and_exports_renamed_prim(tmp_path, suffix):
+    pytest.importorskip("pxr.Usd")
+    from pxr import Sdf, Usd
+
+    source, options = native_run(tmp_path, "queen")
+    with open4d.import_native(source, codec="queen", timestamps=[.25, .75], **options) as original:
+        expected = original.path.read_bytes()
+        current = open4d.save(original, tmp_path / "current.usda")
+    # Construct the previously authored USD names without altering carried bytes.
+    text = current.read_text().replace("O4D", "VMESH").replace("o4d:", "vmesh:").replace("o4d.usd/1", "vmesh.usd/1")
+    layer = Sdf.Layer.CreateAnonymous()
+    assert layer.ImportFromString(text)
+    legacy = tmp_path / f"legacy{suffix}"
+    assert layer.Export(str(legacy))
+    shutil.rmtree(source)
+    with open4d.load(legacy) as restored:
+        assert restored.path.suffix == ".o4d"
+        assert restored.path.read_bytes() == expected
+        assert restored.timestamps == (.25, .75)
+        converted = open4d.save(restored, tmp_path / "converted.usdc")
+    stage = Usd.Stage.Open(str(converted))
+    assert stage.GetDefaultPrim().GetTypeName() == "O4D"
+    assert stage.GetDefaultPrim().GetAttribute("o4d:schema").Get() == "o4d.usd/1"
+    with open4d.load(converted) as restored:
+        assert restored.path.read_bytes() == expected
 
 
 @pytest.mark.parametrize("codec", sorted(NEURAL_CODECS))
 def test_public_encode_accepts_native_research_outputs(tmp_path, codec):
     source, options = native_run(tmp_path, codec)
-    result = open4d.encode(source, tmp_path / "encoded.vmesh", codec=codec, fps=12, **options)
-    assert inspect_vmesh(result)["sequence"]["frames"][1]["timestamp"] == 1 / 12
+    result = open4d.encode(source, tmp_path / "encoded.o4d", codec=codec, fps=12, **options)
+    assert inspect_o4d(result)["sequence"]["frames"][1]["timestamp"] == 1 / 12
     with pytest.raises(CodecError, match="contains"):
         open4d.load(result, codec="tsmc")
     with pytest.raises(TypeError, match="timestamps"):
         open4d.load(result, fps=24)
+
+
+@pytest.mark.parametrize("config_file", [False, True])
+def test_3dgstream_training_config_retains_saved_decoder_defaults(tmp_path, config_file):
+    source, _ = native_run(tmp_path, "3dgstream")
+    config = {"iterations": 150}
+    if config_file:
+        path = tmp_path / "training.json"
+        path.write_text(json.dumps(config))
+        config = path
+    artifact = open4d.encode(source, tmp_path / "gstream.o4d", codec="3dgstream", config=config)
+    profile = inspect_o4d(artifact)["native"]
+    assert profile["sh_degree"] == 1
+    assert profile["rotate_sh"] is True and profile["only_mlp"] is False
+
+
+def test_3dgstream_explicit_configuration_overrides_saved_defaults(tmp_path):
+    source, _ = native_run(tmp_path, "3dgstream")
+    config = {"sh_degree": 2, "rotate_sh": False, "only_mlp": False}
+    artifact = open4d.encode(source, tmp_path / "gstream.o4d", codec="3dgstream", config=config)
+    assert inspect_o4d(artifact)["native"]["sh_degree"] == 2
 
 
 def test_decoded_zero_quaternion_reads_as_the_identity_it_renders_as(tmp_path, monkeypatch):
@@ -197,7 +247,7 @@ def test_decoded_zero_quaternion_reads_as_the_identity_it_renders_as(tmp_path, m
 def test_dense_frames_cannot_substitute_for_native_dependencies(tmp_path, codec, missing):
     source, options = native_run(tmp_path, codec)
     (source / missing).unlink()
-    target = tmp_path / "result.vmesh"
+    target = tmp_path / "result.o4d"
     with pytest.raises((CodecError, FileNotFoundError)):
         open4d.encode(source, target, codec=codec, **options)
     assert not target.exists()
@@ -209,12 +259,12 @@ def test_usd_rejects_tampered_payload_and_timeline(tmp_path):
     with open4d.import_native(source, codec="queen", **options) as native:
         usd = open4d.save(native, tmp_path / "take.usdc")
     stage = Usd.Stage.Open(str(usd))
-    prim = stage.GetPrimAtPath("/VMESH")
-    prim.GetAttribute("vmesh:frameIndex").Set(999, 0)
+    prim = stage.GetPrimAtPath("/O4D")
+    prim.GetAttribute("o4d:frameIndex").Set(999, 0)
     stage.GetRootLayer().Save()
     with pytest.raises(CodecError, match="timeline"):
         open4d.load(usd)
-    payload = prim.GetAttribute("vmesh:payload:chunk000000")
+    payload = prim.GetAttribute("o4d:payload:chunk000000")
     values = payload.Get()
     values[100] ^= 1
     payload.Set(values)
@@ -232,7 +282,7 @@ def test_unrecognized_independent_research_codecs_are_not_native_profiles(tmp_pa
 def test_native_overwrite_is_atomic_and_explicit(tmp_path):
     source, options = native_run(tmp_path, "queen")
     with open4d.import_native(source, codec="queen", **options) as native:
-        target = tmp_path / "keep.vmesh"
+        target = tmp_path / "keep.o4d"
         target.write_bytes(b"keep")
         with pytest.raises(FileExistsError):
             open4d.save(native, target)
@@ -249,3 +299,19 @@ def test_native_usd_rejects_duplicate_times_before_publishing(tmp_path):
         with pytest.raises(CodecError, match="strictly increasing"):
             open4d.save(native, destination)
     assert not destination.exists()
+
+
+@pytest.mark.parametrize("codec", sorted(NEURAL_CODECS))
+def test_decode_without_runtime_says_how_to_configure_it(tmp_path, codec, monkeypatch):
+    # An installed wheel has no open4d/reconstruction tree; say which variable
+    # to set instead of starting a worker that fails with a traceback.
+    import open4d.native as module
+    import open4d.gaussians as gaussians
+    monkeypatch.setattr(module, "run", lambda *a, **k: pytest.fail("no worker without a runtime"))
+    monkeypatch.setattr(gaussians.subprocess, "run", lambda *a, **k: pytest.fail("no worker without a runtime"))
+    monkeypatch.delenv(f"OPEN4D_{codec.upper()}_ROOT", raising=False)
+    source, options = native_run(tmp_path, codec)
+    with open4d.import_native(source, codec=codec, **options) as native:
+        with pytest.raises(FileNotFoundError, match=f"OPEN4D_{codec.upper()}_ROOT") as error:
+            native.decode(runtime=tmp_path / "missing")
+    assert "github.com/open4dfoundation/Open4D" in str(error.value)

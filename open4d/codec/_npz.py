@@ -1,4 +1,4 @@
-"""Lossless array profiles using standard NPZ payloads inside VMESH."""
+"""Lossless array profiles using standard NPZ payloads inside O4D."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 
 from ._protocol import CodecError
 from ._metadata import _json_value
-from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
+from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 
 _MAX_ARRAY_BYTES = 256 * 1024 * 1024
 # Worst-case RLE doubles its input, plus its length prefix and the NPY header.
@@ -126,9 +126,9 @@ class _ZipProvider:
 
 
 class NumPyZipCodec:
-    """Losslessly carry standard NumPy frame arrays in standalone VMESH."""
+    """Losslessly carry standard NumPy frame arrays in standalone O4D."""
 
-    suffixes = (".vmesh",)
+    suffixes = (".o4d",)
     backend = "python"
     lossless = True
     preserves = (*_FIELDS, "attributes")
@@ -203,8 +203,8 @@ class NumPyZipCodec:
         if level is not None and not 0 <= level <= 9:
             raise ValueError("compression_level must be in [0, 9]")
         destination = Path(destination).absolute()
-        if destination.suffix.lower() != ".vmesh":
-            raise ValueError("array destination must have a .vmesh extension")
+        if destination.suffix.lower() != ".o4d":
+            raise ValueError("array destination must have a .o4d extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -240,19 +240,19 @@ class NumPyZipCodec:
                     "metadata": _json_value(frame.metadata, f"frame {ordinal}"), "arrays": arrays,
                 })
             (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
-            pack_vmesh(native, destination, overwrite=overwrite)
+            pack_o4d(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path) -> Sequence:
         source = Path(source).absolute()
-        if source.suffix.lower() != ".vmesh":
-            raise CodecError("array decoding requires .vmesh; re-encode older private artifacts")
+        if source.suffix.lower() != ".o4d":
+            raise CodecError("array decoding requires .o4d; re-encode older private artifacts")
         if probe_codec(source) != self.id:
-            raise CodecError(f"VMESH does not contain {self.id}")
+            raise CodecError(f"O4D does not contain {self.id}")
         temporary = tempfile.TemporaryDirectory(prefix="open4d-arrays-decode-")
         try:
             native = Path(temporary.name) / "native"
-            unpack_vmesh(source, native)
+            unpack_o4d(source, native)
             manifest = json.loads((native / "metadata.json").read_text(encoding="utf-8"))
             for ordinal, frame in enumerate(manifest["frames"]):
                 arrays = frame.get("arrays")

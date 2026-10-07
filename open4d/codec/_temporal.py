@@ -14,7 +14,7 @@ from open4d.core import Frame, MemoryFrameProvider, Sequence, TopologyMode, Tria
 
 from ._metadata import _json_value
 from ._npz import NumPyZipCodec, _read_array
-from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
+from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 from ._protocol import CodecError
 
 
@@ -97,7 +97,7 @@ class TemporalMeshCodec:
         if identifier not in {"temporal-delta", "temporal-pca"}:
             raise ValueError(f"unknown experimental temporal profile: {identifier}")
         self.id = identifier
-        self.suffixes = (".vmesh",)
+        self.suffixes = (".o4d",)
 
     def can_decode(self, source: Path) -> bool:
         return contains_codec(source, self.id)
@@ -110,8 +110,8 @@ class TemporalMeshCodec:
         if type(face_budget) is not int or face_budget < 1:
             raise ValueError("face_budget must be positive")
         destination = Path(destination).absolute()
-        if destination.suffix.lower() != ".vmesh":
-            raise ValueError("temporal destination must have a .vmesh extension")
+        if destination.suffix.lower() != ".o4d":
+            raise ValueError("temporal destination must have a .o4d extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         reference, faces, fitted = _fit(sequence, face_budget)
@@ -143,21 +143,21 @@ class TemporalMeshCodec:
             native = Path(directory)
             np.savez_compressed(native / "sequence.npz", **payload)
             (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
-            pack_vmesh(native, destination, overwrite=overwrite)
+            pack_o4d(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path, *, device: str | None = None) -> Sequence:
         if device not in (None, "cpu"):
             raise ValueError(f"{self.id} decoding is NumPy-based; device must be 'cpu'")
         source = Path(source).absolute()
-        if source.suffix.lower() != ".vmesh":
-            raise CodecError("temporal decoding requires .vmesh; re-encode older private artifacts")
+        if source.suffix.lower() != ".o4d":
+            raise CodecError("temporal decoding requires .o4d; re-encode older private artifacts")
         if probe_codec(source) != self.id:
-            raise CodecError(f"VMESH does not contain {self.id}")
+            raise CodecError(f"O4D does not contain {self.id}")
         try:
             with tempfile.TemporaryDirectory(prefix="open4d-temporal-decode-") as directory:
                 native = Path(directory) / "native"
-                unpack_vmesh(source, native)
+                unpack_o4d(source, native)
                 manifest = json.loads((native / "metadata.json").read_text(encoding="utf-8"))
                 with ZipFile(native / "sequence.npz") as archive:
                     members = archive.namelist()

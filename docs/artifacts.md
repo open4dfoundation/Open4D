@@ -54,8 +54,8 @@ URL as the only record of a research input.
 
 ## Existing historical artifacts
 
-Some component imports predate this policy and already contain tracked datasets,
-reconstructions, checkpoints, compiled libraries, and paper assets. They remain
-in history for now. Migrating them requires choosing durable external storage
-and preserving provenance; it should be handled as a separate, reviewed change
-rather than deleting research results opportunistically.
+Some component imports predate this policy and still contain compiled
+libraries and small fixtures. The TSMC, TVMC, 3DGStream and Unity example
+datasets and the paper PDFs were removed from the tree but remain in Git
+history. 3DGStream's NTC checkpoint stays because Gaussian reconstruction loads
+it by default.

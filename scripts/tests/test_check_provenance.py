@@ -9,7 +9,9 @@ import pytest
 from check_provenance import (
     EXPLICIT_REQUIRED_LEDGER_PATHS,
     discover_required_ledger_paths,
+    parse_component_ledger,
     parse_gitmodule_paths,
+    release_decision_errors,
     uncovered_component_paths,
 )
 
@@ -95,3 +97,46 @@ def test_an_unledgered_discovered_component_fails_coverage():
     assert uncovered_component_paths(required, ledger) == {
         "open4d/codecs/faster_vdmc"
     }
+
+
+def test_reviewed_components_can_record_approval():
+    ledger = """## Component ledger
+| Path / component | Source | License | Decision | Reviewer |
+| `open4d/codecs/reviewed` | revision | MIT | `APPROVED`; evidence recorded | Maintainer |
+| `open4d/codecs/excluded` | revision | restricted | `EXCLUDED`; outside artifacts | Maintainer |
+"""
+    assert parse_component_ledger(ledger) == {
+        "open4d/codecs/reviewed": "APPROVED",
+        "open4d/codecs/excluded": "EXCLUDED",
+    }
+
+
+@pytest.mark.parametrize("ledger", [
+    "", "## Release decision: pending",
+    "## Release decision: blocked\n## Release decision: approved",
+    "## Release decision: approved",
+    "## Release decision: approved\nMaintainer approval: Unassigned (2026-10-07)",
+    "## Release decision: approved\nMaintainer approval: Maintainer (2026-10-07)\n"
+    "| `restricted` | source | license | `BLOCK`; unresolved | Unassigned |",
+])
+def test_publication_rejects_missing_or_inconsistent_clearance(ledger):
+    from check_release_gate import blockers
+
+    assert release_decision_errors(ledger)
+    assert blockers(ledger)
+
+
+def test_a_reviewed_ledger_can_pass_the_publication_gate():
+    from check_release_gate import blockers
+
+    ledger = "## Release decision: approved\nMaintainer approval: Maintainer (2026-10-07)"
+    assert not release_decision_errors(ledger)
+    assert not blockers(ledger)
+
+
+def test_a_blocked_ledger_stays_blocked_even_without_component_rows():
+    from check_release_gate import blockers
+
+    ledger = "## Release decision: blocked"
+    assert not release_decision_errors(ledger)
+    assert blockers(ledger)

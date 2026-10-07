@@ -18,7 +18,7 @@ def test_n4mc_cuda_decode_is_stable_in_fresh_processes(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("CUDA is unavailable")
     artifact = encode_sequence(
-        moving_cube(), tmp_path / "cube.vmesh", codec="n4mc", device="cuda",
+        moving_cube(), tmp_path / "cube.o4d", codec="n4mc", device="cuda",
         resolution=15, epochs=30, hidden_channels=(4, 8), latent_channels=4,
         learning_rate=3e-3,
     )

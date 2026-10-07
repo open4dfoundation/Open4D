@@ -57,7 +57,7 @@ def encoded_payload(request):
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
-def test_codec_vmesh_round_trip_preserves_timing_and_cleans_up(tmp_path, monkeypatch, codec):
+def test_codec_o4d_round_trip_preserves_timing_and_cleans_up(tmp_path, monkeypatch, codec):
     root = backend(tmp_path, codec)
     requests = []
 
@@ -94,10 +94,10 @@ def test_codec_vmesh_round_trip_preserves_timing_and_cleans_up(tmp_path, monkeyp
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
 def test_competing_file_created_at_publication_is_preserved(tmp_path, monkeypatch, codec):
-    from open4d.codec import _vmesh_format
+    from open4d.codec import _o4d_format
     root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded.vmesh"
-    publish = _vmesh_format.publish_file
+    destination = tmp_path / "encoded.o4d"
+    publish = _o4d_format.publish_file
     competing_inode = None
 
     def competing_writer(temporary, target, **kwargs):
@@ -107,12 +107,12 @@ def test_competing_file_created_at_publication_is_preserved(tmp_path, monkeypatc
         publish(temporary, target, **kwargs)
 
     monkeypatch.setattr(_tracked, "_run", lambda python, action, request: encoded_payload(request))
-    monkeypatch.setattr(_vmesh_format, "publish_file", competing_writer)
+    monkeypatch.setattr(_o4d_format, "publish_file", competing_writer)
     with pytest.raises(FileExistsError):
         codec.encode(sequence(), destination, **options(root))
     assert destination.stat().st_ino == competing_inode
     assert destination.read_bytes() == b"other writer"
-    assert not list(tmp_path.glob(".encoded.vmesh-*"))
+    assert not list(tmp_path.glob(".encoded.o4d-*"))
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
@@ -120,12 +120,12 @@ def test_competing_file_created_at_publication_is_preserved(tmp_path, monkeypatc
 def test_atomic_overwrite_preserves_original_until_completed_publication(
     tmp_path, monkeypatch, codec, publication_failure,
 ):
-    from open4d.codec import _vmesh_format, inspect_vmesh
+    from open4d.codec import _o4d_format, inspect_o4d
     root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded.vmesh"
+    destination = tmp_path / "encoded.o4d"
     destination.write_bytes(b"original")
     original_inode = destination.stat().st_ino
-    publish = _vmesh_format.publish_file
+    publish = _o4d_format.publish_file
 
     def publish_checked(temporary, target, **kwargs):
         assert target.read_bytes() == b"original"
@@ -136,7 +136,7 @@ def test_atomic_overwrite_preserves_original_until_completed_publication(
         publish(temporary, target, **kwargs)
 
     monkeypatch.setattr(_tracked, "_run", lambda python, action, request: encoded_payload(request))
-    monkeypatch.setattr(_vmesh_format, "publish_file", publish_checked)
+    monkeypatch.setattr(_o4d_format, "publish_file", publish_checked)
     if publication_failure:
         with pytest.raises(OSError, match="publication failed"):
             codec.encode(sequence(), destination, overwrite=True, **options(root))
@@ -144,7 +144,7 @@ def test_atomic_overwrite_preserves_original_until_completed_publication(
         assert destination.stat().st_ino == original_inode
     else:
         codec.encode(sequence(), destination, overwrite=True, **options(root))
-        assert inspect_vmesh(destination)["codec"] == codec.id
+        assert inspect_o4d(destination)["codec"] == codec.id
         assert destination.stat().st_ino != original_inode
     assert sorted(tmp_path.iterdir()) == sorted([root, destination])
 
@@ -152,40 +152,40 @@ def test_atomic_overwrite_preserves_original_until_completed_publication(
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
 def test_failed_encode_preserves_existing_destination(tmp_path, monkeypatch, codec):
     root = backend(tmp_path, codec)
-    destination = tmp_path / "encoded.vmesh"
+    destination = tmp_path / "encoded.o4d"
     destination.write_bytes(b"keep")
     monkeypatch.setattr(_tracked, "_run", lambda *args: None)
     with pytest.raises(CodecError, match="produced no reference.drc"):
         codec.encode(sequence(), destination, overwrite=True, **options(root))
     assert destination.read_bytes() == b"keep"
-    assert not list(tmp_path.glob(".encoded.vmesh-*"))
+    assert not list(tmp_path.glob(".encoded.o4d-*"))
 
 
 @pytest.mark.parametrize("codec", [TVMC_CODEC, TSMC_CODEC])
-@pytest.mark.parametrize("extension", ["tvmc", "tsmc", "o4d", ""])
-def test_tracked_encoders_only_publish_vmesh(tmp_path, codec, extension):
+@pytest.mark.parametrize("extension", ["tvmc", "tsmc", "zip", ""])
+def test_tracked_encoders_only_publish_o4d(tmp_path, codec, extension):
     destination = tmp_path / ("encoded." + extension if extension else "encoded")
-    with pytest.raises(ValueError, match=".vmesh"):
+    with pytest.raises(ValueError, match=".o4d"):
         codec.encode(sequence(), destination)
     assert not destination.exists()
 
 
 def test_missing_backend_and_invalid_options_fail_before_launch(tmp_path):
     with pytest.raises(CodecError, match="OPEN4D_TVMC_ROOT"):
-        TVMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", backend=tmp_path / "missing")
+        TVMC_CODEC.encode(sequence(), tmp_path / "output.o4d", backend=tmp_path / "missing")
     for kwargs in ({"key_frame": -1}, {"num_centers": True}, {"quantization": 31}):
         with pytest.raises(ValueError):
-            TVMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", **kwargs)
+            TVMC_CODEC.encode(sequence(), tmp_path / "output.o4d", **kwargs)
     with pytest.raises(ValueError, match="components"):
-        TSMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", components=7)
+        TSMC_CODEC.encode(sequence(), tmp_path / "output.o4d", components=7)
     with pytest.raises(TypeError, match="only to TSMC"):
-        TVMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", components=5)
+        TVMC_CODEC.encode(sequence(), tmp_path / "output.o4d", components=5)
     with pytest.raises(ValueError, match="preceding frame"):
-        TSMC_CODEC.encode(sequence(), tmp_path / "output.vmesh", key_frame=0)
+        TSMC_CODEC.encode(sequence(), tmp_path / "output.o4d", key_frame=0)
 
 
 def test_decode_rejects_wrong_codec_and_cleans_up_incomplete_output(tmp_path, monkeypatch):
-    from open4d.codec import pack_vmesh
+    from open4d.codec import pack_o4d
     native = tmp_path / "native"
     native.mkdir()
     manifest = {"codec": "tvmc", "version": 1,
@@ -195,9 +195,9 @@ def test_decode_rejects_wrong_codec_and_cleans_up_incomplete_output(tmp_path, mo
     for index in range(2):
         (native / f"displacement_{index:06d}.drc").write_bytes(b"offsets")
         np.save(native / f"displacement_{index:06d}.npy", np.arange(3, dtype=np.uint32))
-    source = pack_vmesh(native, tmp_path / "artifact.vmesh")
+    source = pack_o4d(native, tmp_path / "artifact.o4d")
     assert not TSMC_CODEC.can_decode(source)
-    with pytest.raises(CodecError, match="tsmc decode requires VMESH"):
+    with pytest.raises(CodecError, match="tsmc decode requires O4D"):
         TSMC_CODEC.decode(source)
     decoded_directories = []
 
@@ -387,9 +387,9 @@ def test_tvmc_native_payload_decodes_without_original_geometry(tmp_path):
     reference.unlink()
     for path in tmp_path.glob("*.ply"):
         path.unlink()
-    from open4d.codec import pack_vmesh
+    from open4d.codec import pack_o4d
     native = encoded
-    encoded = pack_vmesh(native, tmp_path / "take.vmesh")
+    encoded = pack_o4d(native, tmp_path / "take.o4d")
     shutil.rmtree(native)
     import open4d
 

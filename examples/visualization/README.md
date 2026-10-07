@@ -27,16 +27,15 @@ python examples/visualization/compare_sequences.py ref/ decoded/         # side 
 `--info` checks input paths and frame alignment without a window or display,
 including over SSH.
 
-Try it on the 10 basketball frames the TVMC codec vendors:
+Try it on the generated wave sequence:
 
 ```bash
-python examples/visualization/visualize_sequence.py \
-    open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player \
-    --up y --fps 10 --azimuth 180
+open4d demo wave/
+python examples/visualization/visualize_sequence.py wave/
 ```
 
-Use `--azimuth 180` for this capture. To compare it, encode and decode the frames
-with a codec, then pass the reference and decoded folders.
+To compare it, encode and decode the frames with a codec, then pass the
+reference and decoded folders.
 
 In either window: drag to orbit, scroll to zoom, drag the slider to scrub, space
 to pause, left/right to step, `q` to quit. In the comparison both panes orbit
@@ -105,28 +104,28 @@ one and say so.
 | Folder of `.obj` or `.ply` frames | nothing |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
-| Standalone `.vmesh` with a mesh profile | the codec's configured decoder/runtime |
+| Standalone `.o4d` with a mesh profile | the codec's configured decoder/runtime |
 | One mesh file | as above |
 
 Frames are ordered by **the last number in the filename**, so `frame_2.obj` comes
 before `frame_10.obj` — but `frame_003_qp9.obj` sorts on 9, not 3. A codec that
 puts a parameter last will misalign frames; rename before comparing. A frame with no faces is drawn as a point cloud.
 
-### Compressed VMESH sequences
+### Compressed O4D sequences
 
-The VMESH descriptor selects the codec and preserves frame indices, timestamps
+The O4D descriptor selects the codec and preserves frame indices, timestamps
 and coordinate metadata. Configure that codec's runtime before loading. For
 example, a V-DMC profile needs its native decoder:
 
 ```bash
-export OPEN4D_VDMC_DECODER=/path/to/vmesh-decoder
+export OPEN4D_VDMC_DECODER=/path/to/o4d-decoder
 export OPEN4D_VDMC_DECODER_CONFIG=/path/to/decoder.cfg  # optional
-python examples/visualization/visualize_sequence.py capture.vmesh --info
+python examples/visualization/visualize_sequence.py capture.o4d --info
 ```
 
 The viewer displays decoded geometry. Open4D removes temporary decoded files
 when the sequence closes. `--fps N` overrides playback speed without replacing
-the stored VMESH timestamps. Native Gaussian and neural-field profiles use
+the stored O4D timestamps. Native Gaussian and neural-field profiles use
 their representation-specific decode/render paths rather than this mesh viewer.
 
 ## Flags
@@ -162,7 +161,7 @@ with open4d.load("capture.usdc") as sequence:
     print(len(sequence), sequence.duration, sequence.fps)
     open4d.visualize(sequence)
 
-open4d.visualize("capture.vmesh")
+open4d.visualize("capture.o4d")
 ```
 
 Loading and playback are lazy — frames decode on access. Frame directories and

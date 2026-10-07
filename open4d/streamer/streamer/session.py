@@ -27,7 +27,7 @@ A rung is a frame format, optionally behind one of Open4D's codecs:
 * ``ply``, ``draco``, ``draco@11`` -- a mesh or point cloud as written.
 * ``klt``, ``tsmc/draco@11`` -- encoded with that `open4d.encode` codec and
   decoded again here, then written in the frame format after the slash (``ply``
-  when there is none). No browser decodes a ``.vmesh``, so this is how a codec's
+  when there is none). No browser decodes a ``.o4d``, so this is how a codec's
   output reaches the client at all: its *quality* is the codec's, and its
   ``bytes`` are what is served. The codec's own bitstream size is kept in the
   variant's ``detail["codec_bytes"]``, because a chooser spending wire bytes and
@@ -230,7 +230,7 @@ def _through_codec(
     import open4d
 
     work = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="streamer-")))
-    artifact = open4d.encode(_geometry_only(sequence), work / f"{codec}.vmesh",
+    artifact = open4d.encode(_geometry_only(sequence), work / f"{codec}.o4d",
                              codec=codec)
     decoded = open4d.decode(artifact)
     if not isinstance(decoded, Sequence):
@@ -430,7 +430,7 @@ class Bundle:
         and write in one -- and reaching into it for the middle third would
         make the simple case depend on the general one.
 
-        A codec artifact such as a ``.vmesh`` always carries its own timing, and
+        A codec artifact such as a ``.o4d`` always carries its own timing, and
         may load as a Gaussian sequence rather than a mesh one; both are added.
         """
         import open4d

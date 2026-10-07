@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import configparser
+import re
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -34,8 +35,8 @@ ALLOWED_PACKAGES = {
     "open4d.transport",
     "open4d.torch_ops",
     "open4d.visualization",
-    "integrations",
-    "integrations.open3d",
+    "open4d.integrations",
+    "open4d.integrations.open3d",
 }
 
 
@@ -93,7 +94,7 @@ def discover_required_ledger_paths(root: Path) -> set[str]:
 def uncovered_component_paths(
     required_paths: set[str], component_ledger: dict[str, str]
 ) -> set[str]:
-    """Return discovered components without a BLOCK or EXCLUDED ledger row."""
+    """Return discovered components without a valid ledger decision."""
     return required_paths - component_ledger.keys()
 
 
@@ -114,23 +115,38 @@ def parse_component_ledger(ledger: str) -> dict[str, str]:
                 decision = parts[4]
                 # Extract path from backticks if present
                 if "`" in path_component:
-                    import re
                     match = re.search(r"`([^`]+)`", path_component)
                     if match:
                         path = match.group(1)
-                        # Extract decision keyword (BLOCK or EXCLUDED)
-                        if "BLOCK" in decision:
-                            component_map[path] = "BLOCK"
-                        elif "EXCLUDED" in decision:
-                            component_map[path] = "EXCLUDED"
+                        match = re.match(r"`?(BLOCK|EXCLUDED|APPROVED)`?(?:;|\s|$)", decision)
+                        if match:
+                            component_map[path] = match[1]
     return component_map
+
+
+def release_decision_errors(ledger: str) -> list[str]:
+    """Require one explicit release state and recorded approval before clearance."""
+    decisions = re.findall(r"^## Release decision: (\w+)\s*$", ledger, re.MULTILINE)
+    if len(decisions) != 1 or decisions[0] not in {"blocked", "approved"}:
+        return ["THIRD_PARTY.md must contain one release decision: blocked or approved"]
+    if decisions[0] == "blocked":
+        return []
+    errors = []
+    if any(line.startswith("|") and re.search(r"\bBLOCK\b", line)
+           for line in ledger.splitlines()):
+        errors.append("an approved release cannot retain BLOCK entries")
+    approval = re.search(
+        r"^Maintainer approval: (.+) \((\d{4}-\d{2}-\d{2})\)\s*$", ledger, re.MULTILINE
+    )
+    if not approval or approval[1].strip().lower() in {"unassigned", "pending", "none"}:
+        errors.append("an approved release requires Maintainer approval: NAME (YYYY-MM-DD)")
+    return errors
 
 
 def main() -> int:
     errors: list[str] = []
     ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
-    if "## Release decision: blocked" not in ledger:
-        errors.append("THIRD_PARTY.md must retain the explicit release block")
+    errors.extend(release_decision_errors(ledger))
 
     component_ledger = parse_component_ledger(ledger)
 
@@ -142,7 +158,7 @@ def main() -> int:
     for path in sorted(uncovered):
         errors.append(
             f"THIRD_PARTY.md component ledger has no row with valid "
-            f"BLOCK or EXCLUDED decision for {path}"
+            f"BLOCK, EXCLUDED, or APPROVED decision for {path}"
         )
 
     with (ROOT / "pyproject.toml").open("rb") as stream:

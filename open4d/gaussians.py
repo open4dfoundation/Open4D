@@ -149,15 +149,24 @@ def load_gaussians(path: str | Path) -> GaussianSplats:
     )
 
 
+#: Where the research runtimes that the installed package leaves out live.
+SOURCE_CHECKOUT = "https://github.com/open4dfoundation/Open4D"
+
+
+def missing_runtime(name: str, root: Path, variable: str, folder: str) -> str:
+    """The message for a research runtime that is not where it was looked for."""
+    return (f"{name} runtime not found at {root}. The installed open4d package does "
+            f"not include it: pass runtime= or set {variable} to {folder} in a "
+            f"configured source checkout of {SOURCE_CHECKOUT}.")
+
+
 def _runtime(path: str | Path | None) -> Path:
     candidate = path or os.environ.get("OPEN4D_GS_ROOT")
     root = (Path(candidate).expanduser() if candidate else
             Path(__file__).parent / "reconstruction" / "gs_tools").resolve()
     if not (root / "gs_tools" / "cli.py").is_file():
-        raise FileNotFoundError(
-            f"Gaussian runtime not found at {root}. Pass runtime pointing to "
-            "open4d/reconstruction/gs_tools in a configured source checkout."
-        )
+        raise FileNotFoundError(missing_runtime(
+            "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "open4d/reconstruction/gs_tools"))
     return root
 
 
@@ -440,15 +449,28 @@ def reconstruct_gaussians(
         raise
 
 
+#: Opacity margin for Vega's logits: 1 - 2**-24 is the largest float32 below 1.
+#: A Graphdeco PLY logit above about 17.3 reads back as an opacity of exactly 1.0
+#: in float32, whose logit is infinite.
+_VEGA_OPACITY_EPSILON = 2.0 ** -24
+
+
 def _vega_runtime(path: str | Path | None) -> Path:
     root = Path(path or os.environ.get("OPEN4D_VEGA_ROOT") or
                 Path(__file__).parent / "reconstruction" / "vega").expanduser().resolve()
-    if not (root / "vega" / "encoder.py").is_file():
-        raise FileNotFoundError(f"Vega runtime not found at {root}; pass runtime pointing to its source directory")
+    _check_vega_runtime(root)
     return root
 
 
+def _check_vega_runtime(root: Path) -> None:
+    if not (root / "vega" / "encoder.py").is_file():
+        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "open4d/reconstruction/vega"))
+
+
 def _vega_command(runtime: Path, python: str, request: dict, work: Path) -> None:
+    # Decoding and colour queries reach here with the runtime a NativeSequence
+    # chose, which nothing has checked yet.
+    _check_vega_runtime(runtime)
     request_path = work / "request.json"
     request_path.write_text(json.dumps(request), encoding="utf-8")
     subprocess.run([python, str(Path(__file__).with_name("_gaussian_worker.py")),
@@ -538,7 +560,10 @@ def encode_gaussians(
 
     Each frame is treated as one object. The native writer stores one colour
     model; runs that require multiple groups are rejected instead of saving
-    earlier frames with the wrong model.
+    earlier frames with the wrong model. Vega trains opacity logits, so
+    opacities of exactly 0 or 1 -- which float32 rounding produces from finite
+    PLY logits above about 17 -- are moved to the nearest values with a finite
+    float32 logit.
     """
     if codec != "vega":
         raise ValueError("Gaussian array encoding currently supports codec='vega'")
@@ -549,8 +574,6 @@ def encode_gaussians(
         raise ValueError("frames must contain nonempty GaussianSplats")
     if any(frame.sh_degree > 3 for frame in frames):
         raise ValueError("Vega supports SH degrees 0 through 3")
-    if any(np.any((frame.opacities <= 0) | (frame.opacities >= 1)) for frame in frames):
-        raise ValueError("Vega training requires opacities strictly between 0 and 1")
     for value in (key_iterations, residual_iterations):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError("training iteration counts must be positive integers")
@@ -564,8 +587,8 @@ def encode_gaussians(
         for index, frame in enumerate(frames):
             np.savez(work / f"frame_{index:06d}.npz", **{
                 name: getattr(frame, name) for name in
-                ("positions", "scales", "rotations", "opacities", "spherical_harmonics")
-            })
+                ("positions", "scales", "rotations", "spherical_harmonics")
+            }, opacities=np.clip(frame.opacities, _VEGA_OPACITY_EPSILON, 1 - _VEGA_OPACITY_EPSILON))
         staged = work / "encoded"
         _vega_command(root, executable,
                       {"operation": "encode", "source": str(work), "output": str(staged),
@@ -592,21 +615,21 @@ def decode_gaussians(
 
 class _VegaCodec:
     id = "vega"
-    suffixes = (".vmesh",)
+    suffixes = (".o4d",)
     representation = "gaussian_splats"
     backend = "research-subprocess"
     lossless = False
     preserves = ("positions", "scales", "rotations", "opacities", "neural_appearance")
 
     def can_decode(self, source):
-        from .codec._vmesh_format import contains_codec
+        from .codec._o4d_format import contains_codec
         return contains_codec(source, self.id)
 
     def encode(self, sequence, destination: Path, **options) -> Path:
-        from .codec._metadata import require_vmesh_destination
+        from .codec._metadata import require_o4d_destination
         from .native import NativeSequence, import_native, save_native
         from .codec._native_temporal import encode_native
-        destination = require_vmesh_destination(destination)
+        destination = require_o4d_destination(destination)
         if isinstance(sequence, (NativeSequence, VegaRun, str, os.PathLike)):
             return encode_native(sequence, destination, codec="vega", **options)
         overwrite = options.pop("overwrite", False)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build a bundle, score its rungs, serve it, and play it over a bad link.
 
-The whole of `streamer` in one pass, on the ten basketball frames the TVMC
-codec vendors. Runnable from anywhere:
+The whole of `streamer` in one pass, on Open4D's generated wave sequence.
+Runnable from anywhere:
 
     python examples/streaming_demo.py
 
@@ -21,7 +21,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-import open4d
+from open4d.demo import mesh_sequence
 
 try:
     import streamer
@@ -30,7 +30,6 @@ except ImportError:  # pragma: no cover - depends on the environment
     sys.exit("this example needs: pip install -e open4d/streamer")
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player"
 OUT = ROOT / "examples/out/streaming-demo"
 FPS = 10
 RUNGS = ["ply", "draco", "draco@11"]
@@ -44,10 +43,9 @@ def build() -> dict:
     it. Positions are what this bundle has, so it is geometry that is scored;
     `streamer.metrics` is the pixel counterpart for a captured reference.
     """
-    with open4d.load(SOURCE, fps=FPS) as sequence:
-        with streamer.Bundle(OUT, title="Basketball", source=SOURCE, fps=FPS) as clips:
-            clips.add(sequence, name="player", scene="basketball", rungs=RUNGS,
-                      score=True)
+    with mesh_sequence(side=96, frames=30, fps=FPS) as sequence:
+        with streamer.Bundle(OUT, title="Wave", source="open4d.demo", fps=FPS) as clips:
+            clips.add(sequence, name="wave", scene="wave", rungs=RUNGS, score=True)
     return json.loads((OUT / "view.json").read_text())
 
 

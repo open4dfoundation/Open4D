@@ -127,20 +127,20 @@ python -m evaluation.restore_sequence \
   --output-dir outputs/basketball_sequence_n4mc/original_scale
 ```
 
-## VMESH export
+## O4D export
 
-The public N4MC adapter writes `.vmesh`:
+The public N4MC adapter writes `.o4d`:
 
 ```python
 import open4d
 
-open4d.encode("input.usdc", "output.vmesh", codec="n4mc", device="cpu")
-with open4d.load("output.vmesh", options={"device": "cpu"}) as decoded:
+open4d.encode("input.usdc", "output.o4d", codec="n4mc", device="cpu")
+with open4d.load("output.o4d", options={"device": "cpu"}) as decoded:
     open4d.save(decoded, "reconstructed.usdc")
-open4d.migrate_legacy("existing.n4d", "migrated.vmesh")
+open4d.migrate_legacy("existing.n4d", "migrated.o4d")
 ```
 
 This carries the shared checkpoint and independent quantized TSDF latents,
 including normalization and timing. See the
-[mesh codec notebook](../../../examples/vmesh/02_mesh_codecs.ipynb) for preserving
+[mesh codec notebook](../../../examples/o4d/02_mesh_codecs.ipynb) for preserving
 compressed bytes in native USDC without neural evaluation.

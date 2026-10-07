@@ -1,4 +1,4 @@
-"""Explicit, one-way conversion of retired sequence artifacts to VMESH."""
+"""Explicit, one-way conversion of retired sequence artifacts to O4D."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ import shutil
 import tempfile
 from zipfile import BadZipFile, ZipFile
 
-from ._metadata import _validate_manifest, require_vmesh_destination
+from ._metadata import _validate_manifest, require_o4d_destination
 from ._protocol import CodecError
-from ._vmesh_format import _json, pack_vmesh
+from ._o4d_format import _json, pack_o4d
 
 _MAX_PAYLOAD = 8 * 1024**3
 
 
 def _extract_vdmc(source: Path, destination: Path) -> None:
-    from ._vmesh import _position_normalization
+    from ._o4d import _position_normalization
 
     try:
         with ZipFile(source) as archive:
@@ -53,14 +53,14 @@ def _extract_vdmc(source: Path, destination: Path) -> None:
 
 def migrate_legacy(source: str | Path, destination: str | Path, *, overwrite: bool = False,
                    fps: float = 30.0) -> Path:
-    """Convert an older artifact explicitly; normal readers accept VMESH only.
+    """Convert an older artifact explicitly; normal readers accept O4D only.
 
     Native payloads are preserved except redundant checkpoint schema fields.
     Tensor checkpoints use restricted weights-only loading. Executable early
     QNDF-int8 contexts are deliberately unsupported.
     """
     source = Path(source).absolute()
-    destination = require_vmesh_destination(destination)
+    destination = require_o4d_destination(destination)
     if not isinstance(overwrite, bool):
         raise TypeError("overwrite must be bool")
     if destination.exists() and not overwrite:
@@ -69,7 +69,7 @@ def migrate_legacy(source: str | Path, destination: str | Path, *, overwrite: bo
         raise CodecError("linked migration source")
     if source.is_dir():
         if (source / "metadata.json").is_file():
-            return pack_vmesh(source, destination, overwrite=overwrite)
+            return pack_o4d(source, destination, overwrite=overwrite)
         from open4d.native import import_native, save_native
         with import_native(source, codec="vega", fps=fps) as native:
             return save_native(native, destination, overwrite=overwrite)
@@ -78,7 +78,7 @@ def migrate_legacy(source: str | Path, destination: str | Path, *, overwrite: bo
         _require()
         from streamer.sequence import convert_legacy
         return convert_legacy(source, destination, fps=fps, overwrite=overwrite)
-    with tempfile.TemporaryDirectory(prefix="vmesh-migration-") as folder:
+    with tempfile.TemporaryDirectory(prefix="o4d-migration-") as folder:
         native = Path(folder)
         suffix = source.suffix.lower()
         if suffix == ".k4d":
@@ -105,4 +105,4 @@ def migrate_legacy(source: str | Path, destination: str | Path, *, overwrite: bo
             _extract_vdmc(source, native)
         else:
             raise ValueError("unsupported migration input; import native payload directories explicitly")
-        return pack_vmesh(native, destination, overwrite=overwrite)
+        return pack_o4d(native, destination, overwrite=overwrite)

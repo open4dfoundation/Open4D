@@ -61,7 +61,7 @@ def test_by_name_finds_a_codec():
 
 def test_rerf_is_registered_as_server_decoded():
     """Not an omission: its entropy coder is a sourceless CPython 3.8 binary."""
-    spec = codecs.for_frame("pixels", ".vmesh")
+    spec = codecs.for_frame("pixels", ".o4d")
     assert spec.decodes == "server"
     assert "browser" in spec.cost
 
@@ -176,14 +176,14 @@ def test_adding_a_codec_is_one_registration(monkeypatch):
     codecs.register(
         CodecSpec(
             name="mesh-vdmc",
-            suffix=".vmesh",
+            suffix=".o4d",
             representation=Representation.MESH,
             lossy=True,
             cost="V-DMC is lossy at any rate worth using",
         )
     )
-    assert codecs.for_frame("mesh", ".vmesh").name == "mesh-vdmc"
-    assert ".vmesh" in codecs.media_types()
+    assert codecs.for_frame("mesh", ".o4d").name == "mesh-vdmc"
+    assert ".o4d" in codecs.media_types()
     assert "mesh-vdmc" in {spec.name for spec in codecs.client_decodable("mesh")}
 
 

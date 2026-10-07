@@ -201,7 +201,7 @@ def test_initial_points_carve_black_background_silhouettes(tmp_path):
 
 
 def test_held_out_view_does_not_shape_initial_points(tmp_path):
-    from PIL import Image
+    Image = pytest.importorskip("PIL.Image")
 
     folder = make_corpus(tmp_path / "data", views=6)
     scene = orbit.load_orbit(folder)

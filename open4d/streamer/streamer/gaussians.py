@@ -3,7 +3,7 @@
 `export` is the mesh and point-cloud half of this; this is the other half. Until
 it existed the only way a Gaussian clip reached the client was `gs_tools`, which
 reads trainer output off disk -- so a sequence Open4D itself had loaded (a QUEEN
-or 3DGStream `GaussianRun`, a Gaussian ``.vmesh`` opened as a `NativeSequence`,
+or 3DGStream `GaussianRun`, a Gaussian ``.o4d`` opened as a `NativeSequence`,
 Vega's decoded frames, or a list of `GaussianSplats`) had a codec registry entry
 and a renderer waiting for it and no path between the two.
 

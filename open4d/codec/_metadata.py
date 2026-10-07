@@ -1,4 +1,4 @@
-"""Finite sequence metadata shared by VMESH adapters."""
+"""Finite sequence metadata shared by O4D adapters."""
 
 from collections.abc import Mapping
 import math
@@ -62,8 +62,8 @@ def _validate_manifest(manifest, *, schema: str | None, codec: str) -> dict:
     return manifest
 
 
-def require_vmesh_destination(destination: str | Path) -> Path:
+def require_o4d_destination(destination: str | Path) -> Path:
     path = Path(destination).absolute()
-    if path.suffix.lower() != ".vmesh":
-        raise ValueError("compressed output requires a .vmesh extension")
+    if path.suffix.lower() != ".o4d":
+        raise ValueError("compressed output requires a .o4d extension")
     return path

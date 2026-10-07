@@ -49,8 +49,6 @@ TVMCUnity/
 ├── Helper_Converter_Scripts/   # Python utilities
 │   ├── npy_to_bin_recursive.py
 │  └── subdivider.py
-├── EncodedExample/                # Encoded example sequence
-│   ├── DancerSequence.zip  
 ```
 ## Features
 

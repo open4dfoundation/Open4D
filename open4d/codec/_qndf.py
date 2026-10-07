@@ -1,4 +1,4 @@
-"""Neural displacement field codecs with direct standalone VMESH carriage."""
+"""Neural displacement field codecs with direct standalone O4D carriage."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from ._metadata import _json_value, _validate_manifest
 from ._protocol import CodecError
 from ._research import research_module
 from ._torch import torch_device
-from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
+from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 
 _MAX_CONTEXT_BYTES = 64 * 1024 * 1024
 _MAX_GRAPH_ELEMENTS = 64 * 1024 * 1024
@@ -200,7 +200,7 @@ class QNDFCodec:
     def __init__(self, *, int8: bool = False) -> None:
         self.int8 = int8
         self.id = "qndf-int8" if int8 else "qndf"
-        self.suffixes = (".vmesh",)
+        self.suffixes = (".o4d",)
 
     def can_decode(self, source: Path) -> bool:
         return contains_codec(source, self.id)
@@ -222,8 +222,8 @@ class QNDFCodec:
         if type(num_subdiv) is not int or num_subdiv < 0:
             raise ValueError("num_subdiv must be a nonnegative integer")
         destination = Path(destination).absolute()
-        if destination.suffix.lower() != ".vmesh":
-            raise ValueError("QNDF destination must have a .vmesh extension")
+        if destination.suffix.lower() != ".o4d":
+            raise ValueError("QNDF destination must have a .o4d extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         for frame in sequence:
@@ -288,20 +288,20 @@ class QNDFCodec:
                 _validate_context(torch, context, int8=self.int8)
                 torch.save(context, native / f"frame_{ordinal:06d}.pt")
             (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
-            pack_vmesh(native, destination, overwrite=overwrite)
+            pack_o4d(native, destination, overwrite=overwrite)
         return destination
 
     def decode(
         self, source: Path, *, device: str | None = None, verbose: bool = False
     ) -> Sequence:
         source = Path(source).absolute()
-        if source.suffix.lower() != ".vmesh":
-            raise CodecError("QNDF decoding requires .vmesh; migrate the legacy artifact explicitly")
+        if source.suffix.lower() != ".o4d":
+            raise CodecError("QNDF decoding requires .o4d; migrate the legacy artifact explicitly")
         if probe_codec(source) != self.id:
-            raise CodecError(f"VMESH does not contain {self.id}")
+            raise CodecError(f"O4D does not contain {self.id}")
         with tempfile.TemporaryDirectory(prefix="open4d-qndf-decode-") as directory:
             native = Path(directory) / "native"
-            unpack_vmesh(source, native)
+            unpack_o4d(source, native)
             manifest = json.loads((native / "metadata.json").read_text(encoding="utf-8"))
             try:
                 torch, models = _model_backend()

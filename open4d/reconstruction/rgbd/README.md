@@ -135,7 +135,9 @@ static structure, such as floors or walls; subject-only captures can misalign
 despite higher ICP fitness. Recalibrate if the cameras have moved.
 `device="cuda"` (or `"cuda:1"`, `"cpu"`) uses Open3D's tensor TSDF; omit it
 for the CPU `ScalableTSDFVolume`. Tensor meshes are coloured by projecting
-their vertices into the images. Frame times come from the cameras'
+their vertices into the images; vertices that no camera sees within the
+truncation band, such as silhouette edges, take the mean colour of their
+coloured neighbours. Frame times come from the cameras'
 timestamps.
 
 Without `device=`, the same capture and settings give bit-identical meshes

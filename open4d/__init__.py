@@ -1,5 +1,12 @@
 """Open4D public Python API."""
 
+from importlib.metadata import PackageNotFoundError, version as _version
+
+try:
+    __version__ = _version("open4d")
+except PackageNotFoundError:  # running from a source tree without installation
+    __version__ = "0+unknown"
+
 from .core import (
     ATTRIBUTE_FLOAT_DTYPE,
     ATTRIBUTE_INT_DTYPE,

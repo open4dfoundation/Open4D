@@ -8,12 +8,15 @@ import re
 import sys
 from pathlib import Path
 
+from check_provenance import release_decision_errors
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def blockers() -> list[str]:
-    ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
+def blockers(ledger: str | None = None) -> list[str]:
+    if ledger is None:
+        ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
     rows: list[str] = []
     for line in ledger.splitlines():
         if line.startswith("|") and re.search(r"\bBLOCK\b", line):
@@ -21,17 +24,31 @@ def blockers() -> list[str]:
             rows.append(cells[0] if cells else line)
     if "## Release decision: blocked" in ledger and not rows:
         rows.append("release decision remains blocked")
+    rows.extend(release_decision_errors(ledger))
     return rows
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--expect-blocked",
         action="store_true",
         help="succeed only when the repository is still explicitly blocked",
     )
+    mode.add_argument(
+        "--check-ledger", action="store_true",
+        help="validate the recorded release state without authorizing publication",
+    )
     args = parser.parse_args()
+    if args.check_ledger:
+        errors = release_decision_errors((ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8"))
+        if errors:
+            for error in errors:
+                print(f"ERROR: {error}", file=sys.stderr)
+            return 1
+        print("Release decision and approval record verified.")
+        return 0
     unresolved = blockers()
     if args.expect_blocked:
         if not unresolved:

@@ -10,7 +10,7 @@ import sys
 
 from . import load
 from .codec import CodecError
-from .codec._vmesh_format import is_mesh_profile, probe_codec
+from .codec._o4d_format import is_mesh_profile, probe_codec
 from .core import Sequence
 from .demo import write_demo
 from .io import Open4DError
@@ -68,16 +68,16 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument("--fps", type=_positive_float, default=30.0, help="sample frame rate (default: 30)")
 
     inspect = commands.add_parser(
-        "inspect", help="report timing and geometry, or a VMESH header without decoding",
+        "inspect", help="report timing and geometry, or an O4D header without decoding",
         description="Report timing, topology, and the first decoded frame. "
-        "VMESH files and VMESH USD prims are summarized from their header without decoding; "
+        "O4D files and O4D USD prims are summarized from their header without decoding; "
         "other encoded formats decode the whole sequence when opened.",
     )
     _source_arguments(inspect)
     inspect.add_argument("--json", action="store_true", help="print a JSON summary")
     inspect.add_argument(
         "--decode", action="store_true",
-        help="also decode a VMESH mesh profile for topology and first-frame geometry "
+        help="also decode an O4D mesh profile for topology and first-frame geometry "
         "(needs the codec's native backend)",
     )
 
@@ -126,11 +126,11 @@ def _inspect(sequence: Sequence, source: Path) -> dict:
 
 
 def _container(source: Path) -> NativeSequence | None:
-    """Open a standalone VMESH or a VMESH USD prim without decoding its payloads."""
+    """Open a standalone O4D or an O4D USD prim without decoding its payloads."""
     suffix = source.suffix.lower()
     if not source.is_file():
         return None
-    if suffix == ".vmesh" and probe_codec(source) is not None:
+    if suffix == ".o4d" and probe_codec(source) is not None:
         return NativeSequence(source)
     if suffix in (".usd", ".usda", ".usdc"):
         from .io._native_usd import is_native_usd, read_native_usd
@@ -143,7 +143,7 @@ def _container(source: Path) -> NativeSequence | None:
 def _summary(native: NativeSequence, source: Path) -> dict:
     manifest, files = native.manifest, native.manifest["files"]
     summary = {
-        "format": "vmesh" if source.suffix.lower() == ".vmesh" else "usd",
+        "format": "o4d" if source.suffix.lower() == ".o4d" else "usd",
         "schema": manifest["schema"],
         "codec": native.codec,
         "representation": native.representation,
@@ -194,7 +194,7 @@ def _report(info: dict) -> None:
     print(f"Source: {info['source']}")
     container = info.get("container")
     if container is not None:
-        kind = "VMESH" if container["format"] == "vmesh" else "VMESH in USD"
+        kind = "O4D" if container["format"] == "o4d" else "O4D in USD"
         print(f"Container: {kind}, codec {container['codec']}, {_stores(container)}")
         print(f"Dependencies: {container['dependency_mode']}")
         print(f"Payload: {container['payload_files']} files, {_size(container['payload_bytes'])} "
@@ -228,7 +228,7 @@ def _run(args: argparse.Namespace, source: Path, native: NativeSequence | None) 
     container = None if native is None else _summary(native, source)
     if container is not None:
         if args.format is not None or args.input_fps is not None:
-            raise TypeError("VMESH stores its own representation and timestamps; omit --format and --input-fps")
+            raise TypeError("O4D stores its own representation and timestamps; omit --format and --input-fps")
         if decode and not container["decodes_to_mesh"]:
             reader = "the viewer shows" if args.command == "view" else "--decode reports"
             raise ValueError(f"{native.codec} stores {_stores(container)}; {reader} triangle meshes")

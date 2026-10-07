@@ -1,4 +1,4 @@
-"""In-process KLT TSDF codec using standalone VMESH carriage."""
+"""In-process KLT TSDF codec using standalone O4D carriage."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from ._protocol import CodecError
 from ._research import research_module
 from ._tsdf import write_tsdf_sequence
 from ._torch import torch_device
-from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
+from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 
 _SCHEMA = "open4d.klt-sequence/v1"
 
@@ -130,7 +130,7 @@ class _KLTProvider:
 
 class KLTCodec:
     id = "klt"
-    suffixes = (".vmesh",)
+    suffixes = (".o4d",)
     backend = "python-in-process"
     lossless = False
     preserves = ("positions", "triangles")
@@ -145,8 +145,8 @@ class KLTCodec:
         verbose: bool = False,
     ) -> Path:
         destination = Path(destination).absolute()
-        if destination.suffix.lower() != ".vmesh":
-            raise ValueError("KLT destination must have a .vmesh extension")
+        if destination.suffix.lower() != ".o4d":
+            raise ValueError("KLT destination must have a .o4d extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         if type(resolution) is not int or not 7 <= resolution <= 255:
@@ -197,22 +197,22 @@ class KLTCodec:
                     backend.run_compression(arguments, verify_decode=False)
             native = work / "encoded/compressed"
             (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
-            pack_vmesh(native, destination, overwrite=overwrite)
+            pack_o4d(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path, *, device=None) -> Sequence:
         if device == "auto":
             device = str(torch_device(import_module("torch"), device))
         source = Path(source).absolute()
-        if source.suffix.lower() != ".vmesh":
-            raise CodecError("KLT decoding requires .vmesh; migrate the legacy artifact explicitly")
+        if source.suffix.lower() != ".o4d":
+            raise CodecError("KLT decoding requires .o4d; migrate the legacy artifact explicitly")
         if probe_codec(source) != self.id:
-            raise CodecError("VMESH does not contain KLT")
+            raise CodecError("O4D does not contain KLT")
         temporary = tempfile.TemporaryDirectory(prefix="open4d-klt-decode-")
         work = Path(temporary.name)
         decoded = None
         try:
-            unpack_vmesh(source, work / "compressed")
+            unpack_o4d(source, work / "compressed")
             manifest = json.loads((work / "compressed/metadata.json").read_text(encoding="utf-8"))
             _normalization(manifest)
             try:

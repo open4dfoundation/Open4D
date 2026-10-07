@@ -383,10 +383,48 @@ def native_bitstream(path, count=2):
 
 
 @pytest.mark.parametrize("opacity", [0, 1])
-def test_vega_rejects_infinite_training_logits(tmp_path, opacity):
-    frame = dataclasses.replace(splats(), opacities=np.full(2, opacity))
-    with pytest.raises(ValueError, match="strictly between"):
-        gaussians.encode_gaussians([frame, frame], tmp_path / "encoded")
+def test_vega_keeps_training_logits_finite(tmp_path, monkeypatch, opacity):
+    # A QUEEN PLY logit of 17.7 reads back as opacity 1.0 in float32; Vega
+    # trains logits, so encoding must not hand it an infinite one.
+    runtime = tmp_path / "vega"
+    (runtime / "vega").mkdir(parents=True)
+    (runtime / "vega" / "encoder.py").touch()
+    seen = []
+
+    def encode(runtime, python, request, work):
+        for path in sorted(Path(request["source"]).glob("frame_*.npz")):
+            with np.load(path) as data:
+                seen.append(data["opacities"])
+        native_bitstream(Path(request["output"]))
+
+    monkeypatch.setattr(gaussians, "_vega_command", encode)
+    saturated = dataclasses.replace(splats(), opacities=np.array([opacity, 0.5]))
+    gaussians.encode_gaussians([saturated, splats()], tmp_path / "encoded", runtime=runtime)
+    assert seen[0].dtype == np.float32 and seen[0][1] == np.float32(0.5)
+    assert 0 < seen[0][0] < 1
+    logits = np.log(seen[0]) - np.log1p(-seen[0])
+    assert np.isfinite(logits).all() and abs(logits[0]) < 17
+
+
+def test_ply_logit_that_rounds_to_one_still_encodes(tmp_path, monkeypatch):
+    pytest.importorskip("plyfile")
+    from plyfile import PlyData, PlyElement
+
+    names = ["x", "y", "z", "opacity", *(f"scale_{i}" for i in range(3)),
+             *(f"rot_{i}" for i in range(4)), *(f"f_dc_{i}" for i in range(3))]
+    vertex = np.zeros(2, dtype=[(name, "f4") for name in names])
+    vertex["rot_0"] = 1
+    vertex["opacity"] = [17.741018, 0.0]  # observed in a QUEEN ORBIT run
+    path = tmp_path / "frame.ply"
+    PlyData([PlyElement.describe(vertex, "vertex")]).write(path)
+    frame = gaussians.load_gaussians(path)
+    assert frame.opacities[0] == 1
+    runtime = tmp_path / "vega"
+    (runtime / "vega").mkdir(parents=True)
+    (runtime / "vega" / "encoder.py").touch()
+    monkeypatch.setattr(gaussians, "_vega_command",
+                        lambda runtime, python, request, work: native_bitstream(Path(request["output"])))
+    assert gaussians.encode_gaussians([frame, frame], tmp_path / "encoded", runtime=runtime).path.is_dir()
 
 
 @pytest.mark.parametrize("incomplete", ["count", "chunk"])
@@ -471,11 +509,11 @@ def test_real_vega_round_trip(tmp_path):
 
 def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch):
     import open4d
-    from open4d.codec import inspect_vmesh
+    from open4d.codec import inspect_o4d
     from open4d.native import NativeSequence
 
     frames = [splats(), splats()]
-    output = tmp_path / "capture.vmesh"
+    output = tmp_path / "capture.o4d"
     calls = []
 
     def encode(values, path, **options):
@@ -489,7 +527,7 @@ def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch):
     assert calls[0][1].name == "native"
     assert calls[0][2] == {"key_iterations": 10}
     assert not calls[0][1].exists()
-    assert inspect_vmesh(output)["codec"] == "vega"
+    assert inspect_o4d(output)["codec"] == "vega"
     with open4d.decode(output) as restored:
         assert isinstance(restored, NativeSequence)
         assert restored.codec == "vega"
@@ -497,14 +535,28 @@ def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch):
         assert restored.timestamps == (0, 1 / 30)
 
 
-@pytest.mark.parametrize("extension", ["vega", "o4d", ""])
-def test_public_vega_output_requires_vmesh(tmp_path, monkeypatch, extension):
+@pytest.mark.parametrize("extension", ["vega", "zip", ""])
+def test_public_vega_output_requires_o4d(tmp_path, monkeypatch, extension):
     import open4d
     monkeypatch.setattr(gaussians, "encode_gaussians", lambda *args, **kwargs: pytest.fail("native encoder launched"))
     output = tmp_path / (f"capture.{extension}" if extension else "capture")
-    with pytest.raises(ValueError, match=".vmesh"):
+    with pytest.raises(ValueError, match=".o4d"):
         open4d.encode([splats(), splats()], output, codec="vega")
     assert not output.exists()
+
+
+def test_missing_runtimes_name_their_variables(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPEN4D_GS_ROOT", raising=False)
+    with pytest.raises(FileNotFoundError, match="OPEN4D_GS_ROOT") as error:
+        gaussians._runtime(tmp_path / "missing")
+    assert "github.com/open4dfoundation/Open4D" in str(error.value)
+    with pytest.raises(FileNotFoundError, match="OPEN4D_VEGA_ROOT"):
+        gaussians.encode_gaussians([splats(), splats()], tmp_path / "out", runtime=tmp_path / "missing")
+    # Decoding takes its runtime from a NativeSequence, unchecked until here.
+    native_bitstream(tmp_path / "native")
+    monkeypatch.setattr(gaussians.subprocess, "run", lambda *a, **k: pytest.fail("no worker without a runtime"))
+    with pytest.raises(FileNotFoundError, match="OPEN4D_VEGA_ROOT"):
+        gaussians.VegaRun(tmp_path / "native", tmp_path / "missing", sys.executable).decode()
 
 
 def test_public_reconstruction_dispatch(tmp_path, monkeypatch):

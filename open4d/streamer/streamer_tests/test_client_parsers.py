@@ -31,7 +31,6 @@ from open4d import Frame, MemoryFrameProvider, PointCloud, Sequence, TriangleMes
 from open4d.io import write_sequence
 
 from streamer.client import viewer_path
-from streamer_tests import open4d_tree
 
 
 def _source() -> str:
@@ -189,18 +188,13 @@ def test_bounds_are_finite_and_ordered(mesh_ply, tmp_path):
 
 
 @requires_node
-def test_a_real_captured_sequence_parses(tmp_path):
-    """The 10-frame basketball OBJ sequence the TVMC codec vendors, via open4d.load."""
-    import open4d
+def test_a_dense_sequence_parses(tmp_path):
+    """A frame with more than 10,000 vertices and triangles, via write_sequence."""
+    from open4d.demo import mesh_sequence
 
-    source = (
-        open4d_tree() / "codecs/tvmc/arap-volume-tracking/data/basketball_player"
-    )
-    if not source.is_dir():
-        pytest.skip(f"{source} is not present")
-    with open4d.load(source, fps=10) as sequence:
-        write_sequence(sequence[:1], tmp_path / "real", format="ply", overwrite=True)
-    result = run_parser("parseMeshPly", tmp_path / "real" / "frame_000000.ply", tmp_path)
+    with mesh_sequence(side=128, frames=1) as sequence:
+        write_sequence(sequence, tmp_path / "dense", format="ply", overwrite=True)
+    result = run_parser("parseMeshPly", tmp_path / "dense" / "frame_000000.ply", tmp_path)
     assert result["count"] > 10_000
     assert result["triangles"] > 10_000
     assert result["maxIndex"] < result["count"]

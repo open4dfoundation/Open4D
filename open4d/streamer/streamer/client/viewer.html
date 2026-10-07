@@ -939,10 +939,10 @@ function suffixOf(url) {
 
 const SEQ_MAGIC = "VMESH\0\x01\0";
 const SEQ_PREAMBLE = 26;
-const VMESH_CHUNK = 1048576;
+const O4D_CHUNK = 1048576;
 
 /* Pure SHA-256 also works on LAN HTTP pages, where Web Crypto is unavailable. */
-function vmeshSHA256(data) {
+function o4dSHA256(data) {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   const k = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
     0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -984,7 +984,7 @@ function vmeshSHA256(data) {
   return h.map(value => value.toString(16).padStart(8, "0")).join("");
 }
 
-function vmeshJSON(text) {
+function o4dJSON(text) {
   const value = JSON.parse(text), stack = [];
   for (const token of text.match(/"(?:[^"\\]|\\.)*"|[{}\[\],:]/g) || []) {
     if (token === "{") stack.push({keys:new Set(), key:true});
@@ -998,7 +998,7 @@ function vmeshJSON(text) {
       const current = stack[stack.length - 1];
       if (current && current.key) {
         const key = JSON.parse(token);
-        if (current.keys.has(key)) throw new Error("duplicate VMESH JSON key");
+        if (current.keys.has(key)) throw new Error("duplicate O4D JSON key");
         current.keys.add(key);
       }
     }
@@ -1006,36 +1006,36 @@ function vmeshJSON(text) {
   return value;
 }
 
-function vmeshRecord(buffer, at, kind, fileId, offset, length) {
-  if (at < 0 || at + 18 + length > buffer.byteLength) throw new Error("VMESH record truncated");
+function o4dRecord(buffer, at, kind, fileId, offset, length) {
+  if (at < 0 || at + 18 + length > buffer.byteLength) throw new Error("O4D record truncated");
   const view = new DataView(buffer);
   const position = Number(view.getBigUint64(at + 10));
   if (!Number.isSafeInteger(position) || view.getUint32(at) !== 14 + length
       || view.getUint8(at + 4) !== 1 || view.getUint8(at + 5) !== kind
       || view.getUint32(at + 6) !== fileId || position !== offset) {
-    throw new Error("invalid VMESH record version, kind, file ID, offset or length");
+    throw new Error("invalid O4D record version, kind, file ID, offset or length");
   }
 }
 
 /* The manifest is enough to calculate frame record ranges before body arrival. */
 function readSequenceHeader(buffer) {
   const bytes = new Uint8Array(buffer), view = new DataView(buffer);
-  if (bytes.length < SEQ_PREAMBLE) throw new Error("VMESH manifest truncated");
-  if (String.fromCharCode(...bytes.subarray(0, 8)) !== SEQ_MAGIC) throw new Error("not a VMESH container");
+  if (bytes.length < SEQ_PREAMBLE) throw new Error("O4D manifest truncated");
+  if (String.fromCharCode(...bytes.subarray(0, 8)) !== SEQ_MAGIC) throw new Error("not an O4D container");
   const length = view.getUint32(8) - 14;
-  if (length <= 0 || length > 16777216) throw new Error("VMESH manifest exceeds limits");
-  vmeshRecord(buffer, 8, 0, 0, 0, length);
+  if (length <= 0 || length > 16777216) throw new Error("O4D manifest exceeds limits");
+  o4dRecord(buffer, 8, 0, 0, 0, length);
   const manifestBytes = bytes.subarray(SEQ_PREAMBLE, SEQ_PREAMBLE + length);
   let manifest;
-  try { manifest = vmeshJSON(new TextDecoder("utf-8", {fatal:true}).decode(manifestBytes)); }
-  catch (_) { throw new Error("invalid VMESH manifest JSON"); }
+  try { manifest = o4dJSON(new TextDecoder("utf-8", {fatal:true}).decode(manifestBytes)); }
+  catch (_) { throw new Error("invalid O4D manifest JSON"); }
   const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
   const finiteJSON = value => {
-    if (typeof value === "number" && !Number.isFinite(value)) throw new Error("non-finite VMESH metadata");
+    if (typeof value === "number" && !Number.isFinite(value)) throw new Error("non-finite O4D metadata");
     if (value !== null && typeof value === "object") Object.values(value).forEach(finiteJSON);
   };
   finiteJSON(manifest);
-  if (!object(manifest)) throw new Error("VMESH manifest must be an object");
+  if (!object(manifest)) throw new Error("O4D manifest must be an object");
   const native = manifest.native, count = manifest.frame_count, sequence = manifest.sequence;
   const suffixes = ["ply", "drc", "splat", "jpg", "jpeg", "png"];
   if (!object(manifest) || manifest.schema !== "vmesh/1" || manifest.codec !== "frames"
@@ -1054,7 +1054,7 @@ function readSequenceHeader(buffer) {
       || (sequence.metadata !== undefined && !object(sequence.metadata))
       || ["has_constant_vertex_count", "has_vertex_correspondence"].some(name =>
         sequence[name] !== undefined && sequence[name] !== null && typeof sequence[name] !== "boolean")) {
-    throw new Error("unsupported VMESH browser frame profile");
+    throw new Error("unsupported O4D browser frame profile");
   }
   const entries = [];
   let offset = SEQ_PREAMBLE + length, previous = null;
@@ -1067,42 +1067,42 @@ function readSequenceHeader(buffer) {
         || typeof frame.timestamp !== "number" || !Number.isFinite(frame.timestamp)
         || (previous !== null && !sequence.allow_nonmonotonic_timestamps && frame.timestamp < previous)
         || (frame.metadata !== undefined && !object(frame.metadata))) {
-      throw new Error("invalid VMESH frame metadata or payload descriptor");
+      throw new Error("invalid O4D frame metadata or payload descriptor");
     }
     entries.push({offset, length:file.size, sha256:file.sha256});
-    offset += file.size + 18 * Math.ceil(file.size / VMESH_CHUNK);
-    if (!Number.isSafeInteger(offset + 50)) throw new Error("VMESH offsets exceed browser integer limit");
+    offset += file.size + 18 * Math.ceil(file.size / O4D_CHUNK);
+    if (!Number.isSafeInteger(offset + 50)) throw new Error("O4D offsets exceed browser integer limit");
     previous = frame.timestamp;
   }
   return {suffix:native.suffix, representation:native.representation, entries, endOffset:offset,
-          manifestHash:vmeshSHA256(manifestBytes)};
+          manifestHash:o4dSHA256(manifestBytes)};
 }
 
 function validateSequenceEnd(buffer, header) {
-  if (buffer.byteLength !== header.endOffset + 50) throw new Error("VMESH is truncated or has trailing data");
-  vmeshRecord(buffer, header.endOffset, 2, 0, 0, 32);
+  if (buffer.byteLength !== header.endOffset + 50) throw new Error("O4D is truncated or has trailing data");
+  o4dRecord(buffer, header.endOffset, 2, 0, 0, 32);
   const digest = new Uint8Array(buffer, header.endOffset + 18, 32);
   const hex = Array.from(digest, byte => byte.toString(16).padStart(2,"0")).join("");
-  if (hex !== header.manifestHash) throw new Error("VMESH end manifest SHA-256 mismatch");
+  if (hex !== header.manifestHash) throw new Error("O4D end manifest SHA-256 mismatch");
 }
 
 /* Assemble chunk records into an owned buffer, then verify before decoding. */
 function sequenceFrame(buffer, header, index) {
-  if (!Number.isInteger(index) || index < 0 || index >= header.entries.length) throw new Error("VMESH frame index out of range");
+  if (!Number.isInteger(index) || index < 0 || index >= header.entries.length) throw new Error("O4D frame index out of range");
   const entry = header.entries[index];
-  if (entry.offset + entry.length + 18 * Math.ceil(entry.length / VMESH_CHUNK) > buffer.byteLength) {
-    throw new Error("VMESH frame payload truncated");
+  if (entry.offset + entry.length + 18 * Math.ceil(entry.length / O4D_CHUNK) > buffer.byteLength) {
+    throw new Error("O4D frame payload truncated");
   }
   const output = new Uint8Array(entry.length);
   let at = entry.offset, copied = 0;
   while (copied < entry.length) {
-    const length = Math.min(VMESH_CHUNK, entry.length - copied);
-    vmeshRecord(buffer, at, 1, index, copied, length);
+    const length = Math.min(O4D_CHUNK, entry.length - copied);
+    o4dRecord(buffer, at, 1, index, copied, length);
     output.set(new Uint8Array(buffer, at + 18, length), copied);
     at += 18 + length;
     copied += length;
   }
-  if (vmeshSHA256(output) !== entry.sha256) throw new Error("VMESH frame SHA-256 mismatch");
+  if (o4dSHA256(output) !== entry.sha256) throw new Error("O4D frame SHA-256 mismatch");
   return output.buffer;
 }
 
@@ -1577,14 +1577,14 @@ class Scheduler {
     }
     // The frame list survives packing, and this is one reason it has to: a
     // frame is decoded by the codec its *own* name selects. Handing the
-    // container's name to the decode instead is a `.vmesh` suffix in a table of
+    // container's name to the decode instead is a `.o4d` suffix in a table of
     // `.ply` and `.splat`, which is how every Gaussian pane went blank -- and
     // silently, because pixels are decoded from the media type on the main
     // thread and were unaffected, so it looked like one method being broken
     // rather than one code path.
     const names = this.frames;
     if (this.clip.representation && this.clip.representation !== header.representation) {
-      throw new Error(`${url}: VMESH representation disagrees with clip`);
+      throw new Error(`${url}: O4D representation disagrees with clip`);
     }
     if (suffixOf(names[0]) !== `.${header.suffix}`) {
       throw new Error(`${url}: holds .${header.suffix} frames, clip lists`
@@ -1619,7 +1619,7 @@ class Scheduler {
   async _readPacked(response, expected, total, onProgress) {
     if (!response.body || !response.body.getReader) {
       const buffer = await response.arrayBuffer();
-      if (buffer.byteLength > this.byteBudget) throw new Error("VMESH download exceeds byte budget");
+      if (buffer.byteLength > this.byteBudget) throw new Error("O4D download exceeds byte budget");
       return buffer;
     }
     const reader = response.body.getReader();
@@ -1632,7 +1632,7 @@ class Scheduler {
       got += value.byteLength;
       if (got > this.byteBudget) {
         reader.cancel().catch(() => {});
-        throw new Error("VMESH download exceeds byte budget");
+        throw new Error("O4D download exceeds byte budget");
       }
       chunks.push(value);
       if (onProgress && expected) {
@@ -2910,7 +2910,7 @@ async function downloadSelection() {
        * rejection: the pane stayed blank, nothing was logged where anyone
        * would look, and the page went on insisting it was fine. That is how a
        * decoder error reads as "this method is broken" -- which is what
-       * happened when every Gaussian frame was handed the container's `.vmesh`
+       * happened when every Gaussian frame was handed the container's `.o4d`
        * name instead of its own. A pane that cannot show its content has to
        * say why. */
       if (token !== app.downloadToken) return;

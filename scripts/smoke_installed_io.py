@@ -12,13 +12,13 @@ import tempfile
 
 import numpy as np
 
-import integrations
 import open4d
+import open4d.integrations.open3d
 from open4d.codec import CodecError, available_codecs
 from open4d.io import inspect_sequence, open_sequence, write_sequence
 
 
-for module in (open4d, integrations):
+for module in (open4d, open4d.integrations.open3d):
     installed_path = Path(module.__file__).resolve()
     assert installed_path.is_relative_to(Path(sysconfig.get_path("purelib")).resolve()), installed_path
 print(f"Installed package: {open4d.__file__}")
@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory() as directory:
     installed = {info.id for info in codecs}
     assert installed == {"klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc",
                          "tvmc", "tsmc", "vega", "queen", "3dgstream", "rerf"}
-    assert all(info.suffixes == (".vmesh",) for info in codecs)
+    assert all(info.suffixes == (".o4d",) for info in codecs)
     from open4d.codec._research import research_module
     os.environ.pop("OPEN4D_RESEARCH_ROOT", None)
     try:
@@ -87,15 +87,15 @@ with tempfile.TemporaryDirectory() as directory:
         raise AssertionError("wheel unexpectedly includes KLT research source")
 
     from concurrent.futures import ThreadPoolExecutor
-    from open4d.codec import inspect_vmesh
+    from open4d.codec import inspect_o4d
     from open4d.codec._npz import REFERENCE_CODECS
     from open4d.demo import mesh_sequence
 
     with mesh_sequence(side=3, frames=2) as source:
         reference = next(codec for codec in REFERENCE_CODECS if codec.id == "npz")
-        artifact = open4d.encode(source, Path(directory) / "reference.vmesh", codec=reference)
+        artifact = open4d.encode(source, Path(directory) / "reference.o4d", codec=reference)
         assert artifact.read_bytes().startswith(b"VMESH\x00\x01\x00")
-        assert inspect_vmesh(artifact)["codec"] == "npz"
+        assert inspect_o4d(artifact)["codec"] == "npz"
         with open4d.decode(artifact) as decoded:
             assert decoded.timestamps == source.timestamps
             for expected, actual in zip(source, decoded):
@@ -109,4 +109,4 @@ with tempfile.TemporaryDirectory() as directory:
         for expected, actual in zip(source, restored):
             np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
             assert actual.timestamp == expected.timestamp
-    print("Installed I/O, CLI, VMESH round trip, codec discovery and mesh streaming passed")
+    print("Installed I/O, CLI, O4D round trip, codec discovery and mesh streaming passed")

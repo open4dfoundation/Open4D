@@ -1,4 +1,4 @@
-"""Portable native temporal runs and lossless USDC / VMESH interchange.
+"""Portable native temporal runs and lossless USDC / O4D interchange.
 
 Opening a run never executes its models. ``decode`` and ``render`` explicitly
 invoke the selected research runtime. USD interchange retains the compressed
@@ -23,7 +23,7 @@ from .codec._native import run
 from .codec._native_profiles import NEURAL_CODECS, layout
 from .codec._metadata import _json_value
 from .codec._protocol import CodecError
-from .codec._vmesh_format import _json, inspect_vmesh, pack_vmesh, unpack_vmesh
+from .codec._o4d_format import _json, inspect_o4d, pack_o4d, unpack_o4d
 from ._files import publish_file
 
 
@@ -102,8 +102,11 @@ def _stage_native(source, destination, codec, config, initial_model, ntc_config)
         for index, frame in enumerate(frames[1:], 1):
             _copy(frame / "compressed/point_cloud.pkl", destination / f"frame_{index:06d}.pkl")
     elif codec == "3dgstream":
-        if not cfg:
-            cfg = _read_json(source / "cfg_args.json")
+        saved_config = source / "cfg_args.json"
+        if saved_config.is_file() or not cfg:
+            # Training configs omit parser defaults; saved arguments contain
+            # the decoder's SH and NTC settings for the actual run.
+            cfg = {**_configuration(saved_config), **cfg}
         frames = sorted((p for p in source.glob("frame[0-9]*") if p.is_dir() and p.name[5:].isdigit()), key=lambda p: int(p.name[5:]))
         indices = [0] + [int(p.name[5:]) for p in frames]
         if len(frames) < 1 or indices != list(range(len(frames) + 1)):
@@ -181,7 +184,7 @@ class NativeSequence:
     """
     def __init__(self, path, *, temporary=None, runtime=None, python=None):
         self.path = Path(path).absolute()
-        self.manifest = inspect_vmesh(self.path)
+        self.manifest = inspect_o4d(self.path)
         self.codec = self.manifest["codec"]
         self.representation = self.manifest["representation"]
         self.metadata = MappingProxyType(self.manifest["sequence"].get("metadata", {}))
@@ -215,14 +218,14 @@ class NativeSequence:
 
     def unpack(self, destination):
         self._check_open()
-        return unpack_vmesh(self.path, destination)
+        return unpack_o4d(self.path, destination)
 
     def _native_directory(self):
         self._check_open()
         if self._extracted is None:
             temporary = tempfile.TemporaryDirectory(prefix=f"open4d-{self.codec}-native-")
             try:
-                unpack_vmesh(self.path, Path(temporary.name) / "native")
+                unpack_o4d(self.path, Path(temporary.name) / "native")
             except BaseException:
                 temporary.cleanup()
                 raise
@@ -277,6 +280,12 @@ class NativeSequence:
             return tuple(result)
 
     def _worker(self, operation, source, work, root, executable, **options):
+        if not Path(root).is_dir():
+            from .gaussians import missing_runtime
+            variable = "OPEN4D_" + self.codec.upper()
+            raise FileNotFoundError(
+                missing_runtime(self.codec, root, variable + "_ROOT", f"open4d/reconstruction/{self.codec}")
+                + f" python= or {variable}_PYTHON selects the interpreter with its CUDA dependencies.")
         request = dict(operation=operation, codec=self.codec, source=str(source), output=str(work), runtime=str(root), **options)
         path = work / "request.json"
         path.write_text(json.dumps(request, allow_nan=False))
@@ -304,7 +313,7 @@ def import_native(source, *, codec=None, config=None, initial_model=None, ntc_co
     """Import Vega, QUEEN, 3DGStream or ReRF native output, excluding dense exports.
 
     ``source`` can also be a GaussianRun/VegaRun. All dependencies are copied
-    into an owned .vmesh, so the returned object is independent of the run.
+    into an owned .o4d, so the returned object is independent of the run.
     """
     if hasattr(source, "path"):
         codec = codec or getattr(source, "method", "vega")
@@ -336,7 +345,7 @@ def import_native(source, *, codec=None, config=None, initial_model=None, ntc_co
                       frames=[dict(frame_index=i, timestamp=t, metadata=_json_value(m, "frame")) for i, t, m in zip(ids, times, metas)],
                       allow_nonmonotonic_timestamps=False)
         (native / "metadata.json").write_text(json.dumps(record, allow_nan=False))
-        artifact = pack_vmesh(native, root / "sequence.vmesh")
+        artifact = pack_o4d(native, root / "sequence.o4d")
         shutil.rmtree(native)
         return NativeSequence(artifact, temporary=temporary, runtime=runtime, python=python)
     except BaseException:
@@ -345,7 +354,7 @@ def import_native(source, *, codec=None, config=None, initial_model=None, ntc_co
 
 
 def save_native(sequence, destination, *, overwrite=False):
-    """Save native temporal state as standalone .vmesh or a self-contained VMESH USD."""
+    """Save native temporal state as standalone .o4d or a self-contained O4D USD."""
     if not isinstance(sequence, NativeSequence):
         raise TypeError("sequence must be a NativeSequence")
     if not isinstance(overwrite, bool):
@@ -355,14 +364,14 @@ def save_native(sequence, destination, *, overwrite=False):
     if path.suffix.lower() in (".usd", ".usda", ".usdc"):
         from .io._native_usd import write_native_usd
         return write_native_usd(sequence, path, overwrite=overwrite)
-    if path.suffix.lower() != ".vmesh":
-        raise ValueError("native output requires .vmesh, .usd, .usda or .usdc")
+    if path.suffix.lower() != ".o4d":
+        raise ValueError("native output requires .o4d, .usd, .usda or .usdc")
     if path.exists() and not overwrite:
         raise FileExistsError(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{path.name}-", dir=path.parent) as folder:
-        staged = Path(folder) / "sequence.vmesh"
+        staged = Path(folder) / "sequence.o4d"
         shutil.copyfile(sequence.path, staged)
-        inspect_vmesh(staged)
+        inspect_o4d(staged)
         publish_file(staged, path, overwrite=overwrite)
     return path

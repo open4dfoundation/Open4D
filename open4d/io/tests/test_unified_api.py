@@ -21,7 +21,7 @@ def sequence() -> Sequence:
 
 
 def test_top_level_codec_round_trip_and_unload(tmp_path):
-    artifact = open4d.save(sequence(), tmp_path / "capture.vmesh", codec=NumPyZipCodec())
+    artifact = open4d.save(sequence(), tmp_path / "capture.o4d", codec=NumPyZipCodec())
 
     loaded = open4d.load(artifact, codec=NumPyZipCodec())
     np.testing.assert_array_equal(loaded[0].geometry.triangles, [[0, 1, 2]])
@@ -58,12 +58,12 @@ def test_top_level_load_rejects_conflicting_dispatch_overrides(tmp_path):
         open4d.load(path, format="obj", codec="npz")
 
 
-def test_top_level_load_dispatches_vmesh_to_codec_detection(
+def test_top_level_load_dispatches_o4d_to_codec_detection(
     tmp_path, monkeypatch
 ):
     import open4d._api as implementation
 
-    path = tmp_path / "capture.vmesh"
+    path = tmp_path / "capture.o4d"
     path.write_bytes(b"raw bitstream")
     expected = sequence()
     received = {}
@@ -92,7 +92,7 @@ def test_top_level_save_requires_a_sequence_file_extension(tmp_path, name):
         open4d.save(sequence(), tmp_path / name)
 
 
-@pytest.mark.parametrize("suffix", [".vmesh"])
+@pytest.mark.parametrize("suffix", [".o4d"])
 def test_top_level_save_requires_a_codec_for_ambiguous_codec_suffix(tmp_path, suffix):
     with pytest.raises(ValueError, match="ambiguous.*codec"):
         open4d.save(sequence(), tmp_path / f"capture{suffix}")
@@ -105,11 +105,11 @@ def test_top_level_api_exports_visualize():
 @pytest.mark.parametrize("codec", ["draco", "raw", "npz", "temporal-delta"])
 def test_utility_codecs_are_not_public_choices(tmp_path, codec):
     with pytest.raises(ValueError, match="unknown codec"):
-        open4d.encode(sequence(), tmp_path / "take.vmesh", codec=codec)
+        open4d.encode(sequence(), tmp_path / "take.o4d", codec=codec)
 
 
 def test_encoding_requires_an_explicit_codec(tmp_path):
     with pytest.raises(TypeError, match="codec"):
-        open4d.encode(sequence(), tmp_path / "take.vmesh")
+        open4d.encode(sequence(), tmp_path / "take.o4d")
     with pytest.raises(ValueError, match="ambiguous.*codec"):
-        open4d.save(sequence(), tmp_path / "take.vmesh")
+        open4d.save(sequence(), tmp_path / "take.o4d")

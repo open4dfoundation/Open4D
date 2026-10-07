@@ -14,10 +14,10 @@ from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import open_sequence
 from open4d.io._mesh import write_obj
 
-from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
+from ._metadata import _json_value, _validate_manifest, require_o4d_destination
 from ._protocol import CodecError
 from ._native import run as _run_native
-from ._vmesh_format import contains_codec, pack_vmesh, probe_codec, unpack_vmesh
+from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 
 
 def _executable(value, label: str) -> str:
@@ -94,7 +94,7 @@ class TrackedMeshCodec:
 
     def __init__(self, identifier):
         self.id = identifier
-        self.suffixes = (".vmesh",)
+        self.suffixes = (".o4d",)
 
     def can_decode(self, source: Path) -> bool:
         return contains_codec(source, self.id)
@@ -135,8 +135,8 @@ class TrackedMeshCodec:
         grid_resolution=512, key_frame=None, components=None, quantization=None,
         overwrite=False,
     ) -> Path:
-        """Encode direct native payloads to VMESH."""
-        destination = require_vmesh_destination(destination)
+        """Encode direct native payloads to O4D."""
+        destination = require_o4d_destination(destination)
         if destination.exists() and not overwrite:
             raise FileExistsError(f"destination already exists: {destination}")
         if destination.is_dir():
@@ -215,18 +215,18 @@ class TrackedMeshCodec:
                 if not (result / name).is_file() or not (result / name).stat().st_size:
                     raise CodecError(f"{self.id} encoder produced no {name}")
             (result / "metadata.json").write_text(json.dumps(manifest), encoding="utf-8")
-            return pack_vmesh(result, destination, overwrite=overwrite)
+            return pack_o4d(result, destination, overwrite=overwrite)
 
     def decode(self, source: Path, *, backend=None, python=None, decoder=None) -> Sequence:
-        """Reconstruct frames from VMESH."""
+        """Reconstruct frames from O4D."""
         source = Path(source).absolute()
         temporary = tempfile.TemporaryDirectory(prefix=f"open4d-{self.id}-decode-")
         decoded = None
         try:
             work = Path(temporary.name)
-            if source.suffix.lower() != ".vmesh" or probe_codec(source) != self.id:
-                raise CodecError(f"{self.id} decode requires VMESH; import native directories explicitly")
-            source = unpack_vmesh(source, work / "native")
+            if source.suffix.lower() != ".o4d" or probe_codec(source) != self.id:
+                raise CodecError(f"{self.id} decode requires O4D; import native directories explicitly")
+            source = unpack_o4d(source, work / "native")
             manifest = _manifest(source, self.id)
             settings = self._settings(backend, python, None, decoder, encoding=False)
             output = work / "decoded"

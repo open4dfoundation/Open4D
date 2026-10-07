@@ -4,19 +4,19 @@ import pytest
 
 def test_native_non_utf8_diagnostic_is_a_codec_error():
     import sys
-    from open4d.codec import CodecError, _vmesh
+    from open4d.codec import CodecError, _o4d
 
     with pytest.raises(CodecError, match="exited 2"):
-        _vmesh._run([sys.executable, "-c", "import os; os.write(2, b'bad\\xff'); exit(2)"], "native")
+        _o4d._run([sys.executable, "-c", "import os; os.write(2, b'bad\\xff'); exit(2)"], "native")
 
 
 def test_native_timeout_is_bounded_and_explained(monkeypatch):
     import sys
-    from open4d.codec import CodecError, _vmesh
+    from open4d.codec import CodecError, _o4d
 
     monkeypatch.setenv("OPEN4D_NATIVE_TIMEOUT", "0.1")
     with pytest.raises(CodecError, match="timed out"):
-        _vmesh._run([sys.executable, "-c", "import time; time.sleep(1)"], "native")
+        _o4d._run([sys.executable, "-c", "import time; time.sleep(1)"], "native")
 
 
 def test_native_timeout_is_opt_in(monkeypatch):
@@ -29,11 +29,11 @@ def test_native_timeout_is_opt_in(monkeypatch):
 @pytest.mark.parametrize("value", ["soon", "0", "-5", "inf", "nan"])
 def test_invalid_native_timeout_is_a_codec_error(monkeypatch, value):
     import sys
-    from open4d.codec import CodecError, _vmesh
+    from open4d.codec import CodecError, _o4d
 
     monkeypatch.setenv("OPEN4D_NATIVE_TIMEOUT", value)
     with pytest.raises(CodecError, match="OPEN4D_NATIVE_TIMEOUT"):
-        _vmesh._run([sys.executable, "-c", "pass"], "native")
+        _o4d._run([sys.executable, "-c", "pass"], "native")
 
 
 @pytest.mark.parametrize("identifier", ["npz", "rle"])
@@ -45,7 +45,7 @@ def test_array_codec_refuses_to_write_arrays_it_cannot_read(tmp_path, monkeypatc
     mesh = TriangleMesh(np.random.default_rng(0).random((64, 3)), [[0, 1, 2]])
     source = Sequence(MemoryFrameProvider([Frame(0, 0., mesh)]))
     monkeypatch.setattr(_npz, "_MAX_ARRAY_BYTES", 512)
-    destination = tmp_path / "large.vmesh"
+    destination = tmp_path / "large.o4d"
     with pytest.raises(CodecError, match="limit"):
         codec.encode(source, destination)
     assert not destination.exists()

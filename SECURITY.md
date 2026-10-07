@@ -30,7 +30,7 @@ private data, and identifying capture content.
 
 ## Known limitations
 
-VMESH framing and hashes validate container integrity; they do not authenticate
+O4D framing and hashes validate container integrity; they do not authenticate
 the publisher or make native payloads safe to execute. Inspection, packing,
 and compressed USD round trips do not invoke native models. Decoding can:
 
@@ -56,9 +56,9 @@ follow symlinks; their network exposure and asset roots must be controlled.
 Vendored QUEEN and 3DGStream trainer/renderer argument loaders evaluate
 `cfg_args`. Some 3DGStream conversion scripts and the ReRF LLFF loader construct
 shell commands from paths or options. Use trusted inputs for those entry points;
-the VMESH import path uses JSON instead of these evaluated configurations.
+the O4D import path uses JSON instead of these evaluated configurations.
 
 Legacy ZIP/NPZ paths do not consistently bound aggregate expanded bytes.
-Repacking a legacy N4MC archive can exhaust disk before VMESH validation, and
+Repacking a legacy N4MC archive can exhaust disk before O4D validation, and
 neural architecture or volume dimensions can trigger large allocations even
 after safe deserialization.

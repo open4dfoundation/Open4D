@@ -6,7 +6,7 @@ from pathlib import Path
 
 from open4d import load as _open_sequence
 from open4d.codec import available_codecs
-from open4d.codec._vmesh_format import probe_codec
+from open4d.codec._o4d_format import probe_codec
 from open4d.io import available_formats, inspect_sequence
 
 DEFAULT_FPS = 30.0
@@ -57,7 +57,7 @@ def open_sequence(path: Path | str, fps: float | None = None):
     """Load a source, using ``fps`` for manifest-free frame timing."""
     path = Path(path)
     uses_import_fps = path.is_dir() and path.suffix.lower() not in _codec_suffixes()
-    raw_vdmc = path.is_file() and path.suffix.lower() == ".vmesh" and probe_codec(path) is None
+    raw_vdmc = path.is_file() and path.suffix.lower() == ".o4d" and probe_codec(path) is None
     return _open_sequence(path, fps=fps if uses_import_fps or raw_vdmc else None)
 
 

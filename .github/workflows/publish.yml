@@ -51,12 +51,13 @@ jobs:
           python-version: "3.12"
       - name: Build once
         run: |
-          python -m pip install 'build>=1.2'
+          python -m pip install 'build>=1.2' 'twine>=6'
           python -m build --outdir dist
       - name: Check distribution contents
         run: |
           python scripts/check_wheel_contents.py dist/open4d-*.whl
           python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
+          python -m twine check --strict dist/*
       - name: Match the release tag to the package version
         if: github.event_name == 'release'
         env:
@@ -69,12 +70,19 @@ jobs:
           tag = os.environ["TAG"]
           assert tag == f"v{version}", f"release tag {tag} does not match version {version}"
           PY
-      - name: Test the wheel in a clean environment
+      - name: Test wheel and source in clean environments
         run: |
-          python -m venv "$RUNNER_TEMP/smoke"
-          "$RUNNER_TEMP/smoke/bin/python" -m pip install dist/open4d-*.whl
-          "$RUNNER_TEMP/smoke/bin/python" -m pip check
-          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/smoke/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py"
+          for kind in wheel source; do
+            python -m venv "$RUNNER_TEMP/$kind-smoke"
+            if [ "$kind" = wheel ]; then
+              artifact=(dist/open4d-*.whl)
+            else
+              artifact=(dist/open4d-*.tar.gz)
+            fi
+            "$RUNNER_TEMP/$kind-smoke/bin/python" -m pip install "${artifact[0]}"
+            "$RUNNER_TEMP/$kind-smoke/bin/python" -m pip check
+            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/$kind-smoke/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py")
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: distributions

@@ -15,8 +15,8 @@ pytestmark = pytest.mark.cpu
 def test_malformed_codec_source_is_reported_without_a_traceback(
     tmp_path, monkeypatch
 ):
-    path = tmp_path / "broken.vmesh"
-    path.write_bytes(b"not a VMESH artifact")
+    path = tmp_path / "broken.o4d"
+    path.write_bytes(b"not an O4D artifact")
     monkeypatch.setattr(sys, "argv", ["visualize_sequence.py", str(path), "--info"])
 
     with pytest.raises(SystemExit) as caught:
@@ -62,7 +62,7 @@ def test_single_sequence_cli_reaches_playback_without_eager_decoding(
             return Frame(index, index / 30, TriangleMesh(positions, [[0, 1, 2]]))
 
     sequence = Sequence(Provider())
-    path = tmp_path / "capture.vmesh"
+    path = tmp_path / "capture.o4d"
     path.touch()
     captured = {}
     monkeypatch.setattr(cli, "open_sequence", lambda *args, **kwargs: sequence)

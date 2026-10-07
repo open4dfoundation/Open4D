@@ -22,7 +22,7 @@ For research and reconstruction tests on Python 3.12:
 ```bash
 python -m pip install -e '.[dev,klt,n4mc,qndf,open3d,gaussians]'
 python -m pytest open4d/codec/tests/test_research_cpu.py -m 'not gpu'
-python -m pytest open4d/reconstruction/rgbd/tests integrations/open3d/tests
+python -m pytest open4d/reconstruction/rgbd/tests open4d/integrations/open3d/tests
 ```
 
 ## Code
@@ -43,19 +43,22 @@ python -m pytest open4d/reconstruction/rgbd/tests integrations/open3d/tests
 
 ```bash
 python -m pytest
-python -m compileall -q open4d/*.py open4d/reconstruction/*.py open4d/reconstruction/rgbd/*.py open4d/transport open4d/codec open4d/core open4d/io open4d/torch_ops open4d/visualization integrations/__init__.py integrations/open3d examples/visualization scripts
+python -m compileall -q open4d/*.py open4d/reconstruction/*.py open4d/reconstruction/rgbd/*.py open4d/transport open4d/codec open4d/core open4d/io open4d/torch_ops open4d/visualization open4d/integrations examples/visualization scripts
 python scripts/check_markdown_links.py
 python scripts/check_provenance.py
-python scripts/check_release_gate.py --expect-blocked
+python scripts/check_release_gate.py --check-ledger
 python -m build
 python scripts/check_wheel_contents.py dist/open4d-*.whl
 python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
+python -m twine check --strict dist/*
 ```
 
 The package checks enforce an explicit file list for wheels and source archives.
 The compile check matches CI's supported Python paths; vendored tools such as
 Eigen's historical Python 2 maintenance scripts are outside that check.
 CI also installs the wheel outside the checkout and tests the installed API.
+It separately installs the source archive and exercises the installed extras,
+including RGB-D capture loading, reconstruction, OpenUSD, and GIF rendering.
 A pull request should describe the behavior changed, relevant tests, and known
 limitations.
 

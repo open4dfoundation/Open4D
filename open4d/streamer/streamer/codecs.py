@@ -5,10 +5,10 @@ one level down, which is the one that decides whether a module can be streamed
 at all: in what format do its frames travel, and can the client turn them back
 into that representation?
 
-Research sequences use ``.vmesh``; the manifest identifies their codec and
+Research sequences use ``.o4d``; the manifest identifies their codec and
 native payload dependencies. The browser decodes whole-frame ``.ply``,
 ``.drc``, ``.splat``, ``.jpg`` and ``.png`` payloads, including those carried
-by VMESH's ``frames/1`` profile. Other research profiles need their native
+by O4D's ``frames/1`` profile. Other research profiles need their native
 server runtime. The registry makes that distinction explicit.
 
 **The key is (representation, suffix), not suffix.** ``.ply`` is claimed by three
@@ -28,8 +28,8 @@ modules:
     ReRF's entropy coder exists only as a CPython 3.8 binary. Those are decoded
     and rendered where the GPU is, and what reaches the client is ``pixels``.
     That is the codec's output representation as the platform sees it, which is
-    why ReRF VMESH is registered for server-side rendering into ``pixels``.
-    Its field payload is selected by the VMESH manifest.
+    why ReRF O4D is registered for server-side rendering into ``pixels``.
+    Its field payload is selected by the O4D manifest.
 """
 
 from __future__ import annotations
@@ -256,7 +256,7 @@ register(CodecSpec(
 ))
 register(CodecSpec(
     name="rerf",
-    suffix=".vmesh",
+    suffix=".o4d",
     representation=Representation.PIXELS,
     decodes="server",
     lossy=True,

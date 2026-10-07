@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import re
 import sys
 import zipfile
 from email.parser import Parser
@@ -27,8 +28,8 @@ PACKAGE_DIRS = {
     "open4d.transport": ROOT / "open4d/transport",
     "open4d.torch_ops": ROOT / "open4d/torch_ops",
     "open4d.visualization": ROOT / "open4d/visualization",
-    "integrations": ROOT / "integrations",
-    "integrations.open3d": ROOT / "integrations/open3d",
+    "open4d.integrations": ROOT / "open4d/integrations",
+    "open4d.integrations.open3d": ROOT / "open4d/integrations/open3d",
 }
 
 
@@ -114,7 +115,8 @@ def check_wheel(path: Path) -> list[str]:
             ]
             if metadata.get("Name", "").lower() != "open4d":
                 errors.append(f"unexpected distribution name: {metadata.get('Name')!r}")
-            if base_requirements != ["numpy"]:
+            if [re.split(r"[\s<>=!~;\[(]", value, maxsplit=1)[0].lower()
+                    for value in base_requirements] != ["numpy"]:
                 errors.append(f"base wheel is not NumPy-only: {base_requirements}")
             if metadata.get("License-Expression") != "MIT":
                 errors.append("wheel must use the MIT SPDX license expression")

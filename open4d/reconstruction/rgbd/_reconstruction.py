@@ -160,19 +160,17 @@ class _RGBDProvider:
             ))
         mesh = volume.extract_triangle_mesh(weight_threshold=0.5)
         positions = mesh.vertex.positions.cpu().numpy()
-        colors = None if self.color is None else self._vertex_colors(index, positions)
+        triangles = mesh.triangle.indices.cpu().numpy()
+        colors = None if self.color is None else self._vertex_colors(index, positions, triangles)
         return Frame(index, self.timestamps[index], TriangleMesh(
-            positions, mesh.triangle.indices.cpu().numpy(), colors=colors,
+            positions, triangles, colors=colors,
         ))
 
-    def _vertex_colors(self, index, positions):
-        """Average each vertex's colour over the cameras that see it.
+    def _observations(self, index, positions):
+        """Per camera: the vertices inside its image, their pixels and |z - depth|.
 
-        A camera sees a vertex when the vertex lies within the truncation band of
-        that pixel's depth: the observations a TSDF colour volume averages.
+        The depth error is infinite where the pixel has no depth.
         """
-        total = np.zeros((len(positions), 3))
-        count = np.zeros(len(positions))
         homogeneous = np.column_stack((positions, np.ones(len(positions))))
         for camera, depth in enumerate(self.depth[index]):
             meters = _meters(depth, self.depth_scale, self.depth_max)
@@ -186,11 +184,53 @@ class _RGBDProvider:
             inside = (z > 0) & (u >= 0) & (u < width) & (v >= 0) & (v < height)
             rows, columns = v[inside].astype(np.intp), u[inside].astype(np.intp)
             measured = meters[rows, columns]
-            visible = (measured > 0) & (np.abs(z[inside] - measured) <= self.truncation)
-            seen = np.flatnonzero(inside)[visible]
-            total[seen] += self.color[index, camera][rows[visible], columns[visible]] / 255
-            count[seen] += 1
-        return total / np.maximum(count, 1)[:, None]
+            error = np.full(len(rows), np.inf)
+            valid = measured > 0
+            error[valid] = np.abs(z[inside][valid] - measured[valid])
+            yield self.color[index, camera], np.flatnonzero(inside), rows, columns, error
+
+    def _vertex_colors(self, index, positions, triangles):
+        """Average each vertex's colour over the cameras that see it.
+
+        A camera sees a vertex when the vertex lies within the truncation band of
+        that pixel's depth: the observations a TSDF colour volume averages.
+        Vertices on silhouette edges can round to a background pixel in every
+        camera; they take the mean colour of their coloured mesh neighbours,
+        grown inward ring by ring, or else the pixel whose depth is nearest theirs.
+        """
+        total = np.zeros((len(positions), 3))
+        count = np.zeros(len(positions))
+        for image, vertices, rows, columns, error in self._observations(index, positions):
+            visible = error <= self.truncation
+            total[vertices[visible]] += image[rows[visible], columns[visible]] / 255
+            count[vertices[visible]] += 1
+        colors = total / np.maximum(count, 1)[:, None]
+        seen = count > 0
+        if seen.any() and not seen.all():
+            triangles = triangles[~seen[triangles].all(axis=1)]
+            edges = np.concatenate((triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]))
+            edges = np.concatenate((edges, edges[:, ::-1])).astype(np.intp)
+            edges = edges[~seen[edges[:, 0]]]  # (uncoloured vertex, neighbour)
+            while len(edges):
+                grow = seen[edges[:, 1]]
+                if not grow.any():
+                    break
+                target, source = edges[grow, 0], edges[grow, 1]
+                ring_count = np.bincount(target, minlength=len(colors))
+                ring = ring_count > 0
+                for channel in range(3):
+                    colors[ring, channel] = (np.bincount(target, colors[source, channel], len(colors))[ring]
+                                             / ring_count[ring])
+                seen |= ring
+                edges = edges[~seen[edges[:, 0]]]
+        if not seen.all():
+            missing = np.flatnonzero(~seen)
+            best = np.full(len(missing), np.inf)
+            for image, vertices, rows, columns, error in self._observations(index, positions[missing]):
+                closer = error < best[vertices]
+                best[vertices[closer]] = error[closer]
+                colors[missing[vertices[closer]]] = image[rows[closer], columns[closer]] / 255
+        return colors
 
 
 def _cloud(o3d, depth, intrinsics, depth_scale, depth_max):

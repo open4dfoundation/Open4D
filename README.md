@@ -6,24 +6,31 @@ representation and research backends.
 
 ## Install
 
-From this checkout:
+The PyPI release is being prepared. Until the
+[release ledger](https://github.com/open4dfoundation/Open4D/blob/main/THIRD_PARTY.md)
+is cleared, install a source checkout with `python -m pip install -e .`.
+After publication:
 
 ```bash
-python -m pip install -e .
+python -m pip install open4d
 ```
 
 The base package needs NumPy and supports Python 3.10 through 3.13. Install only
 the extras you use:
 
 ```bash
-python -m pip install -e '.[player]'    # interactive mesh viewer and GIF export
-python -m pip install -e '.[open3d]'    # RGB-D reconstruction (Open3D 0.19.x)
-python -m pip install -e '.[gaussians]' # read Gaussian PLY files
+python -m pip install 'open4d[player]'    # interactive mesh viewer and GIF export
+python -m pip install 'open4d[usd]'       # OpenUSD (.usdc) files
+python -m pip install 'open4d[metrics]'   # compare_sequences
+python -m pip install 'open4d[open3d]'    # RGB-D reconstruction (Open3D 0.19.x, Python 3.12 or older)
+python -m pip install 'open4d[gaussians]' # read Gaussian PLY files
 ```
+
+For development, install a checkout with `python -m pip install -e '.[dev]'`.
 
 Research methods have additional setup below. Their source, native programs
 and model weights are not bundled in the Python wheel. Hardware, environments
-and per-module requirements are in [docs/requirements.md](docs/requirements.md).
+and per-module requirements are in [docs/requirements.md](https://github.com/open4dfoundation/Open4D/blob/main/docs/requirements.md).
 
 RGB-D reconstruction requires Open3D 0.19.x. The legacy TSDF integrator in
 Open3D 0.20 rescales already-metric float depth and can return empty meshes;
@@ -58,7 +65,7 @@ texture coordinates and custom attributes.
 Choose a research codec explicitly. For example, after setting up V-DMC:
 
 ```python
-encoded = open4d.encode(sequence, "wave.vmesh", codec="vdmc")
+encoded = open4d.encode(sequence, "wave.o4d", codec="vdmc")
 decoded = open4d.decode(encoded)
 open4d.visualize(decoded)
 decoded.close()
@@ -68,43 +75,43 @@ decoded.close()
 artifact. Close a decoded mesh sequence when finished, or use `with`:
 
 ```python
-with open4d.decode("wave.vmesh") as decoded:
+with open4d.decode("wave.o4d") as decoded:
     print(len(decoded), "frames")
 ```
 
-The [notebook](examples/open4d_sequence_codec.ipynb) walks through these calls,
+The [notebook](https://github.com/open4dfoundation/Open4D/blob/main/examples/open4d_sequence_codec.ipynb) walks through these calls,
 reconstruction and streaming in separate short cells.
-Short `.vmesh` examples:
+Short `.o4d` examples:
 
-- [Preserve compressed state through USDC](examples/vmesh/01_container_and_usdc.ipynb)
-- [The eight mesh codecs](examples/vmesh/02_mesh_codecs.ipynb)
-- [Vega, QUEEN and 3DGStream](examples/vmesh/03_gaussian_codecs.ipynb)
-- [ReRF](examples/vmesh/04_rerf.ipynb)
+- [Preserve compressed state through USDC](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/01_container_and_usdc.ipynb)
+- [The eight mesh codecs](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/02_mesh_codecs.ipynb)
+- [Vega, QUEEN and 3DGStream](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/03_gaussian_codecs.ipynb)
+- [ReRF](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/04_rerf.ipynb)
 
 | Codec | Input | Output | Backend setup |
 | --- | --- | --- | --- |
-| `vdmc` | Mesh sequence | `.vmesh` | Build the V-DMC submodule and configure its encoder and decoder |
-| `faster_vdmc` | Mesh sequence | `.vmesh` | Build the faster V-DMC submodule and configure its encoder and decoder |
-| `tvmc` | Mesh sequence | `.vmesh` | [TVMC setup](open4d/codecs/tvmc/README.md) |
-| `tsmc` | Mesh sequence | `.vmesh` | [TSMC setup](open4d/codecs/tsmc/README.md) |
-| `klt` | Mesh sequence converted to TSDF volumes | `.vmesh` | Research source and `.[klt]` |
-| `n4mc` | Mesh sequence converted to TSDF volumes | `.vmesh` | Research source and `.[n4mc]` |
-| `qndf`, `qndf-int8` | Mesh frames | `.vmesh` | Research source and `.[qndf]` |
-| `vega` | Gaussian splat frames or native run | `.vmesh` | [Vega CUDA environment](open4d/reconstruction/vega/README.md) |
-| `queen`, `3dgstream`, `rerf` | Native temporal research output | `.vmesh`, with native USDC interchange | Method-specific CUDA runtime for evaluation |
+| `vdmc` | Mesh sequence | `.o4d` | Build the V-DMC submodule and configure its encoder and decoder |
+| `faster_vdmc` | Mesh sequence | `.o4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
+| `tvmc` | Mesh sequence | `.o4d` | [TVMC setup](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/tvmc/README.md) |
+| `tsmc` | Mesh sequence | `.o4d` | [TSMC setup](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/tsmc/README.md) |
+| `klt` | Mesh sequence converted to TSDF volumes | `.o4d` | Research source and `.[klt]` |
+| `n4mc` | Mesh sequence converted to TSDF volumes | `.o4d` | Research source and `.[n4mc]` |
+| `qndf`, `qndf-int8` | Mesh frames | `.o4d` | Research source and `.[qndf]` |
+| `vega` | Gaussian splat frames or native run | `.o4d` | [Vega CUDA environment](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/vega/README.md) |
+| `queen`, `3dgstream`, `rerf` | Native temporal research output | `.o4d`, with native USDC interchange | Method-specific CUDA runtime for evaluation |
 
-All twelve public codecs write standalone `.vmesh` files whose profile identifies
+All twelve public codecs write standalone `.o4d` files whose profile identifies
 the codec. Existing native outputs can be packed without recompression. Standard
 PLY, OBJ and USD import/export remain available.
 
 Mesh codecs decode to mesh sequences for ordinary USDC geometry export.
 To preserve a compressed artifact exactly, construct `open4d.NativeSequence`
-and save it to USDC using the custom `VMESH` prim, as shown in the
-[container notebook](examples/vmesh/01_container_and_usdc.ipynb). This works with
-every VMESH profile. Gaussian and field methods load as `NativeSequence` and
+and save it to USDC using the custom `O4D` prim, as shown in the
+[container notebook](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/01_container_and_usdc.ipynb). This works with
+every O4D profile. Gaussian and field methods load as `NativeSequence` and
 evaluate their native models explicitly. N4MC shares a model across independent
 frame latents; QNDF has independent frame models.
-[VMESH](docs/api.md#vmesh-format) is a custom container for native codec payloads,
+[O4D](https://github.com/open4dfoundation/Open4D/blob/main/docs/api.md#o4d-format) is a custom container for native codec payloads,
 including V-DMC encoder bitstreams; the container itself is not MPEG V-DMC
 interchange. Convert older artifacts with `open4d.migrate_legacy`.
 
@@ -130,8 +137,8 @@ export OPEN4D_RESEARCH_ROOT=/path/to/Open4D
 V-DMC needs the paths to its built programs:
 
 ```bash
-export OPEN4D_VDMC_ENCODER=/path/to/vmeshEncoder
-export OPEN4D_VDMC_DECODER=/path/to/vmeshDecoder
+export OPEN4D_VDMC_ENCODER=/path/to/o4dEncoder
+export OPEN4D_VDMC_DECODER=/path/to/o4dDecoder
 ```
 
 Use `OPEN4D_FASTER_VDMC_ENCODER` and `OPEN4D_FASTER_VDMC_DECODER` for the faster
@@ -164,7 +171,7 @@ timestamp is reconstructed separately so motion is preserved.
 
 Saved two-camera captures load with `capture = open4d.load_rgbd_capture(pairs,
 calibration)`, then `open4d.reconstruct(capture, refine_poses=True, device="cuda")`;
-see [open4d/reconstruction/rgbd](open4d/reconstruction/rgbd/README.md).
+see [open4d/reconstruction/rgbd](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/rgbd/README.md).
 
 ## Stream mesh frames
 
@@ -207,11 +214,11 @@ network or SSH tunnel; this protocol has no authentication or encryption.
 Use `realtime=False` to transfer a recorded sequence as fast as possible.
 
 The camera capture and native reconstruction programs are in
-[open4d/reconstruction/rgbd](open4d/reconstruction/rgbd/README.md).
+[open4d/reconstruction/rgbd](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/rgbd/README.md).
 
 ## Compare methods in a user study
 
-[open4d/streamer/study](open4d/streamer/study/README.md) is a browser app that runs one
+[open4d/streamer/study](https://github.com/open4dfoundation/Open4D/blob/main/open4d/streamer/study/README.md) is a browser app that runs one
 participant through several streaming methods — Ours, ViVo, NAVA and Vega —
 under the same network trace, from the same start view, along the same camera
 path, and asks them to rate each clip. The trace can be uploaded in the browser;
@@ -234,7 +241,7 @@ Read splat frames, then encode them with the local Vega adaptation:
 from open4d import load_gaussians, encode, decode
 
 frames = [load_gaussians("frame_0000.ply"), load_gaussians("frame_0001.ply")]
-encoded = encode(frames, "capture.vmesh", codec="vega")
+encoded = encode(frames, "capture.o4d", codec="vega")
 native = decode(encoded)  # no CUDA needed to inspect native state
 decoded = native.decode()  # requires the Vega runtime
 ```
@@ -251,7 +258,7 @@ native group per run and rejects output requiring several color models.
 It does not replace the learned colors with invented SH coefficients.
 
 QUEEN and 3DGStream reconstruct splats from calibrated camera images. After
-[setting up their runtime](open4d/reconstruction/gs_tools/README.md):
+[setting up their runtime](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/gs_tools/README.md):
 
 ```python
 run = open4d.reconstruct("my_scene", "queen_output", method="queen")
@@ -308,15 +315,15 @@ QUEEN's depth initialisation also fills uncovered black backgrounds with points;
 ## Other tools
 
 - `open4d demo`, `open4d inspect` and `open4d view` provide command-line access.
-  `open4d inspect capture.vmesh` reads the codec, timing and payload sizes of
-  any `.vmesh` without its codec backend; `--decode` also reports geometry.
+  `open4d inspect capture.o4d` reads the codec, timing and payload sizes of
+  any `.o4d` without its codec backend; `--decode` also reports geometry.
 - `open4d.io.write_sequence` exports mesh folders; `open4d.save` writes OpenUSD
-  or `.vmesh` with an explicitly selected codec.
-- `open4d.compare_sequences("input_frames/", "capture.vmesh")` measures mesh
+  or `.o4d` with an explicitly selected codec.
+- `open4d.compare_sequences("input_frames/", "capture.o4d")` measures mesh
   error between sequences or paths with the `.[metrics]` extra; see
-  [comparing sequences](docs/api.md#comparing-sequences).
-- [Viewer examples](examples/visualization/README.md) include GIF export and comparisons.
-- [Contributor setup and tests](CONTRIBUTING.md) cover optional dependencies and packaging.
+  [comparing sequences](https://github.com/open4dfoundation/Open4D/blob/main/docs/api.md#comparing-sequences).
+- [Viewer examples](https://github.com/open4dfoundation/Open4D/blob/main/examples/visualization/README.md) include GIF export and comparisons.
+- [Contributor setup and tests](https://github.com/open4dfoundation/Open4D/blob/main/CONTRIBUTING.md) cover optional dependencies and packaging.
 
 Publication is still blocked by the unresolved component rights
-in [THIRD_PARTY.md](THIRD_PARTY.md); preparing the package does not resolve them.
+in [THIRD_PARTY.md](https://github.com/open4dfoundation/Open4D/blob/main/THIRD_PARTY.md); preparing the package does not resolve them.

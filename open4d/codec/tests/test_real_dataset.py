@@ -29,7 +29,7 @@ def test_rafa_obj_frames_encode_and_decode(tmp_path):
 
     source = open_sequence(dataset, fps=30)
     sample = source[:2]
-    artifact = NumPyZipCodec().encode(sample, tmp_path / "rafa.vmesh")
+    artifact = NumPyZipCodec().encode(sample, tmp_path / "rafa.o4d")
     decoded = NumPyZipCodec().decode(artifact)
 
     assert len(source) >= 2
@@ -52,7 +52,7 @@ def test_real_draco_round_trip_on_rafa(tmp_path):
         pytest.skip("Rafa_Approves_hd_4k is not available")
 
     source = open_sequence(dataset, fps=30)[:2]
-    artifact = encode_sequence(source, tmp_path / "rafa.vmesh", codec=DRACO_CODEC)
+    artifact = encode_sequence(source, tmp_path / "rafa.o4d", codec=DRACO_CODEC)
     decoded = DRACO_CODEC.decode(artifact)
 
     assert len(decoded) == len(source)

@@ -13,8 +13,8 @@ import pytest
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from open4d.codec import CodecError
 from open4d.codec._npz import NumPyZipCodec
-from open4d.codec import _klt, _n4mc, _qndf, _temporal, _vmesh
-from open4d.codec._vmesh_format import pack_vmesh, unpack_vmesh
+from open4d.codec import _klt, _n4mc, _qndf, _temporal, _o4d
+from open4d.codec._o4d_format import pack_o4d, unpack_o4d
 
 
 def sequence():
@@ -37,12 +37,12 @@ def research_artifact(tmp_path, codec, payload, *, normalization=None):
     else:
         (native / "frame_000000.pt").write_bytes(payload)
     (native / "metadata.json").write_text(json.dumps(metadata))
-    return pack_vmesh(native, tmp_path / "take.vmesh")
+    return pack_o4d(native, tmp_path / "take.o4d")
 
 
 def test_reference_encode_does_not_replace_a_file_created_during_encoding(tmp_path, monkeypatch):
     codec = NumPyZipCodec()
-    destination = tmp_path / "take.vmesh"
+    destination = tmp_path / "take.o4d"
     original = codec.pack
 
     def pack(payload):
@@ -55,17 +55,17 @@ def test_reference_encode_does_not_replace_a_file_created_during_encoding(tmp_pa
     assert destination.read_bytes() == b"created by another writer"
 
 
-def test_vmesh_preserves_neighbor_temporary_file(tmp_path, monkeypatch):
-    destination = tmp_path / "take.vmesh"
-    neighbor = tmp_path / ".take.vmesh.tmp"
+def test_o4d_preserves_neighbor_temporary_file(tmp_path, monkeypatch):
+    destination = tmp_path / "take.o4d"
+    neighbor = tmp_path / ".take.o4d.tmp"
     neighbor.write_bytes(b"unrelated user file")
 
     def run(command, label):
         path = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--compressed="))
         Path(path).write_bytes(b"native payload")
 
-    monkeypatch.setattr(_vmesh, "_run", run)
-    _vmesh.VDMC_CODEC.encode(sequence(), destination, encoder=sys.executable)
+    monkeypatch.setattr(_o4d, "_run", run)
+    _o4d.VDMC_CODEC.encode(sequence(), destination, encoder=sys.executable)
     assert neighbor.read_bytes() == b"unrelated user file"
 
 
@@ -91,13 +91,13 @@ def test_temporal_delta_rejects_broadcasted_displacements(tmp_path):
              triangles=np.array([[0, 1, 2]], dtype=np.uint32),
              displacement=np.zeros((2, 1, 3), dtype=np.int16), scale=1.0)
     (native / "metadata.json").write_text(json.dumps(manifest))
-    artifact = pack_vmesh(native, tmp_path / "broken.vmesh")
+    artifact = pack_o4d(native, tmp_path / "broken.o4d")
     with pytest.raises(CodecError, match="shape|displacement"):
         TEMPORAL_DELTA_CODEC.decode(artifact)
 
 
 @pytest.mark.parametrize("codec", [NumPyZipCodec(), _klt.KLT_CODEC, _n4mc.N4MC_CODEC,
-                                   _qndf.QNDF_CODEC, _vmesh.VDMC_CODEC])
+                                   _qndf.QNDF_CODEC, _o4d.VDMC_CODEC])
 @pytest.mark.parametrize("manifest", [b"[]", b"\xff"])
 def test_codec_detection_returns_false_for_malformed_manifest(tmp_path, codec, manifest):
     artifact = tmp_path / "invalid.zip"
@@ -107,12 +107,12 @@ def test_codec_detection_returns_false_for_malformed_manifest(tmp_path, codec, m
 
 
 @pytest.mark.parametrize("payload", [b"PK\x03\x04legacy", b"VMESH\x00\x01\x00", b"VMESH\x00\x02\x00"])
-def test_codec_detection_returns_false_for_foreign_vmesh(tmp_path, payload):
+def test_codec_detection_returns_false_for_foreign_o4d(tmp_path, payload):
     from open4d.codec._api import _CODECS, _codec
-    artifact = tmp_path / "foreign.vmesh"
+    artifact = tmp_path / "foreign.o4d"
     artifact.write_bytes(payload)
     assert all(codec.can_decode(artifact) is False for codec in _CODECS.values())
-    with pytest.raises(CodecError, match="invalid VMESH"):
+    with pytest.raises(CodecError, match="invalid O4D"):
         _codec(None, artifact)
 
 
@@ -121,8 +121,8 @@ def test_codec_detection_returns_false_for_foreign_vmesh(tmp_path, payload):
                                   {"frame_index": 0, "timestamp": 0, "metadata": []}])
 def test_reference_decode_rejects_invalid_frame_metadata_without_reading_arrays(tmp_path, frame, monkeypatch):
     from open4d.codec import _npz
-    from open4d.codec.tests.test_vmesh_format import records, rewrite
-    artifact = NumPyZipCodec().encode(sequence(), tmp_path / "invalid.vmesh")
+    from open4d.codec.tests.test_o4d_format import records, rewrite
+    artifact = NumPyZipCodec().encode(sequence(), tmp_path / "invalid.o4d")
     items = records(artifact)
     manifest = json.loads(items[0][3])
     manifest["sequence"]["frames"][0] = frame
@@ -144,7 +144,7 @@ def test_klt_rejects_broadcast_normalization_before_decoding(tmp_path, monkeypat
 
 @pytest.mark.parametrize("bounds, bits", [([0, 1], 12), ([[0, 0, 0], [1, 1, 1]], 0),
                                          ([[1, 0, 0], [0, 1, 1]], 12)])
-def test_vmesh_rejects_invalid_position_normalization(tmp_path, monkeypatch, bounds, bits):
+def test_o4d_rejects_invalid_position_normalization(tmp_path, monkeypatch, bounds, bits):
     artifact = tmp_path / "invalid.v4d"
     with ZipFile(artifact, "w") as archive:
         archive.writestr("manifest.json", json.dumps({
@@ -153,12 +153,12 @@ def test_vmesh_rejects_invalid_position_normalization(tmp_path, monkeypatch, bou
             "position_bounds": bounds, "position_bit_depth": bits,
         }))
         archive.writestr("sequence.vmesh", b"stream")
-    monkeypatch.setattr(_vmesh, "_executable", lambda *args: Path("decoder"))
-    monkeypatch.setattr(_vmesh, "_run", lambda *args: None)
-    monkeypatch.setattr(_vmesh, "open_sequence", lambda *args, **kwargs: sequence()[:1])
+    monkeypatch.setattr(_o4d, "_executable", lambda *args: Path("decoder"))
+    monkeypatch.setattr(_o4d, "_run", lambda *args: None)
+    monkeypatch.setattr(_o4d, "open_sequence", lambda *args, **kwargs: sequence()[:1])
     with pytest.raises(CodecError, match="position"):
         from open4d.codec import migrate_legacy
-        migrate_legacy(artifact, tmp_path / "converted.vmesh")
+        migrate_legacy(artifact, tmp_path / "converted.o4d")
 
 
 @pytest.mark.torch
@@ -184,12 +184,12 @@ def test_qndf_int8_stores_weights_and_restores_the_same_predictions(
 
     monkeypatch.setattr(torch.ao.quantization, "quantize_dynamic", capture)
     codec = _qndf.QNDF_INT8_CODEC
-    path = codec.encode(sequence(), tmp_path / "take.vmesh", coarse_size=3,
+    path = codec.encode(sequence(), tmp_path / "take.o4d", coarse_size=3,
                         num_subdiv=0, pe_dim=2, hidden_dim=4, num_layers=3,
                         epochs=1, batch_size=16, input_scale=input_scale,
                         output_scale=output_scale, device="cpu")
     native = tmp_path / "unpacked"
-    unpack_vmesh(path, native)
+    unpack_o4d(path, native)
     assert not any(name.name == "model.pt" for name in native.iterdir())
     context = torch.load(native / "frame_000000.pt", weights_only=True)
     assert "schema" not in context
@@ -269,4 +269,4 @@ def test_qndf_invalid_options_fail_before_loading_backend(tmp_path, monkeypatch,
 
     monkeypatch.setattr(_qndf, "_backend", unexpected_backend)
     with pytest.raises(ValueError):
-        _qndf.QNDF_CODEC.encode(sequence(), tmp_path / "invalid.vmesh", **options)
+        _qndf.QNDF_CODEC.encode(sequence(), tmp_path / "invalid.o4d", **options)

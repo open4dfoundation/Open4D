@@ -1,7 +1,7 @@
-"""Whole browser clips in standalone VMESH with native frame payloads.
+"""Whole browser clips in standalone O4D with native frame payloads.
 
 The ``frames/1`` profile carries PLY, Draco, splat or image bytes verbatim.
-VMESH owns the manifest, timestamps, record framing and SHA-256 integrity.
+O4D owns the manifest, timestamps, record framing and SHA-256 integrity.
 A manifest prefix is enough to locate any frame's chunk records, so downloads
 and HTTP byte ranges retain stable offsets without a second private format.
 """
@@ -19,11 +19,11 @@ from pathlib import Path
 from typing import Sequence as TypingSequence
 
 from open4d._files import publish_directory, publish_file
-from open4d.codec import _vmesh_format as vmesh
+from open4d.codec import _o4d_format as o4d
 from open4d.codec._protocol import CodecError
 from . import representations
 
-MAGIC = vmesh._MAGIC
+MAGIC = o4d._MAGIC
 VERSION = 1
 _SUFFIXES = frozenset(("ply", "drc", "splat", "jpg", "jpeg", "png"))
 _MAX_SAFE_INTEGER = 2**53 - 1
@@ -31,7 +31,7 @@ _MAX_SAFE_INTEGER = 2**53 - 1
 
 @dataclass(frozen=True)
 class Entry:
-    """First VMESH payload record, native byte count and native SHA-256."""
+    """First O4D payload record, native byte count and native SHA-256."""
 
     offset: int
     length: int
@@ -40,7 +40,7 @@ class Entry:
 
 @dataclass(frozen=True)
 class Sequence:
-    """A validated VMESH frame manifest, usable before its payload arrives."""
+    """A validated O4D frame manifest, usable before its payload arrives."""
 
     suffix: str
     entries: tuple[Entry, ...]
@@ -64,24 +64,24 @@ def _fps(value):
 
 def _header(descriptor, manifest_hash, start):
     if descriptor["codec"] != "frames":
-        raise ValueError("VMESH is not a browser frame-payload profile")
+        raise ValueError("O4D is not a browser frame-payload profile")
     entries, offset = [], start
     for record in descriptor["files"]:
         length = record["size"]
         entries.append(Entry(offset, length, record["sha256"]))
-        offset += length + 18 * ((length + vmesh._CHUNK - 1) // vmesh._CHUNK)
+        offset += length + 18 * ((length + o4d._CHUNK - 1) // o4d._CHUNK)
         if offset + 50 > _MAX_SAFE_INTEGER:
-            raise ValueError("VMESH frame offsets exceed the browser integer limit")
+            raise ValueError("O4D frame offsets exceed the browser integer limit")
     return Sequence(descriptor["native"]["suffix"], tuple(entries), offset, manifest_hash)
 
 
 def pack(frames: TypingSequence[Path | str], destination: Path | str, *,
          fps: float = 30, representation: str | None = None,
          overwrite: bool = False) -> Sequence:
-    """Write native whole frames into one .vmesh without recompression."""
+    """Write native whole frames into one .o4d without recompression."""
     destination = Path(destination)
-    if destination.suffix.lower() != ".vmesh":
-        raise ValueError("destination must have a .vmesh extension")
+    if destination.suffix.lower() != ".o4d":
+        raise ValueError("destination must have a .o4d extension")
     if destination.exists() and not overwrite:
         raise FileExistsError(destination)
     if not isinstance(overwrite, bool):
@@ -91,7 +91,7 @@ def pack(frames: TypingSequence[Path | str], destination: Path | str, *,
     if not paths:
         raise ValueError("a sequence needs at least one frame")
     if len(paths) > 65536:
-        raise ValueError("VMESH frame count exceeds limits")
+        raise ValueError("O4D frame count exceeds limits")
     suffixes = {path.suffix.lower().lstrip(".") for path in paths}
     if len(suffixes) != 1:
         raise ValueError(f"frames must share one suffix; got {', '.join(sorted(suffixes))}")
@@ -112,7 +112,7 @@ def pack(frames: TypingSequence[Path | str], destination: Path | str, *,
             raise FileNotFoundError(f"missing or linked frame: {path}")
         digest, size = hashlib.sha256(), 0
         with path.open("rb") as stream:
-            while chunk := stream.read(vmesh._CHUNK):
+            while chunk := stream.read(o4d._CHUNK):
                 digest.update(chunk)
                 size += len(chunk)
         descriptor["files"].append(dict(id=index, name=f"frame_{index:06d}.{suffix}",
@@ -120,11 +120,11 @@ def pack(frames: TypingSequence[Path | str], destination: Path | str, *,
                                         sha256=digest.hexdigest()))
     manifest = json.dumps(descriptor, separators=(",", ":"), allow_nan=False).encode()
     try:
-        vmesh._descriptor(manifest)
+        o4d._descriptor(manifest)
     except CodecError as error:
         raise ValueError(str(error)) from error
-    if len(manifest) > vmesh._MAX_JSON:
-        raise ValueError("VMESH manifest exceeds size limit")
+    if len(manifest) > o4d._MAX_JSON:
+        raise ValueError("O4D manifest exceeds size limit")
     manifest_hash = hashlib.sha256(manifest).digest()
     header = _header(descriptor, manifest_hash, 26 + len(manifest))
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -132,33 +132,33 @@ def pack(frames: TypingSequence[Path | str], destination: Path | str, *,
         temporary = Path(directory) / "stream"
         with temporary.open("xb") as output:
             output.write(MAGIC)
-            vmesh._write_record(output, 0, 0, 0, manifest)
+            o4d._write_record(output, 0, 0, 0, manifest)
             for index, (path, entry) in enumerate(zip(paths, header.entries)):
                 digest, offset = hashlib.sha256(), 0
                 with path.open("rb") as stream:
-                    while chunk := stream.read(vmesh._CHUNK):
+                    while chunk := stream.read(o4d._CHUNK):
                         digest.update(chunk)
-                        vmesh._write_record(output, 1, index, offset, chunk)
+                        o4d._write_record(output, 1, index, offset, chunk)
                         offset += len(chunk)
                 if offset != entry.length or digest.hexdigest() != entry.sha256:
                     raise ValueError(f"frame changed during packing: {path}")
-            vmesh._write_record(output, 2, 0, 0, manifest_hash)
+            o4d._write_record(output, 2, 0, 0, manifest_hash)
         publish_file(temporary, destination, overwrite=overwrite)
     return header
 
 
 def read_header(data: bytes) -> Sequence:
-    """Validate a complete VMESH manifest from a partial or complete download."""
+    """Validate a complete O4D manifest from a partial or complete download."""
     stream = BytesIO(data)
     try:
-        descriptor, digest = vmesh._start(stream)
+        descriptor, digest = o4d._start(stream)
     except CodecError as error:
         raise ValueError(str(error)) from error
     return _header(descriptor, digest, stream.tell())
 
 
 def frame(data: bytes, index: int, header: Sequence | None = None) -> bytes:
-    """Recover and hash-check one frame's VMESH chunk records."""
+    """Recover and hash-check one frame's O4D chunk records."""
     header = header or read_header(data)
     if type(index) is not int or not 0 <= index < header.frames:
         raise IndexError("frame index out of range")
@@ -167,32 +167,32 @@ def frame(data: bytes, index: int, header: Sequence | None = None) -> bytes:
     stream.seek(entry.offset)
     try:
         while len(output) < entry.length:
-            kind, file_id, offset, chunk = vmesh._read_record(stream)
-            length = min(vmesh._CHUNK, entry.length - len(output))
+            kind, file_id, offset, chunk = o4d._read_record(stream)
+            length = min(o4d._CHUNK, entry.length - len(output))
             if (kind, file_id, offset, len(chunk)) != (1, index, len(output), length):
-                raise ValueError("invalid VMESH frame chunk order or length")
+                raise ValueError("invalid O4D frame chunk order or length")
             digest.update(chunk)
             output.extend(chunk)
     except CodecError as error:
         raise ValueError(str(error)) from error
     if digest.hexdigest() != entry.sha256:
-        raise ValueError("VMESH frame SHA-256 mismatch")
+        raise ValueError("O4D frame SHA-256 mismatch")
     return bytes(output)
 
 
 def unpack(path: Path | str, destination: Path | str) -> list[Path]:
-    """Validate the complete VMESH before publishing recovered native frames."""
+    """Validate the complete O4D before publishing recovered native frames."""
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
-        descriptor = vmesh.inspect_vmesh(path)
+        descriptor = o4d.inspect_o4d(path)
         if descriptor["codec"] != "frames":
-            raise ValueError("VMESH is not a browser frame-payload profile")
+            raise ValueError("O4D is not a browser frame-payload profile")
         with tempfile.TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as directory:
             native, output = Path(directory) / "native", Path(directory) / "frames"
-            vmesh.unpack_vmesh(path, native)
+            o4d.unpack_o4d(path, native)
             output.mkdir()
             names = [record["name"] for record in descriptor["files"]]
             for name in names:
@@ -206,10 +206,10 @@ def unpack(path: Path | str, destination: Path | str) -> list[Path]:
 def convert_legacy(source: Path | str, destination: Path | str, *,
                    fps: float = 30, representation: str | None = None,
                    overwrite: bool = False) -> Path:
-    """Explicitly migrate a bounded retired O4DSEQ clip to real VMESH records."""
+    """Explicitly migrate a bounded retired O4DSEQ clip to real O4D records."""
     source, destination = Path(source), Path(destination)
-    if destination.suffix.lower() != ".vmesh":
-        raise ValueError("destination must have a .vmesh extension")
+    if destination.suffix.lower() != ".o4d":
+        raise ValueError("destination must have a .o4d extension")
     if not isinstance(overwrite, bool):
         raise TypeError("overwrite must be bool")
     if destination.exists() and not overwrite:
@@ -243,14 +243,14 @@ def convert_legacy(source: Path | str, destination: Path | str, *,
             offset += length
         if offset != source.stat().st_size:
             raise ValueError("legacy sequence is truncated or has trailing data")
-        with tempfile.TemporaryDirectory(prefix="vmesh-frame-migration-") as directory:
+        with tempfile.TemporaryDirectory(prefix="o4d-frame-migration-") as directory:
             paths = []
             for index, (position, length) in enumerate(records):
                 path = Path(directory) / f"frame_{index:06d}.{suffix}"
                 with path.open("xb") as output:
                     remaining = length
                     while remaining:
-                        chunk = stream.read(min(vmesh._CHUNK, remaining))
+                        chunk = stream.read(min(o4d._CHUNK, remaining))
                         if not chunk:
                             raise ValueError("truncated legacy frame payload")
                         output.write(chunk)
@@ -282,7 +282,7 @@ def pack_clip(bundle_dir, clip, *, keep_frames: bool = False, fps: float = 30) -
     if not clip.name or clip.name in (".", "..") or any(c in clip.name for c in ("/", "\\", "\x00")):
         raise ValueError("clip name must be a safe filename")
     paths = _clip_paths(root, clip.frames)
-    relative = f"{clip.name}.vmesh"
+    relative = f"{clip.name}.o4d"
     header = pack(paths, root / relative, fps=fps, representation=clip.representation,
                   overwrite=True)
     if not keep_frames:
@@ -359,12 +359,12 @@ def pack_bundle(
             source = root / old
             if source.is_symlink() or not source.resolve().is_relative_to(root.resolve()):
                 raise ValueError("legacy sequence must stay inside the bundle")
-            relative = str(old.with_suffix(".vmesh"))
+            relative = str(old.with_suffix(".o4d"))
             target = root / relative
             convert_legacy(source, target, fps=index.get("fps", 30),
                            representation=clip.representation, overwrite=True)
             with target.open("rb") as stream:
-                descriptor, digest = vmesh._start(stream)
+                descriptor, digest = o4d._start(stream)
                 header = _header(descriptor, digest, stream.tell())
             if header.frames != len(clip.frames):
                 raise ValueError("legacy sequence disagrees with its logical frame list")
@@ -486,15 +486,15 @@ def open_frames(path: Path | str):
     """Open mesh payloads lazily, or retain other browser payloads natively."""
     from open4d.core import Sequence as MeshSequence
     from open4d.native import NativeSequence
-    manifest = vmesh.inspect_vmesh(path)
+    manifest = o4d.inspect_o4d(path)
     if manifest["codec"] != "frames":
-        raise CodecError("VMESH is not a browser frame-payload profile")
+        raise CodecError("O4D is not a browser frame-payload profile")
     if manifest["native"]["representation"] != "mesh":
         return NativeSequence(path)
-    temporary = tempfile.TemporaryDirectory(prefix="vmesh-browser-mesh-")
+    temporary = tempfile.TemporaryDirectory(prefix="o4d-browser-mesh-")
     try:
         native = Path(temporary.name) / "native"
-        vmesh.unpack_vmesh(path, native)
+        o4d.unpack_o4d(path, native)
         return MeshSequence(_MeshFrames(native, manifest, temporary))
     except BaseException:
         temporary.cleanup()

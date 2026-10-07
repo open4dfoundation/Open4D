@@ -16,7 +16,7 @@ Phases, each writing ``<out>/results/<phase>.json`` and safe to rerun alone:
     compared with ORBIT's own images.
 ``native``
     The Gaussian forms Open4D hands back from its own codecs -- a Vega
-    ``.vmesh`` opened as a `NativeSequence`, and a QUEEN `GaussianRun` --
+    ``.o4d`` opened as a `NativeSequence`, and a QUEEN `GaussianRun` --
     streamed through ``open4d.stream``.
 ``delivery``
     The bundle server, over loopback and through a shaped `Link`: what a rung
@@ -462,7 +462,7 @@ def phase_native(args) -> dict:
 
     def vega():
         frames = load_cached(args.orbit_cache / "basketball")[: args.native_frames]
-        artifact = out / "vega-basketball.vmesh"
+        artifact = out / "vega-basketball.o4d"
         artifact.unlink(missing_ok=True)
         start = time.perf_counter()
         open4d.encode(frames, artifact, codec="vega", key_iterations=800,
@@ -485,7 +485,7 @@ def phase_native(args) -> dict:
                                open_browser=False, block=False)
         return served(server)
 
-    def native_vmesh(path: Path):
+    def native_o4d(path: Path):
         def run():
             with open4d.load(path) as native:
                 server = open4d.stream(native, out_dir=out / f"{path.stem}-bundle",
@@ -494,10 +494,10 @@ def phase_native(args) -> dict:
                     **served(server)}
         return run
 
-    attempt("vega .vmesh -> NativeSequence -> open4d.stream", vega)
+    attempt("vega .o4d -> NativeSequence -> open4d.stream", vega)
     attempt("QUEEN GaussianRun -> open4d.stream", queen)
-    for path in args.native_vmesh:
-        attempt(f"{path.name} -> NativeSequence -> open4d.stream", native_vmesh(path))
+    for path in args.native_o4d:
+        attempt(f"{path.name} -> NativeSequence -> open4d.stream", native_o4d(path))
     return {"rows": rows}
 
 
@@ -830,7 +830,7 @@ def main(argv=None) -> int:
     parser.add_argument("--subjects", nargs="*")
     parser.add_argument("--native-frames", type=int, default=10)
     parser.add_argument("--queen-run", type=Path)
-    parser.add_argument("--native-vmesh", type=Path, nargs="*", default=[])
+    parser.add_argument("--native-o4d", type=Path, nargs="*", default=[])
     parser.add_argument("--delivery-mesh", nargs="*", default=["basketball_player"])
     parser.add_argument("--delivery-gaussians", nargs="*", default=["basketball"])
     parser.add_argument("--gaussian-frames", type=int, default=None,

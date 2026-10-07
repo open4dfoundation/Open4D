@@ -1,6 +1,6 @@
-"""Self-contained VMESH native temporal data in USD, without executable loading.
+"""Self-contained O4D native temporal data in USD, without executable loading.
 
-The authored VMESH prim is a custom data type, not a standard renderable
+The authored O4D prim is a custom data type, not a standard renderable
 Gaussian or neural-field prim. Compressed bytes survive USDC round trips.
 """
 from __future__ import annotations
@@ -14,11 +14,13 @@ import numpy as np
 
 from open4d._files import publish_file
 from open4d.codec._protocol import CodecError
-from open4d.codec._vmesh_format import _json, inspect_vmesh
+from open4d.codec._o4d_format import _json, inspect_o4d
 from ._usd import _pxr
 
-_PRIM = "/VMESH"
-_SCHEMA = "vmesh.usd/1"
+_PRIM = "/O4D"
+_SCHEMA = "o4d.usd/1"
+# Read existing compressed USD files while authoring the renamed public type.
+_USD_PROFILES = {"O4D": ("o4d", _SCHEMA), "VMESH": ("vmesh", "vmesh.usd/1")}
 _CHUNK = 1024 * 1024
 
 
@@ -33,7 +35,7 @@ def _open(path):
     if layer is None:
         raise CodecError(f"cannot read USD layer {path}")
     stage = Usd.Stage.Open(layer)
-    return stage, stage.GetPrimAtPath(_PRIM)
+    return stage, stage.GetDefaultPrim()
 
 
 def is_native_usd(path):
@@ -45,10 +47,11 @@ def is_native_usd(path):
         layer = Sdf.Layer.OpenAsAnonymous(str(Path(path).absolute()), metadataOnly=True)
     except Tf.ErrorException:
         return False
-    if layer is None or layer.defaultPrim != _PRIM.lstrip("/"):
+    if layer is None or layer.defaultPrim not in _USD_PROFILES:
         return False
-    _, prim = _open(path)
-    return bool(prim and prim.HasAttribute("vmesh:schema"))
+    stage, prim = _open(path)
+    namespace, schema = _USD_PROFILES[layer.defaultPrim]
+    return bool(prim and prim.HasAttribute(f"{namespace}:schema"))
 
 
 def write_native_usd(sequence, destination, *, overwrite=False):
@@ -59,7 +62,7 @@ def write_native_usd(sequence, destination, *, overwrite=False):
     if destination.exists() and not overwrite:
         raise FileExistsError(destination)
     Sdf, Usd, _, Vt = _pxr()
-    descriptor = inspect_vmesh(sequence.path)
+    descriptor = inspect_o4d(sequence.path)
     if any(right <= left for left, right in zip(sequence.timestamps, sequence.timestamps[1:])):
         raise CodecError("native USD export requires strictly increasing timestamps")
     size = sequence.path.stat().st_size
@@ -68,13 +71,13 @@ def write_native_usd(sequence, destination, *, overwrite=False):
     with tempfile.TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as directory:
         temporary = Path(directory) / destination.name
         stage = Usd.Stage.CreateNew(str(temporary))
-        prim = stage.DefinePrim(_PRIM, "VMESH")
+        prim = stage.DefinePrim(_PRIM, "O4D")
         stage.SetDefaultPrim(prim)
         stage.SetTimeCodesPerSecond(1.0)
         stage.SetStartTimeCode(sequence.timestamps[0])
         stage.SetEndTimeCode(sequence.timestamps[-1])
-        prim.CreateAttribute("vmesh:schema", Sdf.ValueTypeNames.String).Set(_SCHEMA)
-        frame = prim.CreateAttribute("vmesh:frameIndex", Sdf.ValueTypeNames.Int64)
+        prim.CreateAttribute("o4d:schema", Sdf.ValueTypeNames.String).Set(_SCHEMA)
+        frame = prim.CreateAttribute("o4d:frameIndex", Sdf.ValueTypeNames.Int64)
         for index, timestamp in zip(sequence.frame_indices, sequence.timestamps):
             frame.Set(index, timestamp)
         digest = hashlib.sha256()
@@ -82,13 +85,13 @@ def write_native_usd(sequence, destination, *, overwrite=False):
             for index in range(count):
                 data = source.read(_CHUNK)
                 digest.update(data)
-                prim.CreateAttribute(f"vmesh:payload:chunk{index:06d}", Sdf.ValueTypeNames.UCharArray).Set(
+                prim.CreateAttribute(f"o4d:payload:chunk{index:06d}", Sdf.ValueTypeNames.UCharArray).Set(
                     Vt.UCharArray.FromNumpy(np.frombuffer(data, dtype=np.uint8)))
             if source.read(1):
                 raise CodecError("native stream changed while exporting USD")
         header = dict(codec=sequence.codec, bytes=size, chunks=count, sha256=digest.hexdigest(),
                       representation=descriptor["representation"])
-        prim.CreateAttribute("vmesh:payloadManifest", Sdf.ValueTypeNames.String).Set(json.dumps(header, separators=(",", ":")))
+        prim.CreateAttribute("o4d:payloadManifest", Sdf.ValueTypeNames.String).Set(json.dumps(header, separators=(",", ":")))
         stage.GetRootLayer().Save()
         del stage
         # Verify the USD actually contains the original stream before publishing.
@@ -103,9 +106,13 @@ def read_native_usd(source, *, runtime=None, python=None):
     from open4d.native import NativeSequence
 
     stage, prim = _open(source)
-    if not prim or prim.GetTypeName() != "VMESH" or prim.GetAttribute("vmesh:schema").Get() != _SCHEMA:
-        raise CodecError("unsupported VMESH USD schema")
-    raw = prim.GetAttribute("vmesh:payloadManifest").Get()
+    profile = _USD_PROFILES.get(prim.GetName()) if prim else None
+    if profile is None or prim.GetTypeName() != prim.GetName():
+        raise CodecError("unsupported O4D USD schema")
+    namespace, schema = profile
+    if prim.GetAttribute(f"{namespace}:schema").Get() != schema:
+        raise CodecError("unsupported O4D USD schema")
+    raw = prim.GetAttribute(f"{namespace}:payloadManifest").Get()
     if not isinstance(raw, str) or len(raw) > 1024 * 1024:
         raise CodecError("invalid native USD payload manifest")
     header = _json(raw)
@@ -115,12 +122,13 @@ def read_native_usd(source, *, runtime=None, python=None):
     if (type(count) is not int or not 1 <= count <= 65536 or type(size) is not int
             or not (count - 1) * _CHUNK < size <= count * _CHUNK):
         raise CodecError("invalid native USD payload bounds")
-    chunks = sorted(a.GetName() for a in prim.GetAttributes() if a.GetName().startswith("vmesh:payload:chunk"))
-    if chunks != [f"vmesh:payload:chunk{i:06d}" for i in range(count)]:
+    prefix = f"{namespace}:payload:chunk"
+    chunks = sorted(a.GetName() for a in prim.GetAttributes() if a.GetName().startswith(prefix))
+    if chunks != [f"{prefix}{i:06d}" for i in range(count)]:
         raise CodecError("missing or extra native USD chunks")
     temporary = tempfile.TemporaryDirectory(prefix="open4d-native-usd-")
     try:
-        path = Path(temporary.name) / "sequence.vmesh"
+        path = Path(temporary.name) / "sequence.o4d"
         digest = hashlib.sha256()
         with path.open("xb") as stream:
             for index in range(count):
@@ -137,7 +145,7 @@ def read_native_usd(source, *, runtime=None, python=None):
         result = NativeSequence(path, temporary=temporary, runtime=runtime, python=python)
         if result.codec != header.get("codec") or result.representation != header.get("representation"):
             raise CodecError("native USD profile disagrees with carried stream")
-        frame = prim.GetAttribute("vmesh:frameIndex")
+        frame = prim.GetAttribute(f"{namespace}:frameIndex")
         if (stage.GetTimeCodesPerSecond() != 1.0 or tuple(frame.GetTimeSamples()) != result.timestamps
                 or tuple(frame.Get(t) for t in result.timestamps) != result.frame_indices):
             raise CodecError("USD timeline disagrees with native temporal payload")

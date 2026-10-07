@@ -67,7 +67,7 @@ baked from one direction), or a list of `GaussianSplats`.
 | `link` | `Link` / `Trace`: simulated bandwidth and latency, applied inside the server |
 | `metrics` | PSNR/SSIM of each clip against the captured reference |
 | `policy` | picks a rung per clip for a bandwidth budget |
-| `sequence` | packs a clip's frames into one `.seq` file |
+| `sequence` | packs a clip's frames into one `.o4d` file |
 | `adopt` | imports frames exported from another Python (e.g. ReRF on 3.8) |
 | `client/` | the browser player; decoding runs in `client/worker.js` |
 

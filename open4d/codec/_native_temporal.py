@@ -4,12 +4,12 @@ import os
 
 from ._native_profiles import PROFILES
 from ._protocol import CodecError
-from ._metadata import require_vmesh_destination
-from ._vmesh_format import contains_codec
+from ._metadata import require_o4d_destination
+from ._o4d_format import contains_codec
 
 
 def encode_native(source, destination, *, codec, overwrite=False, **options):
-    destination = require_vmesh_destination(destination)
+    destination = require_o4d_destination(destination)
     from open4d.native import NativeSequence, import_native, save_native
     if isinstance(source, NativeSequence):
         if options:
@@ -17,7 +17,7 @@ def encode_native(source, destination, *, codec, overwrite=False, **options):
         if source.codec != codec:
             raise CodecError(f"native source contains {source.codec}, not {codec}")
         return save_native(source, destination, overwrite=overwrite)
-    if isinstance(source, (str, os.PathLike)) and Path(source).suffix.lower() in (".usd", ".usdc", ".usda", ".vmesh"):
+    if isinstance(source, (str, os.PathLike)) and Path(source).suffix.lower() in (".usd", ".usdc", ".usda", ".o4d"):
         from open4d import load
         if options:
             raise TypeError("native repacking does not accept training/import options")
@@ -30,7 +30,7 @@ def encode_native(source, destination, *, codec, overwrite=False, **options):
 
 
 class NativeTemporalCodec:
-    suffixes = (".vmesh",)
+    suffixes = (".o4d",)
     backend = "research-subprocess"
     lossless = False
     preserves = ("native_temporal_representation", "timestamps", "metadata")
@@ -46,8 +46,8 @@ class NativeTemporalCodec:
         return encode_native(sequence, destination, codec=self.id, **options)
 
     def decode(self, source, *, runtime=None, python=None):
-        if Path(source).suffix.lower() != ".vmesh":
-            raise CodecError(f"{self.id} decode requires a .vmesh extension")
+        if Path(source).suffix.lower() != ".o4d":
+            raise CodecError(f"{self.id} decode requires a .o4d extension")
         from open4d.native import NativeSequence
         result = NativeSequence(source, runtime=runtime, python=python)
         if result.codec != self.id:

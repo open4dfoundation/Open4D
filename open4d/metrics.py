@@ -310,7 +310,7 @@ def compare_sequences(
     """Compare equal-length sequences with matching timestamps, in order.
 
     Each input is an open4d.Sequence or a path that open4d.load opens as a
-    mesh Sequence, such as a frame folder, a mesh .vmesh, or a .usdc. Paths
+    mesh Sequence, such as a frame folder, a mesh .o4d, or a .usdc. Paths
     are opened with default load options and closed before returning; pass
     a Sequence to choose options. Caller-owned sequences remain open. Paths
     that hold Gaussian or neural-field data raise TypeError.

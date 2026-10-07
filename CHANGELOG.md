@@ -7,15 +7,17 @@ versions may change the public API.
 
 ### Added
 
+- Installed-wheel checks for optional features and GIF rendering, strict
+  Twine metadata validation, and clean source-distribution installation in CI.
 - Whole-sequence API: `open4d.load`, `save`, `unload`, `encode`, `decode`,
   `reconstruct`, `stream`, `send`, `receive` and `visualize`.
 - Sequence I/O for PLY and OBJ frame folders, single meshes and OpenUSD
   (`.usd`, `.usda`, `.usdc`, `.usdz`) through `open4d.io.open_sequence`,
   `write_sequence` and `inspect_sequence`. Exported folders carry a versioned
   `open4d.sequence.json` with timestamps, metadata and topology declarations.
-- VMESH, a standalone container for native codec payloads with per-codec
-  profiles, SHA-256 payload hashes and sequence timing. `inspect_vmesh`,
-  `pack_vmesh` and `unpack_vmesh` work without decoding. A custom `VMESH`
+- O4D, a standalone container for native codec payloads with per-codec
+  profiles, SHA-256 payload hashes and sequence timing. `inspect_o4d`,
+  `pack_o4d` and `unpack_o4d` work without decoding. A custom `O4D`
   USD prim preserves a compressed artifact exactly inside `.usdc`.
 - Twelve public codecs, listed by `open4d.available_codecs()`: `vdmc`,
   `faster_vdmc`, `tvmc`, `tsmc`, `klt`, `n4mc`, `qndf`, `qndf-int8`, `vega`,
@@ -24,7 +26,7 @@ versions may change the public API.
 - `open4d.NativeSequence` and `open4d.import_native` for Gaussian and
   neural-field methods, which keep their native compressed models.
 - `open4d.migrate_legacy` converts older research exports and packed browser
-  clips to VMESH.
+  clips to O4D.
 - Point clouds and Gaussians as frame types: `PointCloud`, `GaussianCloud`,
   `GaussianSplats`, `load_gaussians`, `NeuralGaussianFrame` and
   `open4d.Representation`.
@@ -37,7 +39,7 @@ versions may change the public API.
   bit-identical across runs and processes.
 - `open4d.compare_meshes` and `open4d.compare_sequences` (point-to-point and
   point-to-plane error, Hausdorff distance and PSNR) with the `metrics` extra.
-  `compare_sequences` also accepts paths, such as a frame folder and a `.vmesh`.
+  `compare_sequences` also accepts paths, such as a frame folder and a `.o4d`.
 - Decoded-mesh TCP transport (`send`/`receive`) and browser streaming through
   the separate `open4d-streamer` package: bundles, quality ladders, Draco
   rungs, scoring, link shaping, monitoring and a Gaussian player.
@@ -46,14 +48,16 @@ versions may change the public API.
   rate, and `Receiver.close()` stops a waiting receiver from another thread.
 - Vega and ReRF baselines under `open4d/reconstruction`.
 - The `open4d` command (`demo`, `inspect`, `view`) and `python -m open4d`.
-  `open4d inspect` reads any `.vmesh`, or VMESH prim in USD, from its header
+  `open4d inspect` reads any `.o4d`, or O4D prim in USD, from its header
   without a codec backend; `--decode` also reports mesh geometry.
 - A browser user-study app for comparing streaming methods under one network
   trace (`open4d/streamer/study`).
 - Notebooks for the codec cycle (`examples/open4d_sequence_codec.ipynb`,
-  `examples/vmesh/`) and a scored streaming example.
+  `examples/o4d/`) and a scored streaming example.
 - Optional extras: `tools`, `metrics`, `player`, `open3d`, `usd`, `torch`,
-  `klt`, `n4mc`, `qndf`, `gaussians`, `capture` and `all`.
+  `klt`, `n4mc`, `qndf`, `gaussians`, `capture` and `all`. On Python 3.13,
+  `all` and `capture` omit Open3D, which has no 3.13 wheels.
+- `open4d.__version__`.
 - Release safety: an explicit package list with wheel and source-archive
   content checks, a third-party provenance ledger, a manual release gate, and
   CI for Python 3.10 to 3.13 on Linux, macOS and Windows.
@@ -63,6 +67,10 @@ versions may change the public API.
 
 ### Changed
 
+- The public container extension, helpers, labels and USD prim are now `.o4d`,
+  `inspect_o4d` / `pack_o4d` / `unpack_o4d` and `O4D`. Encoded bytes retain
+  their existing layout, and compressed USD files using the former prim remain
+  readable.
 - Meshes are stored in canonical dtypes (`float32` positions, `uint32`
   triangles) rather than the producer's.
 - The base install needs only NumPy; codecs, viewers and readers import their
@@ -77,9 +85,15 @@ versions may change the public API.
 - Research codecs that run in Python are loaded from a source checkout; set
   `OPEN4D_RESEARCH_ROOT` when using an installed package.
 - PyTorch3D is no longer required.
+- The Open3D adapter moved from the top-level `integrations.open3d` package to
+  `open4d.integrations.open3d`; the wheel installs only the `open4d` package.
 
 ### Fixed
 
+- 3DGStream native import fills omitted decoder settings from the run's saved
+  arguments when a partial training configuration is supplied.
+- Release checks accept a reviewed ledger with recorded maintainer approval;
+  the current unresolved ledger continues to block publication.
 - The TCP receiver rejects malformed dtype strings, deeply nested headers and
   non-finite metadata with `ValueError` instead of leaking other exceptions,
   reports a sender reset as `EOFError`, and refuses a second sender instead of

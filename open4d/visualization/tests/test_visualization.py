@@ -136,14 +136,14 @@ def test_visualize_path_owns_and_closes_loaded_sequence(monkeypatch):
     monkeypatch.setattr(
         _api, "load", lambda source: value
     )
-    monkeypatch.setattr("open4d.codec._vmesh_format.is_mesh_profile", lambda source: True)
+    monkeypatch.setattr("open4d.codec._o4d_format.is_mesh_profile", lambda source: True)
     monkeypatch.setattr(_qt, "check_available", lambda **options: None)
     monkeypatch.setattr(_qt, "play", lambda frames, options: frames[0])
     monkeypatch.setattr(
         value, "close", lambda: (close_calls.append(True), real_close())[1]
     )
 
-    visualize("capture.vmesh")
+    visualize("capture.o4d")
 
     assert close_calls == [True]
     assert value.closed is True
@@ -167,14 +167,14 @@ def test_visualize_path_closes_after_renderer_failure(monkeypatch):
     from open4d.visualization import _qt
 
     monkeypatch.setattr(_api, "load", lambda source: value)
-    monkeypatch.setattr("open4d.codec._vmesh_format.is_mesh_profile", lambda source: True)
+    monkeypatch.setattr("open4d.codec._o4d_format.is_mesh_profile", lambda source: True)
     monkeypatch.setattr(_qt, "check_available", lambda **options: None)
     monkeypatch.setattr(
         _qt, "play", lambda frames, options: (_ for _ in ()).throw(RuntimeError("boom"))
     )
 
     with pytest.raises(RuntimeError, match="boom"):
-        visualize("capture.vmesh")
+        visualize("capture.o4d")
 
     assert value.closed is True
 
@@ -267,7 +267,7 @@ def test_gaussian_paths_are_rejected_before_native_decode(tmp_path, monkeypatch,
     import open4d._api as public
 
     import json
-    from open4d.codec import pack_vmesh
+    from open4d.codec import pack_o4d
     native = tmp_path / "native"
     native.mkdir()
     (native / "metadata.json").write_text(json.dumps({
@@ -276,7 +276,7 @@ def test_gaussian_paths_are_rejected_before_native_decode(tmp_path, monkeypatch,
     }))
     for name in ("manifest.json", "color_model.pt", "frame_0000.pt", "frame_0001.pt"):
         (native / name).write_bytes(b"opaque native fixture")
-    source = pack_vmesh(native, tmp_path / "capture.vmesh")
+    source = pack_o4d(native, tmp_path / "capture.o4d")
     monkeypatch.setattr(_qt, "check_available", lambda **options: None)
     monkeypatch.setattr(public, "load", lambda *args: pytest.fail("must not decode Gaussian data"))
     with pytest.raises(TypeError, match="native renderer"):
@@ -444,7 +444,7 @@ def test_failed_gif_write_keeps_existing_output(tmp_path, monkeypatch, gif_scene
     assert gif_scene == [True]
 
 
-def test_mesh_vmesh_path_reaches_player_and_releases_owned_payloads(tmp_path, monkeypatch):
+def test_mesh_o4d_path_reaches_player_and_releases_owned_payloads(tmp_path, monkeypatch):
     from pathlib import Path
     from open4d.io._mesh import write_ply
     from open4d.visualization import _qt
@@ -455,7 +455,7 @@ def test_mesh_vmesh_path_reaches_player_and_releases_owned_payloads(tmp_path, mo
     source = tmp_path / "frame.ply"
     mesh = sequence()[0].geometry
     write_ply(source, mesh.positions, mesh.triangles)
-    target = tmp_path / "capture.vmesh"
+    target = tmp_path / "capture.o4d"
     pack([source], target, representation="mesh")
     seen = {}
     monkeypatch.setattr(_qt, "check_available", lambda **options: None)

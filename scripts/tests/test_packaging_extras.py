@@ -19,10 +19,14 @@ def test_all_extra_contains_every_runtime_feature_dependency():
     with (root / "pyproject.toml").open("rb") as stream:
         extras = tomllib.load(stream)["project"]["optional-dependencies"]
 
+    def requirement(value):
+        # Environment markers may narrow where `all` installs a dependency.
+        return value.split(";", 1)[0].strip()
+
     feature_dependencies = set().union(*(
-        dependencies
+        map(requirement, dependencies)
         for name, dependencies in extras.items()
         if name not in {"all", "dev"}
     ))
 
-    assert feature_dependencies <= set(extras["all"])
+    assert feature_dependencies <= set(map(requirement, extras["all"]))

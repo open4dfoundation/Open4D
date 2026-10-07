@@ -17,12 +17,12 @@ from open4d.core import Sequence
 from open4d.io import open_sequence
 
 from ._klt import _KLTProvider, _normalization
-from ._metadata import _json_value, _validate_manifest, require_vmesh_destination
+from ._metadata import _json_value, _validate_manifest, require_o4d_destination
 from ._protocol import CodecError
 from ._research import research_module
 from ._torch import torch_device
 from ._tsdf import write_tsdf_sequence
-from ._vmesh_format import _json, contains_codec, pack_vmesh, probe_codec, unpack_vmesh
+from ._o4d_format import _json, contains_codec, pack_o4d, probe_codec, unpack_o4d
 
 _SCHEMA = "open4d.n4mc-sequence/v1"
 
@@ -134,7 +134,7 @@ def _reconstruct_mesh(volume, metrics):
 
 class N4MCCodec:
     id = "n4mc"
-    suffixes = (".vmesh",)
+    suffixes = (".o4d",)
     backend = "python-in-process"
     lossless = False
     preserves = ("positions", "triangles")
@@ -148,7 +148,7 @@ class N4MCCodec:
         latent_channels: int = 64, learning_rate: float = 1e-4,
         device: str | None = None, seed: int = 7,
     ) -> Path:
-        destination = require_vmesh_destination(destination)
+        destination = require_o4d_destination(destination)
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         for frame in sequence:
@@ -216,7 +216,7 @@ class N4MCCodec:
                         bottleneck_shape=encoded["bottleneck_shape"].cpu().numpy(),
                     )
             _write_native_metadata(manifest, work)
-            return pack_vmesh(work, destination, overwrite=overwrite)
+            return pack_o4d(work, destination, overwrite=overwrite)
 
     def decode(
         self, source: Path, *, device: str | None = None,
@@ -227,9 +227,9 @@ class N4MCCodec:
         work = Path(temporary.name)
         decoded = None
         try:
-            if source.suffix.lower() != ".vmesh" or probe_codec(source) != self.id:
-                raise CodecError("N4MC decode requires its VMESH profile; use migrate_legacy for older artifacts")
-            native = unpack_vmesh(source, work / "native")
+            if source.suffix.lower() != ".o4d" or probe_codec(source) != self.id:
+                raise CodecError("N4MC decode requires its O4D profile; use migrate_legacy for older artifacts")
+            native = unpack_o4d(source, work / "native")
             manifest = json.loads((native / "metadata.json").read_text())
             _validate_manifest(manifest, schema=None, codec=self.id)
             _normalization(manifest)

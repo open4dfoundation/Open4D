@@ -295,3 +295,44 @@ def test_reconstruct_cuda_matches_legacy_volume():
         assert 0 <= mesh.colors.min() and mesh.colors.max() <= 1
         assert mesh.colors[mesh.positions[:, 0] < -0.3, 0].mean() > 0.95
         assert mesh.colors[mesh.positions[:, 0] > 0.8, 2].mean() > 0.95
+
+
+@pytest.mark.open3d
+def test_reconstruct_tensor_colours_silhouette_vertices():
+    pytest.importorskip("open3d")
+    # A near board in front of a wall. Vertices on the board's edge round to
+    # wall pixels, outside the truncation band; they must not come out black.
+    depth = np.full((1, 64, 64), 1300)
+    depth[:, :, :32] = 1000
+    color = np.zeros((*depth.shape, 3), dtype=np.uint8)
+    color[..., 0] = 200
+    settings = {"intrinsics": (60, 60, 31.5, 31.5), "voxel_size": 0.02, "truncation": 0.05}
+    for device in (None, "cpu"):
+        mesh = reconstruct(depth, color, device=device, **settings)[0].geometry
+        assert len(mesh.triangles) > 100
+        np.testing.assert_allclose(mesh.colors[:, 0], 200 / 255, atol=1e-3)
+        assert not mesh.colors[:, 1:].any()
+
+
+def test_tensor_vertex_colours_fill_unseen_vertices():
+    from open4d.reconstruction.rgbd._reconstruction import _RGBDProvider
+
+    depth = np.full((1, 1, 4, 4), 1000, dtype=np.uint16)
+    depth[0, 0, 0, 3] = 0
+    color = np.zeros((1, 1, 4, 4, 3), dtype=np.uint8)
+    color[0, 0, ..., 0] = np.arange(16).reshape(4, 4) * 10
+    provider = _RGBDProvider(depth, color, np.array([[1.0, 1.0, 0.0, 0.0]]),
+                             np.eye(4)[None, None], 30.0, 1000.0, 4.0, 0.01, 0.04)
+    # Pixel (row, column) = (y, x) at z = 1; vertex 0 is seen, 1 and 2 are
+    # 0.5 m off their pixels' depth, and vertex 3 sees missing depth.
+    positions = np.array([[1, 1, 1], [2.25, 2.25, 1.5], [1.5, 3, 1.5], [9, 0, 3]], dtype=float)
+    triangles = np.array([[0, 1, 2]])
+    colors = provider._vertex_colors(0, positions, triangles)
+    assert colors[0, 0] == pytest.approx(50 / 255)
+    # Neighbours of a seen vertex take its colour.
+    assert colors[1:3, 0] == pytest.approx([50 / 255] * 2)
+    # A vertex with no coloured neighbour takes the nearest-depth pixel, and
+    # stays black only if no camera has depth there.
+    assert not colors[3].any()
+    colors = provider._vertex_colors(0, positions[1:3], np.zeros((0, 3), dtype=int))
+    assert colors[:, 0] == pytest.approx([100 / 255, 90 / 255])

@@ -25,7 +25,7 @@ all required notices to be assembled, and a recorded maintainer approval.
 | --- | --- | --- |
 | `open4d`, `open4d.codec`, `open4d.core`, `open4d.io`, `open4d.visualization`, `open4d.reconstruction.rgbd`, `open4d.transport` | Project-authored, root MIT; NumPy base | Candidate after final review; research implementations remain excluded |
 | `open4d.torch_ops` | Project-authored source; Torch optional and not redistributed | Candidate after final review |
-| `integrations`, `integrations.open3d` | Project-authored adapter source; Open3D optional and not redistributed | Candidate after final review |
+| `open4d.integrations`, `open4d.integrations.open3d` | Project-authored adapter source; Open3D optional and not redistributed | Candidate after final review |
 
 Tests, examples, codecs, reconstruction systems, Gaussian implementations,
 datasets, generated artifacts, papers, Unity files, and vendored source are
@@ -39,6 +39,14 @@ distribution and still needs separate review before any redistribution.
 The reviewer is the maintainer who collects the missing evidence and records
 the decision that closes the row. `Unassigned` rows have no reviewer yet.
 
+After review, record `APPROVED` for a component with verified distribution
+rights, or `EXCLUDED` for a component kept outside the artifacts. Publication
+also requires changing the release decision to `approved`, removing every
+`BLOCK` entry, and adding `Maintainer approval: NAME (YYYY-MM-DD)` with the
+maintainer's actual name and approval date. CI validates either release state;
+the publishing workflow requires the approved state. The current decision
+remains blocked.
+
 | Path / component | Immutable source evidence | License evidence | Decision and required action | Reviewer |
 | --- | --- | --- | --- | --- |
 | `open4d/codecs/draco` | Wrapper plus `google/draco` submodule `47238930f698250f474163e1a29d77858aa5c158` | Upstream Apache-2.0 after initialization; wrapper currently relies on root license | `EXCLUDED`; retain upstream notices and record any patches before source/binary distribution | Unassigned |
@@ -47,7 +55,7 @@ the decision that closes the row. `Unassigned` rows have no reviewer yet.
 | `open4d/codecs/qndf` | Copied research code plus `libigl` submodule `e60423e28c86b6aa2a3f6eb0112e8fd881f96777` | Top-level and `ssp_remesh` contain GPL-3.0 text | `BLOCK`; determine a GPL-compatible source strategy and preserve source/notice obligations | Unassigned |
 | `open4d/codecs/qndf_int8` | Derived experiment; exact base revision not recorded | No component license found | `BLOCK`; record derivation, copyright, license, weights, and data lineage | Unassigned |
 | `open4d/codecs/tvmc` | Research pipeline, copied ARAP/editor trees, Draco `47238930f698250f474163e1a29d77858aa5c158` | `LICENSE.md` permits non-commercial internal research and prohibits redistribution | `BLOCK`; obtain written redistribution authority or keep outside every distributed artifact | Unassigned |
-| `open4d/codecs/tsmc` | Research pipeline, copied trees, Draco `47238930f698250f474163e1a29d77858aa5c158`, SAM3 `5dd401d1c5c1d5c3eedff06d41b77af824517619`, tracked datasets/paper. Local change: entropy coding supports constant displacement matrices and rejects values outside the int32/ANS range | No top-level component license; copied subtrees have separate terms | `BLOCK`; inventory source, patches, paper/media, data rights, SAM3 terms, and notices | Unassigned |
+| `open4d/codecs/tsmc` | Research pipeline, copied trees, Draco `47238930f698250f474163e1a29d77858aa5c158`, SAM3 `5dd401d1c5c1d5c3eedff06d41b77af824517619`. Local change: entropy coding supports constant displacement matrices and rejects values outside the int32/ANS range | No top-level component license; copied subtrees have separate terms | `BLOCK`; inventory source, patches, media, SAM3 terms, and notices | Unassigned |
 | `open4d/codecs/vdmc` | MPEG reference submodule `ecffe4212e5e956761c4fa14a17c453ae916b0b1` | Not audited in the uninitialized tree | `BLOCK`; initialize, record license/notices, and review intended source/binary distribution | Unassigned |
 | `open4d/codecs/faster_vdmc` | Fork `cicm4/mpeg-vdmc-tm` at `93cdd5e1367b0f9f81c251ef89255bcb2f0d2d3f`, derived from `MPEGGroup/mpeg-vdmc-tm` at `ecffe4212e5e956761c4fa14a17c453ae916b0b1` with eight encoder/decoder performance commits | Fork `COPYING` contains the ISO/IEC BSD 3-Clause terms and expressly excludes patent and other third-party rights; build-fetched dependencies need separate review | `BLOCK`; preserve the fork history and modification record, inventory dependency licenses/notices and patent implications, and review source/binary distribution before release | Unassigned |
 | `open4d/reconstruction/rgbd` | Project reconstruction and protocol experiments; `_receiver.py` packages the project-authored rectification subset of `python/live_two_camera_fusion.py` | Root MIT is current repository evidence; camera SDK/native dependencies external | `EXCLUDED` for native/capture code; project-authored top-level Python API only is in the candidate package; camera/native dependency review remains open | Unassigned |
@@ -59,11 +67,10 @@ the decision that closes the row. `Unassigned` rows have no reviewer yet.
 | `open4d/streamer` | Project-authored `open4d-streamer` distribution; `streamer/client/vendor/draco` copies the Draco WASM decoder from `open4d/codecs/tsmc/draco/javascript` (Draco `47238930f698250f474163e1a29d77858aa5c158`) | Root MIT for project code; Draco is Apache-2.0, but its license text and notice are not shipped beside the vendored pair | `EXCLUDED` from the `open4d` wheel and sdist; before publishing `open4d-streamer`, add the Draco license and notice to its package data and add wheel/sdist content checks | Unassigned |
 | `open4d/streamer/study` | Copied from `frozzzen3/4DVideoStreaming` at `c3df4f9b2ef4ce04af8a0ea08dce94441c9bafde` (see `PROVENANCE`), plus Open4D's study additions; vendored Draco decoder and npm lockfiles | No license recorded for the origin repository; npm dependency licenses not inventoried | `BLOCK`; record the origin repository's license and authorship, inventory npm dependency licenses, and keep it outside every distributed artifact until then | Unassigned |
 | `docs/assets` | Project figures and GIFs; `basketball_comparison_demo.gif` is rendered from the TVMC basketball sequence | Root MIT for project figures; the rendered basketball capture inherits the TVMC data terms | `BLOCK`; record the source of each figure and replace or license renders of third-party captures before any documentation bundle | Unassigned |
-| `integrations/unity` | Project glue, copied Eigen, prebuilt plugins, encoded archive | No integration-wide manifest; Eigen has multiple license files; binaries/data unresolved | `BLOCK`; inventory producers, licenses, build revisions, symbols, and fixture rights | Unassigned |
+| `integrations/unity` | Project glue, copied Eigen, prebuilt plugins | No integration-wide manifest; Eigen has multiple license files; binaries/data unresolved | `BLOCK`; inventory producers, licenses, build revisions, and symbols | Unassigned |
 | `integrations/unity/TVMCUnity/Unity Files/Plugins` | Prebuilt Android `.so` and macOS `.dylib` | Reproducible build and dependency bill absent | `BLOCK`; exclude until reproduced from reviewed source with notices | Unassigned |
-| `integrations/unity/TVMCUnity/EncodedExample/DanceSequence.zip` | Historical encoded dataset archive | Source dataset license/consent absent | `BLOCK`; identify redistribution permission or replace with a licensed synthetic fixture | Unassigned |
 | `open4d/codecs/n4mc/outputs` | Historical checkpoints, configs, metrics, and reconstructions | Training inputs, authorship, and checkpoint rights absent | `BLOCK`; moved outside the checkout to `../open4d-local-artifacts` without redistribution. SHA-256 inventory: `cleanup-manifest.json`, digest `5b85cf3bfbf02d352542362fa3265359c0b937e68f21b89436de039a9dfca627`. Data/model rights remain unresolved | Unassigned |
-| Tracked papers and large media | TVMC/TSMC papers and demonstration media are committed | Publication copyright and redistribution basis not recorded centrally | `BLOCK`; record publisher/author permission or link externally instead of redistributing |
+| Tracked media | TVM editor documentation media in `open4d/codecs/{tvmc,tsmc}/tvm-editing/Documentation` | Copyright and redistribution basis not recorded centrally | `BLOCK`; record author permission or link externally instead of redistributing | Unassigned |
 
 ## Local runtime repairs (2026-09-21)
 
