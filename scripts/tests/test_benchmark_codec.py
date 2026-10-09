@@ -75,9 +75,32 @@ def test_decode_throughput_includes_eager_open_time(tmp_path, monkeypatch):
     result = benchmark_codec.run(source, Path(tmp_path) / "take.o4d")
 
     assert result["decode_open_ms"] == 2000
-    assert result["decode_validate_s"] == 3
+    assert result["decode_validate_s"] >= 0
     assert result["decode_all_s"] == 5
     assert result["decode_frames_per_s"] == pytest.approx(2 / 5)
+
+
+def test_decode_timing_excludes_surface_validation(tmp_path, monkeypatch):
+    measuring = False
+    real_timed = benchmark_codec.timed
+    real_surface = benchmark_codec._surface_errors
+
+    def marked_timed(function):
+        nonlocal measuring
+        measuring = True
+        try:
+            return real_timed(function)
+        finally:
+            measuring = False
+
+    # Validation has its own explicit timer, outside timed decode consumption.
+    def check(left, right):
+        assert not measuring
+        return real_surface(left, right)
+
+    monkeypatch.setattr(benchmark_codec, "timed", marked_timed)
+    monkeypatch.setattr(benchmark_codec, "_surface_errors", check)
+    benchmark_codec.run(benchmark_codec.synthetic(3, 2), tmp_path / "test.o4d")
 
 
 def test_decode_peak_memory_excludes_surface_validation(tmp_path, monkeypatch):

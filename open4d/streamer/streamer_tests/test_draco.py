@@ -31,29 +31,21 @@ def _source() -> str:
     """The decode worker, which is where the codecs live."""
     return (viewer_path().parent / "worker.js").read_text()
 from streamer.server import serve
-from streamer_tests import open4d_tree
 
 pytestmark = pytest.mark.cpu
 
 NODE = shutil.which("node")
 requires_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
-DracoPy = pytest.importorskip("DracoPy", reason="Draco frames need open4d[draco]")
+DracoPy = pytest.importorskip("DracoPy", reason="Draco frames need DracoPy")
 
 CLIENT = viewer_path().parent
 VENDOR = CLIENT / "vendor" / "draco"
-MESH_SOURCE = (
-    open4d_tree() / "codecs/tvmc/arap-volume-tracking/data/basketball_player"
-)
-
-
 def mesh_sequence(frames: int = 2):
-    """A short real sequence, or a skip. Synthetic geometry compresses unlike real."""
-    import open4d
+    """A dense generated wave, large enough for Draco's ratios to be meaningful."""
+    from open4d.demo import mesh_sequence as wave
 
-    if not MESH_SOURCE.is_dir():
-        pytest.skip(f"{MESH_SOURCE} is not present")
-    return open4d.load(MESH_SOURCE, fps=10), frames
+    return wave(side=128, frames=frames, fps=10), frames
 
 
 # ------------------------------------------------------------ the decoder ---
@@ -108,8 +100,8 @@ def test_draco_frames_are_much_smaller_than_ply(tmp_path):
         )
     ply_size = (tmp_path / "p" / as_ply.frames[0]).stat().st_size
     drc_size = (tmp_path / "d" / as_drc.frames[0]).stat().st_size
-    # Measured at 12.9x on this content; asserted loosely so a Draco version
-    # bump does not fail the suite for being slightly different.
+    # Asserted loosely so a Draco version bump does not fail the suite for
+    # being slightly different.
     assert drc_size * 5 < ply_size, f"{ply_size} -> {drc_size}"
 
 
@@ -143,11 +135,8 @@ def test_an_unknown_frame_format_is_refused(tmp_path):
 def test_quantisation_error_is_small_and_bounded():
     """What the compression costs, stated as a number rather than a hope."""
     scipy_spatial = pytest.importorskip("scipy.spatial")
-    import open4d
-
-    if not MESH_SOURCE.is_dir():
-        pytest.skip("mesh source is not present")
-    with open4d.load(MESH_SOURCE, fps=10) as seq:
+    sequence, _ = mesh_sequence(1)
+    with sequence as seq:
         geometry = seq[0].geometry
     positions = geometry.positions.astype(np.float64)
     diagonal = float(np.linalg.norm(positions.max(0) - positions.min(0)))
@@ -162,7 +151,7 @@ def test_quantisation_error_is_small_and_bounded():
     # 0.0046% of the diagonal when this was written. One tenth of a percent is a
     # generous ceiling that still fails if quantisation is turned down hard.
     assert error.max() / diagonal < 1e-3
-    # Deduplication, not quantisation: the source splits vertices at seams.
+    # Draco may merge duplicate vertices, but never adds any.
     assert len(decoded) <= len(positions)
 
 
@@ -175,7 +164,7 @@ def draco_bundle(tmp_path: Path) -> Path:
         clip = export.from_sequence(
             seq[:frames], tmp_path, name="mesh", frame_format="draco"
         )
-    bundle.write(tmp_path, title="draco", source=str(MESH_SOURCE), clips=[clip])
+    bundle.write(tmp_path, title="draco", source="open4d.demo", clips=[clip])
     return tmp_path
 
 

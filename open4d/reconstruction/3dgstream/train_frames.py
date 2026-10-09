@@ -127,10 +127,10 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
                 torch.save((gaussians.capture(), iteration), scene.output_path + "/chkpnt" + str(iteration) + ".pth")
 
     s1_end_time=time.time()
+    # The temporal representation is required even when densification is off.
+    scene.dump_NTC()
     # Densify
     if(opt.iterations_s2>0):
-    # Dump the NTC
-        scene.dump_NTC()
     # Update Gaussians by NTC
         gaussians.update_by_ntc()
     # Prune, Clone and setting up  
@@ -366,14 +366,15 @@ if __name__ == "__main__":
     parser.add_argument("--read_config", action='store_true', default=False)
     parser.add_argument("--config_path", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
-    if args.output_path == "":
-        args.output_path=args.model_path
     if args.read_config and args.config_path is not None:
         with open(args.config_path, 'r') as f:
             config = json.load(f)
-        for key, value in config.items():
-            if key not in ["output_path", "source_path", "model_path", "video_path", "debug_from"]:
-                setattr(args, key, value)
+        # The config supplies defaults; arguments given on the command line win.
+        parser.set_defaults(**{key: value for key, value in config.items()
+                               if key not in ["output_path", "source_path", "model_path", "video_path", "debug_from"]})
+        args = parser.parse_args(sys.argv[1:])
+    if args.output_path == "":
+        args.output_path=args.model_path
     serializable_namespace = {k: v for k, v in vars(args).items() if isinstance(v, (int, float, str, bool, list, dict, tuple, type(None)))}
     json_namespace = json.dumps(serializable_namespace)
     os.makedirs(args.output_path, exist_ok = True)

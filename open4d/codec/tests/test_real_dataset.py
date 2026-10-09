@@ -52,7 +52,7 @@ def test_real_draco_round_trip_on_rafa(tmp_path):
         pytest.skip("Rafa_Approves_hd_4k is not available")
 
     source = open_sequence(dataset, fps=30)[:2]
-    artifact = encode_sequence(source, tmp_path / "rafa.d4d", codec=DRACO_CODEC)
+    artifact = encode_sequence(source, tmp_path / "rafa.o4d", codec=DRACO_CODEC)
     decoded = DRACO_CODEC.decode(artifact)
 
     assert len(decoded) == len(source)

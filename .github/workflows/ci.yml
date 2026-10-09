@@ -70,7 +70,7 @@ jobs:
       - name: Run every Open3D-backed test
         run: >-
           python -m pytest -m open3d
-          integrations/open3d/tests open4d/torch_ops/tests open4d/streaming/tests
+          open4d/integrations/open3d/tests open4d/torch_ops/tests open4d/reconstruction/rgbd/tests
           open4d/codec/tests/test_notebook.py
 
   research-codecs:
@@ -84,14 +84,46 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install research codec dependencies
-        run: python -m pip install -e '.[dev,klt,n4mc,qndf]'
-      - name: Run real in-process encode and fresh-decode contracts on CPU
+        run: python -m pip install -e '.[dev,klt,n4mc,qndf,usd,gaussians]' constriction 'DracoPy>=2,<3'
+      - name: Run default suite with research dependencies
+        run: python -m pytest
+      - name: Run native N4MC model and loss contracts
         run: >-
           python -m pytest
-          open4d/codec/tests/test_research_cpu.py
-          open4d/codec/tests/test_qndf_preprocess.py
-          open4d/codec/tests/test_qndf_entrypoints.py
           open4d/codecs/n4mc/tests/test_codec.py
+          open4d/codecs/n4mc/tests/test_losses.py
+
+  native-numerics:
+    name: Native tracker and editor / .NET 10
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    env:
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      OPEN4D_TEST_DOTNET: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Install native regression test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Build and execute native numerical contracts
+        run: |
+          dotnet --info
+          python -m pytest open4d/codec/tests/test_tracker_numerics.py open4d/codec/tests/test_editor_numerics.py --junitxml="${RUNNER_TEMP}/native-numerics.xml"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+          report = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "native-numerics.xml")
+          cases = report.findall(".//testcase")
+          assert cases and not any(case.find("skipped") is not None for case in cases), "native numerical contracts must execute"
+          PY
 
   io-tools:
     name: I/O / real optional formats and benchmark smoke
@@ -145,6 +177,17 @@ jobs:
           python -m pytest open4d/visualization/tests/test_real_player.py
           examples/visualization/tests/test_compare.py
           -k 'synthetic or empty or gif_after_single' --basetemp '${{ runner.temp }}/open4d-render'
+          --junitxml '${{ runner.temp }}/open4d-render.xml'
+      - name: Require the render tests to have run
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+          report = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "open4d-render.xml")
+          cases = report.findall(".//testcase")
+          assert cases and not any(case.find("skipped") is not None for case in cases), "render tests must execute"
+          PY
       - name: Keep the rendered GIF
         if: always()
         uses: actions/upload-artifact@v4
@@ -153,6 +196,37 @@ jobs:
           path: ${{ runner.temp }}/open4d-render/**/*.gif
           if-no-files-found: ignore
           retention-days: 7
+
+  browser:
+    name: Browser / streamer and web clients
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            open4d/streamer/study/system/Server/package-lock.json
+            open4d/streamer/study/system/WebClient/package-lock.json
+      - name: Install browser test dependencies and standalone streamer
+        run: python -m pip install -e '.[dev]' -e open4d/streamer 'DracoPy>=2,<3' scikit-image
+      - name: Check installed streamer and run its headless tests
+        run: |
+          python -I -c "import streamer; print(streamer.__file__)"
+          python -m pytest open4d/streamer/streamer_tests
+      - name: Install and build browser clients
+        run: |
+          npm ci --prefix open4d/streamer/study/system/Server
+          npm ci --prefix open4d/streamer/study/system/WebClient
+          npm run build --prefix open4d/streamer/study/system/WebClient
+      - name: Run web client and server JavaScript tests
+        run: node --test open4d/streamer/study/tests/*.js open4d/streamer/study/system/Server/test_*.js
 
   package:
     name: Install / ${{ matrix.os }} / Python ${{ matrix.python-version }}
@@ -180,6 +254,7 @@ jobs:
           dist = Path(os.environ["RUNNER_TEMP"]) / "open4d-dist"
           subprocess.run([
               sys.executable, "-m", "pip", "install", "build>=1.2",
+              "twine>=6",
               "tomli>=2; python_version < '3.11'",
           ], check=True)
           subprocess.run([sys.executable, "-m", "build", "--outdir", str(dist)], check=True)
@@ -187,7 +262,8 @@ jobs:
           sdist, = dist.glob("*.tar.gz")
           subprocess.run([sys.executable, "scripts/check_wheel_contents.py", str(wheel)], check=True)
           subprocess.run([sys.executable, "scripts/check_sdist_contents.py", str(sdist)], check=True)
-      - name: Test a clean wheel installation
+          subprocess.run([sys.executable, "-m", "twine", "check", "--strict", str(wheel), str(sdist)], check=True)
+      - name: Test clean wheel and source installations
         shell: python
         run: |
           import os
@@ -197,15 +273,73 @@ jobs:
 
           repository = Path.cwd()
           work = Path(os.environ["RUNNER_TEMP"])
-          environment = work / "open4d wheel smoke"
-          subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
-          python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-          wheel, = (work / "open4d-dist").glob("*.whl")
-          subprocess.run([str(python), "-m", "pip", "install", str(wheel)], check=True, cwd=work)
-          subprocess.run([str(python), "-m", "pip", "check"], check=True, cwd=work)
-          subprocess.run([
-              str(python), "-I", str(repository / "scripts/smoke_installed_io.py"),
-          ], check=True, cwd=work)
+          for kind, pattern in (("wheel", "*.whl"), ("source", "*.tar.gz")):
+              environment = work / f"open4d {kind} smoke"
+              subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+              python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+              artifact, = (work / "open4d-dist").glob(pattern)
+              subprocess.run([str(python), "-m", "pip", "install", str(artifact)], check=True, cwd=work)
+              subprocess.run([str(python), "-m", "pip", "check"], check=True, cwd=work)
+              subprocess.run([
+                  str(python), "-I", str(repository / "scripts/smoke_installed_io.py"),
+              ], check=True, cwd=work)
+      - name: Resolve every optional extra
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          wheel, = (Path(os.environ["RUNNER_TEMP"]) / "open4d-dist").glob("*.whl")
+          extras = ["tools", "metrics", "player", "usd", "torch", "klt", "n4mc",
+                    "gaussians", "capture", "dev", "all"]
+          if sys.version_info < (3, 13):  # Open3D 0.19 has no Python 3.13 wheels
+              extras += ["open3d", "qndf"]
+          for extra in extras:
+              subprocess.run([
+                  sys.executable, "-m", "pip", "install", "--dry-run", "--quiet",
+                  "--ignore-installed", f"{wheel}[{extra}]",
+              ], check=True)
+
+  installed-extras:
+    name: Installed optional features / Python ${{ matrix.python-version }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install virtual display and software OpenGL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth libegl1 libgl1-mesa-dri libopengl0 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-xinerama0
+      - name: Build and install the wheel with every supported extra
+        run: |
+          python -m pip install 'build>=1.2'
+          python -m build --outdir "$RUNNER_TEMP/extras-dist"
+          python -m venv "$RUNNER_TEMP/extras"
+          "$RUNNER_TEMP/extras/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/extras/bin/python" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          wheel=("$RUNNER_TEMP"/extras-dist/open4d-*.whl)
+          "$RUNNER_TEMP/extras/bin/python" -m pip install "${wheel[0]}[all]"
+          "$RUNNER_TEMP/extras/bin/python" -m pip check
+      - name: Require optional I/O, reconstruction, Torch and rendering to work
+        env:
+          QT_QPA_PLATFORM: xcb
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          cd "$RUNNER_TEMP"
+          xvfb-run -a -s '-screen 0 1024x768x24' \
+            "$RUNNER_TEMP/extras/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_extras.py" all --render
 
   quality:
     name: Source, documentation, and provenance
@@ -219,9 +353,10 @@ jobs:
       - name: Compile supported Python sources
         run: >-
           python -m compileall -q
-          open4d/*.py open4d/streaming/*.py open4d/codec open4d/core open4d/io
+          open4d/*.py open4d/reconstruction/*.py open4d/reconstruction/rgbd/*.py
+          open4d/transport open4d/codec open4d/core open4d/io
           open4d/torch_ops open4d/visualization
-          integrations/__init__.py integrations/open3d
+          open4d/integrations
           examples/visualization examples/streaming_demo.py scripts
       - name: Check shell syntax
         run: bash -n scripts/*.sh
@@ -230,6 +365,22 @@ jobs:
       - name: Check provenance and distribution containment
         run: |
           python scripts/check_provenance.py
-          python scripts/check_release_gate.py --expect-blocked
+          python scripts/check_release_gate.py --check-ledger
       - name: Check whitespace errors
         run: git diff --check
+
+  passed:
+    name: CI passed
+    if: always()
+    needs: [core, torch, open3d, research-codecs, native-numerics, io-tools, visualization, browser, package, installed-extras, quality]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done

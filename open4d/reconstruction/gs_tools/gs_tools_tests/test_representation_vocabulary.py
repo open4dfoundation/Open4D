@@ -29,6 +29,12 @@ def _viewer_source() -> str:
     return viewer_path().read_text()
 
 
+def _without_comments(source: str) -> str:
+    """JavaScript with block comments and line comments removed (not ``http://``)."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"(^|\s)//.*$", r"\1", source, flags=re.MULTILINE)
+
+
 def _worker_source() -> str:
     """The decode worker, which is where the geometry codecs live."""
     return (viewer_path().parent / "worker.js").read_text()
@@ -96,7 +102,9 @@ def test_the_client_does_not_decode_what_python_says_is_server_side():
     from streamer import codecs
 
     worker = _codec_table(_worker_source())
-    page = _viewer_source()
+    # Code only: the page's comments explain why a container suffix such as
+    # `.o4d` must never reach a decoder, and naming it there is not decoding it.
+    page = _without_comments(_viewer_source())
     for spec in codecs.known():
         if spec.decodes == "server":
             assert spec.suffix not in worker.get(spec.representation.value, set())

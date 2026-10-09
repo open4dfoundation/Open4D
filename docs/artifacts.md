@@ -15,22 +15,14 @@ Use the existing component-local conventions for runtime data:
 - codec-specific runtime `data/` directories for downloaded sequences; TVMC's
   ARAP input datasets, for example, live under
   `open4d/codecs/tvmc/arap-volume-tracking/data/`
-- `benchmark_app/data/`, `benchmark_app/outputs/`, and `benchmark_app/runs/`
-  for dashboard inputs, reference outputs, and jobs
 
-Reconstruction components follow the same shape, with one addition: the
-Gaussian-splatting methods write tens of gigabytes per scene, so their runs are
-ignored under the component directory rather than anywhere near the pinned
-upstream checkouts they are trained by:
+Reconstruction data and output locations:
 
 - `open4d/reconstruction/<component>/data/` and `datasets/` for inputs
 - `open4d/reconstruction/<component>/output/` and `outputs/` for runs
 - `open4d/reconstruction/<component>/{logs,checkpoints}/` for the rest
 
-Model weights fetched into a pinned upstream checkout -- MiDaS's 1.5 GB
-`dpt_beit_large_512.pt`, for instance -- are covered by that submodule's own
-ignore rules, not by the root `.gitignore`, which cannot reach inside a
-submodule.
+For weights inside a Git submodule, use that submodule's ignore rules.
 
 These locations are ignored by the root `.gitignore`. Do not force-add their
 contents.
@@ -42,11 +34,9 @@ is required by a test or minimal example, and is documented next to the code
 that consumes it. Prefer download scripts with checksums for datasets and
 published model weights.
 
-Every benchmark result intended for publication should include a compact JSON
-manifest containing the source dataset and frame range, method revision,
-configuration, environment, measured encoded byte count, timing, and quality
-metrics. Generated geometry should live in external artifact storage and be
-referenced by a stable URL and checksum.
+Keep benchmark results, audit reports and run summaries outside the repository.
+Store run manifests, generated geometry and logs in external artifact storage;
+record dataset, revision, configuration, environment and checksums there.
 
 Use the repository helper to fetch an externally stored artifact into one of
 the ignored local directories:
@@ -64,8 +54,8 @@ URL as the only record of a research input.
 
 ## Existing historical artifacts
 
-Some component imports predate this policy and already contain tracked datasets,
-reconstructions, checkpoints, compiled libraries, and paper assets. They remain
-in history for now. Migrating them requires choosing durable external storage
-and preserving provenance; it should be handled as a separate, reviewed change
-rather than deleting research results opportunistically.
+Some component imports predate this policy and still contain compiled
+libraries and small fixtures. The TSMC, TVMC, 3DGStream and Unity example
+datasets and the paper PDFs were removed from the tree but remain in Git
+history. 3DGStream's NTC checkpoint stays because Gaussian reconstruction loads
+it by default.

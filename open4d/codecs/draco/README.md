@@ -3,8 +3,7 @@
 Google [Draco](https://github.com/google/draco) mesh-compression baseline for
 Open4D. Draco is the standard geometry codec used to benchmark the neural codecs
 (N4MC, QNDF, TVMC, TSMC). This module wraps Draco's `draco_encoder` /
-`draco_decoder` binaries into a per-frame encode → decode → evaluate pipeline and
-was promoted out of `N4MC`.
+`draco_decoder` binaries into a per-frame encode, decode and evaluation pipeline.
 
 Google's Draco C++ source is vendored here as the `draco/` git submodule, pinned
 to the same commit used by the TVMC and TSMC modules.

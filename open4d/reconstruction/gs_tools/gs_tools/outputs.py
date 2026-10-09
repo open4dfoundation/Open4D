@@ -109,6 +109,22 @@ def _best_iteration_ply(directory: Path) -> Path | None:
     return found[-1] if found else None
 
 
+def added_gaussians(frame_ply: Path) -> Path | None:
+    """3DGStream's second-stage Gaussians for the frame owning ``frame_ply``.
+
+    They are part of that frame -- upstream renders the frame with them -- but
+    are saved apart, under a later iteration, so exporters combine the two.
+    """
+    snapshots = frame_ply.parent.parent
+    if snapshots.name != "point_cloud":
+        return None
+    found = sorted(
+        snapshots.glob("iteration_*/added/point_cloud.ply"),
+        key=lambda path: int(path.parent.parent.name.split("_")[-1]),
+    )
+    return found[-1] if found else None
+
+
 def gaussian_frames(root: Path) -> list[tuple[int, Path]]:
     """Ordered ``(frame index, PLY)`` for a 3DGS run, in any of three layouts.
 

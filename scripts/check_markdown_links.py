@@ -21,6 +21,8 @@ def markdown_files() -> list[Path]:
         ROOT / name
         for name in (
             "README.md",
+            "CHANGELOG.md",
+            "CODE_OF_CONDUCT.md",
             "CONTRIBUTING.md",
             "SECURITY.md",
             "THIRD_PARTY.md",
@@ -32,8 +34,8 @@ def markdown_files() -> list[Path]:
         if tree.is_dir():
             files.extend(tree.rglob("*.md"))
     for path in (
-        ROOT / "integrations/README.md",
-        ROOT / "integrations/open3d/README.md",
+        ROOT / "integrations/unity/README.md",
+        ROOT / "open4d/integrations/open3d/README.md",
     ):
         if path.is_file():
             files.append(path)

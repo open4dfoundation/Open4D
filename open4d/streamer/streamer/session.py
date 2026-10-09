@@ -18,22 +18,40 @@ when the block ends.
 Rungs are the other half. A single encode cannot be adapted between -- a client
 with one rendition has nothing to switch to -- so `add` takes a list, writes the
 first as the clip's default and the rest as `bundle.Variant` entries with their
-sizes measured off disk. `quality` is left empty on purpose: this knows what a
-rung cost, not what it was worth, and `metrics` is what fills that in.
+sizes measured off disk. `quality` is left empty unless asked for: this knows
+what a rung cost, and only knows what it was worth when ``score=True`` has
+`score` measure each rung against the sequence it came from.
+
+A rung is a frame format, optionally behind one of Open4D's codecs:
+
+* ``ply``, ``draco``, ``draco@11`` -- a mesh or point cloud as written.
+* ``klt``, ``tsmc/draco@11`` -- encoded with that `open4d.encode` codec and
+  decoded again here, then written in the frame format after the slash (``ply``
+  when there is none). No browser decodes a ``.o4d``, so this is how a codec's
+  output reaches the client at all: its *quality* is the codec's, and its
+  ``bytes`` are what is served. The codec's own bitstream size is kept in the
+  variant's ``detail["codec_bytes"]``, because a chooser spending wire bytes and
+  a reader comparing codecs want different numbers.
+* ``ply`` or ``splat`` for Gaussians -- see `gaussians`.
 """
 
 from __future__ import annotations
 
+import contextlib
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence as TypingSequence
+from typing import Any, Iterable, Mapping, Sequence as TypingSequence
 
-from open4d.core import Sequence
+from open4d.core import Representation, Sequence
 
-from . import bundle, export
+from . import bundle, export, gaussians
 
 #: Separates a frame format from its quantisation in a rung spec: ``draco@11``.
 RUNG_SEPARATOR = "@"
+#: Separates an Open4D codec from the frame format it is delivered in:
+#: ``tsmc/draco``.
+CODEC_SEPARATOR = "/"
 
 
 @dataclass(frozen=True)
@@ -47,10 +65,26 @@ class Rung:
     id: str
     frame_format: str
     quantization_bits: int = export.DRACO_QUANTIZATION_BITS
+    #: The `open4d.encode` codec the frames pass through first, if any.
+    codec: str | None = None
+    #: For Gaussians, the fraction of each frame's Gaussians written.
+    keep: float = 1.0
 
 
-def parse_rung(spec: str | Rung) -> Rung:
-    """``"ply"``, ``"draco"`` or ``"draco@11"`` as a `Rung`.
+def _mesh_codecs() -> tuple[str, ...]:
+    """Open4D codecs whose decoded output is a mesh `Sequence`."""
+    import open4d
+
+    return tuple(
+        info.id for info in open4d.available_codecs()
+        if info.representation == "triangle_mesh"
+    )
+
+
+def parse_rung(
+    spec: str | Rung, representation: Representation | str = Representation.MESH
+) -> Rung:
+    """``"ply"``, ``"draco@11"``, ``"klt"`` or ``"tsmc/draco"`` as a `Rung`.
 
     Quantisation on a format that does not quantise is an error rather than an
     ignored argument: ``ply@11`` is a caller believing they asked for something
@@ -59,8 +93,46 @@ def parse_rung(spec: str | Rung) -> Rung:
     """
     if isinstance(spec, Rung):
         return spec
+    representation = Representation(representation)
     text = str(spec).strip()
-    frame_format, _, bits = text.partition(RUNG_SEPARATOR)
+    if representation is Representation.GAUSSIANS:
+        frame_format, _, share = text.partition(RUNG_SEPARATOR)
+        if frame_format not in gaussians.FORMATS:
+            raise ValueError(
+                f"unknown Gaussian frame format {frame_format!r} in rung {spec!r}; "
+                f"expected one of {', '.join(gaussians.FORMATS)}"
+            )
+        if not share:
+            return Rung(id=text, frame_format=frame_format)
+        try:
+            if not share.endswith("%"):
+                raise ValueError
+            keep = float(share[:-1]) / 100.0
+        except ValueError:
+            raise ValueError(
+                f"rung {spec!r} keeps {share!r}; a Gaussian rung keeps a "
+                "percentage of its Gaussians, as in 'splat@25%'"
+            ) from None
+        if not 0.0 < keep <= 1.0:
+            raise ValueError(f"rung {spec!r} must keep between 0% and 100%")
+        return Rung(id=text, frame_format=frame_format, keep=keep)
+    codec = None
+    delivery = text
+    head, slash, tail = text.partition(CODEC_SEPARATOR)
+    name = head.partition(RUNG_SEPARATOR)[0].strip()
+    if slash or name not in export.FORMATS:
+        codec, delivery = name, (tail if slash else export.FRAME_FORMAT)
+        if RUNG_SEPARATOR in head:
+            raise ValueError(f"rung {spec!r} quantises the codec, not the frame format")
+        known = _mesh_codecs()
+        if codec not in known:
+            raise ValueError(
+                f"unknown frame format or codec {codec!r} in rung {spec!r}; "
+                f"expected one of {', '.join(export.FORMATS)}, or an Open4D mesh "
+                f"codec ({', '.join(known)}) optionally followed by "
+                f"'{CODEC_SEPARATOR}<frame format>'"
+            )
+    frame_format, _, bits = delivery.partition(RUNG_SEPARATOR)
     frame_format = frame_format.strip()
     if frame_format not in export.FORMATS:
         raise ValueError(
@@ -68,7 +140,7 @@ def parse_rung(spec: str | Rung) -> Rung:
             f"expected one of {', '.join(export.FORMATS)}"
         )
     if not bits:
-        return Rung(id=text, frame_format=frame_format)
+        return Rung(id=text, frame_format=frame_format, codec=codec)
     if frame_format != export.DRACO_FORMAT:
         raise ValueError(
             f"rung {spec!r} sets quantisation on {frame_format!r}, which does "
@@ -81,8 +153,22 @@ def parse_rung(spec: str | Rung) -> Rung:
             f"rung {spec!r} has a non-numeric quantisation {bits!r}"
         ) from None
     return Rung(
-        id=text, frame_format=frame_format, quantization_bits=quantization_bits
+        id=text, frame_format=frame_format, quantization_bits=quantization_bits,
+        codec=codec,
     )
+
+
+def _rendition_name(clip: str, rung: Rung) -> str:
+    """Frame directory for a variant, with the spec's separators flattened."""
+    flat = (rung.id.replace(RUNG_SEPARATOR, "").replace(CODEC_SEPARATOR, "-")
+            .replace("%", "pct"))
+    return f"{clip}-{flat}"
+
+
+def _representation_of(source: Any) -> Representation:
+    if isinstance(source, Sequence):
+        return export.representation_of(source)
+    return Representation.GAUSSIANS
 
 
 def _measure(out_dir: Path, frames: Iterable[str]) -> int:
@@ -92,6 +178,65 @@ def _measure(out_dir: Path, frames: Iterable[str]) -> int:
     note in `bundle.Variant`.
     """
     return sum((out_dir / frame).stat().st_size for frame in frames)
+
+
+RungList = TypingSequence[str | Rung]
+
+
+class _GeometryOnly:
+    """Positions and triangles of another sequence's frames, read on demand."""
+
+    def __init__(self, sequence: Sequence) -> None:
+        self._sequence = sequence
+        self.timestamps = tuple(sequence.timestamps)
+        self.metadata = sequence.metadata
+
+    @property
+    def frame_count(self) -> int:
+        return len(self._sequence)
+
+    def get_frame(self, index: int):
+        from open4d.core import Frame, PointCloud, TriangleMesh
+
+        frame = self._sequence[index]
+        geometry = frame.geometry
+        if isinstance(geometry, TriangleMesh):
+            stripped = TriangleMesh(geometry.positions, geometry.triangles)
+        else:
+            stripped = PointCloud(geometry.positions)
+        return Frame(frame.frame_index, frame.timestamp, stripped, frame.metadata)
+
+
+def _geometry_only(sequence: Sequence) -> Sequence:
+    """``sequence`` without colours, normals, UVs or attributes.
+
+    What a codec rung encodes. Mesh codecs here preserve positions and
+    triangles and nothing else, and V-DMC's geometry-only profile refuses a
+    mesh carrying UVs outright -- which made every textured capture
+    unencodable, though the client never reads a UV. Per-vertex colour, which
+    the client does draw, is lost too; the rung's note says so.
+    """
+    return Sequence(_GeometryOnly(sequence))
+
+
+def _through_codec(
+    sequence: Sequence, codec: str, stack: contextlib.ExitStack
+) -> tuple[Sequence, int]:
+    """``sequence`` encoded with an Open4D codec and decoded again, and its size.
+
+    The artifact lives in a temporary directory held by ``stack``, because a
+    decoded `Sequence` may read its frames lazily from it.
+    """
+    import open4d
+
+    work = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="streamer-")))
+    artifact = open4d.encode(_geometry_only(sequence), work / f"{codec}.o4d",
+                             codec=codec)
+    decoded = open4d.decode(artifact)
+    if not isinstance(decoded, Sequence):
+        raise TypeError(f"{codec} decoded to {type(decoded).__name__}, not a Sequence")
+    stack.enter_context(decoded)
+    return decoded, Path(artifact).stat().st_size
 
 
 class Bundle:
@@ -110,14 +255,15 @@ class Bundle:
         *,
         title: str | None = None,
         source: Path | str | None = None,
-        fps: int = 30,
+        fps: float | None = None,
         scenes: dict[str, Any] | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:
         self.out_dir = Path(out_dir).expanduser().resolve()
         self.title = title or self.out_dir.name
         self.source = source
-        self.fps = fps
+        self.fps = 30.0 if fps is None else fps
+        self._infer_fps = fps is None
         self.scenes = scenes
         self.detail = detail
         self.clips: list[bundle.Clip] = []
@@ -140,24 +286,41 @@ class Bundle:
 
     def add(
         self,
-        sequence: Sequence,
+        source: Any,
         *,
         name: str,
-        rungs: TypingSequence[str | Rung] = (export.FRAME_FORMAT,),
+        rungs: RungList | Mapping[str, RungList] = (export.FRAME_FORMAT,),
         scene: str | None = None,
         method: str | None = None,
         notes: list[str] | None = None,
         detail: dict[str, Any] | None = None,
+        score: bool = False,
     ) -> bundle.Clip:
-        """Write ``sequence`` at every rung, as one clip with variants.
+        """Write ``source`` at every rung, as one clip with variants.
+
+        ``source`` is an `open4d.Sequence` of meshes or points, or a Gaussian
+        sequence in any form `gaussians.frames_of` takes. ``rungs`` may also map
+        a representation value (``"mesh"``, ``"points"``, ``"gaussians"``) to a
+        list, for a caller adding a source before it knows which it is.
 
         The first rung is the clip's default rendition -- the one a reader that
         knows nothing about variants plays -- and the rest become `Variant`
         entries beside it. Order is the caller's: this does not sort by size,
         because which rendition should be the default is a delivery decision
         (interchange? cheapest? middle?) and not one a byte count settles.
+
+        ``score=True`` measures every rung against ``source`` with `score`, so a
+        `policy` ladder read off this bundle has something to maximise.
         """
-        parsed = [parse_rung(rung) for rung in rungs]
+        representation = _representation_of(source)
+        if isinstance(rungs, Mapping):
+            try:
+                rungs = rungs[representation.value]
+            except KeyError:
+                raise ValueError(
+                    f"{name}: no rungs given for {representation.value}"
+                ) from None
+        parsed = [parse_rung(rung, representation) for rung in rungs]
         if not parsed:
             raise ValueError(f"{name}: needs at least one rung")
         seen: set[str] = set()
@@ -165,50 +328,89 @@ class Bundle:
             if rung.id in seen:
                 raise ValueError(f"{name}: rung {rung.id!r} is listed twice")
             seen.add(rung.id)
+        if score and representation is Representation.GAUSSIANS:
+            raise ValueError(
+                f"{name}: geometric scoring applies to meshes and point clouds; "
+                "score Gaussian clips against rendered references with "
+                "streamer.metrics"
+            )
+
+        if representation is Representation.GAUSSIANS:
+            # Resolved once: decoding a NativeSequence runs its method's
+            # runtime, and every rung would otherwise pay for it again.
+            source = gaussians.frames_of(source)
+        if self._infer_fps and not self.clips:
+            fps = source.fps
+            self.fps = fps or 30.0
 
         default, *alternates = parsed
-        clip = export.from_sequence(
-            sequence,
-            self.out_dir,
-            name=name,
-            frame_format=default.frame_format,
-            quantization_bits=default.quantization_bits,
-            scene=scene,
-            method=method,
-            notes=notes,
-            detail={**(detail or {}), "rung": default.id},
-        )
-        for rung in alternates:
-            # A separate clip export per rung, whose frame list is then folded
-            # in as a variant and whose Clip is discarded. `from_sequence` is
-            # the only thing that knows how to write each format, and the
-            # alternative -- teaching it to write several at once -- would put
-            # the rung loop inside the exporter, where a caller exporting one
-            # rendition would pay for it.
-            rendition = export.from_sequence(
-                sequence,
-                self.out_dir,
-                name=f"{name}-{rung.id.replace(RUNG_SEPARATOR, '')}",
-                frame_format=rung.frame_format,
-                quantization_bits=rung.quantization_bits,
-                scene=scene or name,
-                method=method,
+        with contextlib.ExitStack() as stack:
+            decoded: dict[str, tuple[Sequence, int]] = {}
+
+            def write_rung(rung: Rung, clip_name: str, **labels: Any) -> bundle.Clip:
+                if representation is Representation.GAUSSIANS:
+                    return gaussians.from_frames(
+                        source, self.out_dir, name=clip_name,
+                        frame_format=rung.frame_format, keep=rung.keep,
+                        method=method, **labels,
+                    )
+                frames, codec_bytes = source, None
+                if rung.codec is not None:
+                    if rung.codec not in decoded:
+                        decoded[rung.codec] = _through_codec(source, rung.codec, stack)
+                    frames, codec_bytes = decoded[rung.codec]
+                clip = export.from_sequence(
+                    frames, self.out_dir, name=clip_name,
+                    frame_format=rung.frame_format,
+                    quantization_bits=rung.quantization_bits,
+                    method=method, **labels,
+                )
+                if rung.codec is not None:
+                    clip.detail.update(codec=rung.codec, codec_bytes=codec_bytes)
+                    clip.notes.append(
+                        f"encoded with Open4D's {rung.codec} codec and decoded on the "
+                        f"server; the browser receives {rung.frame_format} frames of "
+                        f"the decoded result ({codec_bytes} bytes as a bitstream); "
+                        "geometry only, so any per-vertex colour is dropped"
+                    )
+                return clip
+
+            clip = write_rung(
+                default, name, scene=scene, notes=notes,
+                detail={**(detail or {}), "rung": default.id},
             )
-            clip.variants.append(
-                bundle.Variant(
-                    name=rung.id,
-                    frames=rendition.frames,
-                    bytes=_measure(self.out_dir, rendition.frames),
-                    detail={
-                        "frame_format": rung.frame_format,
-                        **(
-                            {"quantization_bits": rung.quantization_bits}
-                            if rung.frame_format == export.DRACO_FORMAT
-                            else {}
-                        ),
-                    },
-                ).as_dict()
+            for rung in alternates:
+                # A separate clip export per rung, whose frame list is then
+                # folded in as a variant and whose Clip is discarded. The
+                # exporters are the only things that know how to write each
+                # format, and the alternative -- teaching them to write several
+                # at once -- would put the rung loop inside the exporter, where a
+                # caller exporting one rendition would pay for it.
+                rendition = write_rung(rung, _rendition_name(name, rung), scene=scene or name)
+                clip.variants.append(
+                    bundle.Variant(
+                        name=rung.id,
+                        frames=rendition.frames,
+                        bytes=_measure(self.out_dir, rendition.frames),
+                        detail={
+                            key: rendition.detail[key]
+                            for key in ("frame_format", "quantization_bits", "keep",
+                                        "codec", "codec_bytes")
+                            if key in rendition.detail
+                        },
+                    ).as_dict()
+                )
+            # The default's size, beside its variants' -- where the browser's
+            # ladder reads it. A variant states its bytes; the default's are
+            # only on disk, which a browser cannot stat, so without this the
+            # client could switch away from the default and never back.
+            clip.detail["bytes_per_frame"] = (
+                _measure(self.out_dir, clip.frames) / len(clip.frames)
             )
+            if score:
+                from . import score as scoring
+
+                scoring.score_clip(source, clip, self.out_dir)
         return self.add_clip(clip)
 
     def add_source(
@@ -227,17 +429,27 @@ class Bundle:
         shared because that function is the single-call path -- load, export
         and write in one -- and reaching into it for the middle third would
         make the simple case depend on the general one.
+
+        A codec artifact such as a ``.o4d`` always carries its own timing, and
+        may load as a Gaussian sequence rather than a mesh one; both are added.
         """
         import open4d
-        from open4d.io import inspect_sequence
+        from open4d.io import Open4DError, inspect_sequence
 
         source = Path(source).expanduser().resolve()
-        declared = inspect_sequence(source).timing_source
-        with open4d.load(
-            source, fps=fps if declared == "default" else None
-        ) as sequence:
+        try:
+            declared = inspect_sequence(source).timing_source
+        except Open4DError:
+            # Not a mesh file or frame directory: a codec artifact, whose
+            # timestamps are its own. If it is not that either, `load` below
+            # raises the error worth reading.
+            declared = None
+        loaded = open4d.load(source, fps=fps if declared == "default" else None)
+        with contextlib.ExitStack() as stack:
+            if hasattr(loaded, "__exit__"):
+                stack.enter_context(loaded)
             return self.add(
-                sequence, name=name or source.stem or source.name, **kwargs
+                loaded, name=name or source.stem or source.name, **kwargs
             )
 
     def write(self) -> Path:

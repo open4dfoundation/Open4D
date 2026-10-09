@@ -1,4 +1,6 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:system",
-    "python-envs.pythonProjects": []
+    "python-envs.pythonProjects": [],
+    "python.languageServer": "None",
+    "cmake.sourceDirectory": "/Users/cicm/Open4D/T3/open4d/streaming"
 }

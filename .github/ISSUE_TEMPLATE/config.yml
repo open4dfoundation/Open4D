@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/open4dfoundation/Open4D/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Ask a question
+    url: https://github.com/open4dfoundation/Open4D/discussions
+    about: Usage questions, setup help and ideas that are not yet concrete requests.

@@ -1,32 +1,16 @@
 # Third-party components
 
-QUEEN and 3DGStream are someone else's work. Both were pinned submodules under
-`upstream/` until they were vendored as plain tracked files: the two methods now
-sit beside this module under `open4d/reconstruction/`, and the pieces they share
--- three rasterizers, one `simple-knn`, one `glm`, one `SIBR_viewers` -- live
-inside it.
+QUEEN and 3DGStream are vendored under `open4d/reconstruction/`. Shared
+rasterizers, `simple-knn`, `glm` and `SIBR_viewers` live in this module.
 
-Vendoring moved the boundary. The trees are committed in the state Open4D builds
-against, patches included, so nothing is fetched and nothing is modified at setup
-time. `patches/` is no longer a build step; it is the record of what Open4D
-changed, and `scripts/setup.sh` verifies that each patch is still present rather
-than applying it. A vendored tree that stops matching its series is a hard error,
-because the diff against upstream is the only remaining evidence of what was
-changed and why.
-
-That verification runs from the repository root with `git apply --directory`.
-Running `git apply` from inside one of these trees looks equivalent and is not:
-now that they are ordinary directories of this repository rather than submodules,
-patch paths resolve against the repository root, everything outside the current
-directory is silently ignored, and the check reports success for both polarities
-against no file at all. That is how `queen/0001-lazy-midas-import.patch` stayed
-unapplied without anyone noticing.
+The vendored trees include local patches. `scripts/setup.sh` verifies patches
+rather than applying them. Run checks from the repository root with
+`git apply --directory=<target>`: running inside a target directory can silently
+skip paths and report success without checking any files.
 
 ## Pins
 
-Repository-relative paths. The commits are the upstream revisions the trees were
-vendored from; there is no longer a submodule to read them back out of, so this
-table is the only record.
+Paths are repository-relative; commits identify the vendored upstream revisions.
 
 | Path | Upstream | Vendored from | Date | License |
 | --- | --- | --- | --- | --- |
@@ -35,9 +19,7 @@ table is the only record.
 
 ## Shared components inside this module
 
-One copy each, because both methods wanted the same sources and two copies of a
-CUDA extension cannot coexist in one environment. Paths are relative to
-`gs_tools/`.
+Shared dependency paths are relative to `gs_tools/`.
 
 | Path | Original upstream | Built | Why |
 | --- | --- | --- | --- |
@@ -51,9 +33,6 @@ CUDA extension cannot coexist in one environment. Paths are relative to
 `MiDaS` (https://github.com/isl-org/MiDaS) stays inside the QUEEN tree at
 `open4d/reconstruction/queen/MiDaS`, run from its own environment.
 
-Nothing here is fetched from `gitlab.inria.fr`, so setup does not depend on it
-being reachable.
-
 ## Our patches
 
 Each patch is verified against the tree named here, from the repository root,
@@ -61,18 +40,18 @@ with `--directory` set to that path.
 
 | Patch | Target | Effect |
 | --- | --- | --- |
-| `queen/0001-lazy-midas-import.patch` | `open4d/reconstruction/queen` | moves the module-scope `MiDaS` imports in `train.py` and `scene/utils.py` inside the branches that use them, so training does not require `timm==0.6.13`, which Open4D keeps in a separate environment |
-| `3dgstream/0001-rename-rasterizer-import.patch` | `open4d/reconstruction/3dgstream` | one import line in `gaussian_renderer/__init__.py`. QUEEN's tree installs inria's fork under the name `diff_gaussian_rasterization`, and one environment cannot hold two extensions with that name, so 3DGStream imports the renamed package instead. Phase 2 of `docs/plan.md` replaces the import with the unified rasterizer |
-| `3dgstream-rasterizer/0001-rename-package.patch` | `gs_tools/rasterizers/gstream-rasterization` | renames the installed package to `gstream_rasterization`, the other half of the clash above |
-| `3dgstream-rasterizer/0002-cstdint-include.patch` | `gs_tools/rasterizers/gstream-rasterization` | adds `#include <cstdint>` to `cuda_rasterizer/rasterizer_impl.h`. The header uses `std::uintptr_t` and the fixed-width integer types, and on GCC 13 with CUDA 12.6 nothing above it pulls them in transitively any more. NVIDIA added the same include to their fork, which is why QUEEN's two rasterizers build here and this one did not |
+| `queen/0001-lazy-midas-import.patch` | `open4d/reconstruction/queen` | defers MiDaS imports in `train.py` and `scene/utils.py`, allowing training without `timm==0.6.13`. Uses resized `<scene>/depth_priors/<camera>.npy` maps when available for every training camera; `gs-tools depth-prior` generates them in a separate environment |
+| `queen/0002-finite-mse-gradient.patch` | `open4d/reconstruction/queen` | adds `1e-12` inside `mse_loss`'s square root in `utils/loss_utils.py` to prevent infinite gradients at zero error from corrupting Gaussian gates and positions |
+| `queen/0003-explicit-render-path.patch` | `open4d/reconstruction/queen` | uses `render_path.npy` beside `poses_bounds.npy` when available, replacing the LLFF spiral, which points away from scenes with cameras arranged around an object |
+| `queen/0004-gate-init-without-change.patch` | `open4d/reconstruction/queen` | guards median- and mean-based gate denominators against zero, preventing NaN gates and positions when Gaussians are unchanged |
+| `3dgstream/0001-rename-rasterizer-import.patch` | `open4d/reconstruction/3dgstream` | imports `gstream_rasterization` in `gaussian_renderer/__init__.py` to avoid a package-name clash with QUEEN's `diff_gaussian_rasterization` |
+| `3dgstream/0002-config-supplies-defaults.patch` | `open4d/reconstruction/3dgstream` | makes `--read_config` supply argparse defaults so explicit frame ranges, NTC paths and options take precedence |
+| `3dgstream/0003-blender-camera-translation.patch` | `open4d/reconstruction/3dgstream` | flips camera-to-world axes before inversion when reading Blender/NeRF `transforms_*.json`, correcting translations for cameras not aimed at the origin; rotations are unchanged |
+| `3dgstream/0004-empty-added-gaussians.patch` | `open4d/reconstruction/3dgstream` | slices added Gaussians from the base count instead of `-len(added)`, preventing pruning crashes when no Gaussians were added |
+| `3dgstream-rasterizer/0001-rename-package.patch` | `gs_tools/rasterizers/gstream-rasterization` | renames the installed package to `gstream_rasterization` |
+| `3dgstream-rasterizer/0002-cstdint-include.patch` | `gs_tools/rasterizers/gstream-rasterization` | adds `<cstdint>` to `cuda_rasterizer/rasterizer_impl.h` for `std::uintptr_t` and fixed-width integer types on GCC 13 / CUDA 12.6 |
 
-None of the four changes what any kernel computes.
-
-The first three patches carry an explanatory comment block in the source they
-touch. `0001-rename-rasterizer-import` and `0002-cstdint-include` do not: the
-vendored trees were committed with the code change but without those comments, so
-the patches were regenerated to match what the trees actually contain, and the
-reasoning moved into the table above.
+None of them changes what any CUDA kernel computes.
 
 ## Licenses
 
@@ -123,8 +102,6 @@ git apply --directory=open4d/reconstruction/queen \
 ./open4d/reconstruction/gs_tools/scripts/setup.sh --no-build   # verifies, does not apply
 ```
 
-Then update the tables above and re-run the parity test before trusting any
-result. A patch that no longer applies is the intended signal that upstream
-changed something the unified rasterizer depends on. Commit the re-vendored tree
-in its patched state: `setup.sh` verifies presence and will fail on a tree that
-carries the code change without the patch, as two of these did.
+Update the revision and patch tables, rerun parity tests, and commit the
+vendored tree with its patches applied. `setup.sh` fails if it does not match
+the patch series.

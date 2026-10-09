@@ -16,7 +16,7 @@ def test_malformed_codec_source_is_reported_without_a_traceback(
     tmp_path, monkeypatch
 ):
     path = tmp_path / "broken.o4d"
-    path.write_bytes(b"not an Open4D artifact")
+    path.write_bytes(b"not an O4D artifact")
     monkeypatch.setattr(sys, "argv", ["visualize_sequence.py", str(path), "--info"])
 
     with pytest.raises(SystemExit) as caught:

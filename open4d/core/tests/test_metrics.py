@@ -3,6 +3,7 @@ from __future__ import annotations
 from open4d.codec._npz import NumPyZipCodec
 
 import builtins
+import json
 
 import numpy as np
 import pytest
@@ -12,7 +13,8 @@ from open4d import (
     compare_meshes, compare_sequences, load, save,
 )
 from open4d import metrics
-from open4d.demo import mesh_sequence
+from open4d.demo import mesh_sequence, write_demo
+from open4d.io import SourceNotFoundError, write_sequence
 
 pytestmark = pytest.mark.cpu
 
@@ -96,6 +98,97 @@ def test_comparison_after_codec_round_trip(tmp_path):
     assert result.symmetric_psnr_db == float("inf")
     assert result.peak == 10
     assert all(frame.peak == 10 for frame in result.frames)
+
+
+def recording_load(monkeypatch):
+    """Wrap open4d.load as compare_sequences sees it, keeping what it opened."""
+    import open4d._api
+
+    opened, original = [], open4d._api.load
+
+    def load(*args, **kwargs):
+        opened.append(original(*args, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(open4d._api, "load", load)
+    return opened
+
+
+def test_paths_and_sequences_are_interchangeable(tmp_path, monkeypatch):
+    reference = sequence([mesh(), mesh(scale=2, extra_vertex=True)])
+    folder = write_sequence(reference, tmp_path / "frames", format="ply")
+    decoded = sequence(
+        [mesh(height=0.25), mesh(height=0.5, scale=2, extra_vertex=True)],
+        reference.timestamps,
+    )
+    opened = recording_load(monkeypatch)
+    expected = compare_sequences(reference, decoded)
+    for left in (folder, str(folder)):
+        result = compare_sequences(left, decoded)
+        assert result.symmetric_rms == pytest.approx(expected.symmetric_rms)
+        assert result.peak == pytest.approx(expected.peak)
+        assert result.timestamps == pytest.approx(reference.timestamps)
+    assert compare_sequences(decoded, folder).symmetric_rms == pytest.approx(expected.symmetric_rms)
+    assert len(opened) == 3 and all(item.closed for item in opened)
+    assert not reference.closed and not decoded.closed
+
+
+def test_frame_folder_compares_with_o4d_path(tmp_path, monkeypatch):
+    from open4d.codec import _api
+
+    monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
+    folder = write_demo(tmp_path / "frames", side=4, frames=3)
+    with mesh_sequence(side=4, frames=3) as source:
+        artifact = save(source, tmp_path / "wave.o4d", codec="npz")
+    opened = recording_load(monkeypatch)
+    result = compare_sequences(folder, artifact, metric="plane")
+    assert result.metric == "plane"
+    assert len(result.frames) == 3
+    assert result.symmetric_rms == pytest.approx(0, abs=1e-6)
+    assert len(opened) == 2 and all(item.closed for item in opened)
+
+
+def test_opened_paths_close_when_comparison_fails(tmp_path, monkeypatch):
+    short = write_demo(tmp_path / "short", side=3, frames=2)
+    long = write_demo(tmp_path / "long", side=3, frames=3)
+    opened = recording_load(monkeypatch)
+    with pytest.raises(ValueError, match="same frame count"):
+        compare_sequences(short, long)
+    with pytest.raises(SourceNotFoundError):
+        compare_sequences(short, tmp_path / "missing")
+    assert len(opened) == 3 and all(item.closed for item in opened)
+
+
+def test_non_mesh_paths_are_rejected_and_closed(tmp_path, monkeypatch):
+    import open4d
+
+    root = tmp_path.resolve() / "run"  # Native import refuses symlinked parents.
+    (root / "init").mkdir(parents=True)
+    (root / "init/point_cloud.ply").write_bytes(b"opaque initial fixture")
+    (root / "frame000001").mkdir()
+    (root / "frame000001/NTC.pth").write_bytes(b"opaque transform fixture")
+    (root / "cfg_args.json").write_text(json.dumps(dict(sh_degree=1, rotate_sh=True, only_mlp=False, iterations_s2=0)))
+    (root / "ntc_config.json").write_text(json.dumps(dict(network={}, encoding={})))
+    with open4d.import_native(root, codec="3dgstream", timestamps=[0, 1 / 30]) as native:
+        artifact = save(native, tmp_path / "splats.o4d")
+    folder = write_demo(tmp_path / "frames", side=3, frames=2)
+    opened = recording_load(monkeypatch)
+    with pytest.raises(TypeError, match=r"decoded .*gaussian_splats representation \(3dgstream\)"):
+        compare_sequences(folder, artifact)
+    assert len(opened) == 2 and opened[0].closed
+    with pytest.raises(ValueError, match="closed"):
+        opened[1].unpack(tmp_path / "unpacked")
+
+
+def test_other_inputs_are_rejected_before_opening(monkeypatch):
+    opened = recording_load(monkeypatch)
+    with pytest.raises(TypeError, match="Sequence objects or paths"):
+        compare_sequences(mesh(), sequence([mesh()]))
+    with pytest.raises(TypeError, match="Sequence objects or paths"):
+        compare_sequences("frames", 3)
+    with pytest.raises(ValueError, match="metric"):
+        compare_sequences("frames", "decoded.o4d", metric="hausdorff")
+    assert opened == []
 
 
 def test_sequence_rejects_dropped_frames_and_empty_inputs():

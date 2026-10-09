@@ -1,0 +1,20 @@
+diff --git a/train.py b/train.py
+--- a/train.py
++++ b/train.py
+@@ -480,11 +480,14 @@
+                 if any([gating!="none" for gating in qp.gate_params]):
+                     if dataset.update_mask == "viewspace_diff":
+                         # Use gradient differences for gate initialization
+-                        init_probs = grad_diff/(grad_diff+grad_diff.median())
++                        # Open4D: when most Gaussians see no change the median is 0, and
++                        # 0/0 made their gates, then their positions, NaN. No change
++                        # means probability 0, which the gate clamps to epsilon.
++                        init_probs = grad_diff/(grad_diff+grad_diff.median()).clamp_min(1e-30)
+                         gaussians.init_probs = init_probs.flatten()
+                     elif dataset.update_mask == "diff":
+                         # Use frame differences for gate initialization  
+-                        init_probs = net_influence/(net_influence+net_influence.mean())
++                        init_probs = net_influence/(net_influence+net_influence.mean()).clamp_min(1e-30)
+                         gaussians.init_probs = init_probs.flatten()
+                     else:
+                         gaussians.init_probs = None

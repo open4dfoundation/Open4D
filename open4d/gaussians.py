@@ -8,14 +8,19 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
 from ._files import publish_directory
+
+if TYPE_CHECKING:
+    from .native import NativeSequence
+    from .orbit import OrbitScene
 
 
 @dataclass(frozen=True, eq=False)
@@ -91,6 +96,18 @@ class GaussianSplats(_GaussianGeometry):
         return int(np.sqrt(self.spherical_harmonics.shape[1])) - 1
 
 
+def rendered_rotations(quaternions: ArrayLike) -> NDArray:
+    """Stored quaternions as the rasterizers draw them.
+
+    Graphdeco rasterizers build the rotation from ``F.normalize(q)`` without
+    renormalising, so an all-zero quaternion renders as the identity.
+    3DGStream's propagation can produce one; read it as what renders.
+    """
+    quaternions = np.array(quaternions, dtype=np.float64)
+    quaternions[np.all(quaternions == 0, axis=-1)] = (1.0, 0.0, 0.0, 0.0)
+    return quaternions
+
+
 def load_gaussians(path: str | Path) -> GaussianSplats:
     """Read a Graphdeco-style Gaussian PLY, including its colour coefficients."""
     try:
@@ -126,10 +143,21 @@ def load_gaussians(path: str | Path) -> GaussianSplats:
     return GaussianSplats(
         positions=positions,
         scales=scales,
-        rotations=columns([f"rot_{i}" for i in range(4)]),
+        rotations=rendered_rotations(columns([f"rot_{i}" for i in range(4)])),
         opacities=opacity,
         spherical_harmonics=np.concatenate((dc, rest), axis=1),
     )
+
+
+#: Where the research runtimes that the installed package leaves out live.
+SOURCE_CHECKOUT = "https://github.com/open4dfoundation/Open4D"
+
+
+def missing_runtime(name: str, root: Path, variable: str, folder: str) -> str:
+    """The message for a research runtime that is not where it was looked for."""
+    return (f"{name} runtime not found at {root}. The installed open4d package does "
+            f"not include it: pass runtime= or set {variable} to {folder} in a "
+            f"configured source checkout of {SOURCE_CHECKOUT}.")
 
 
 def _runtime(path: str | Path | None) -> Path:
@@ -137,15 +165,22 @@ def _runtime(path: str | Path | None) -> Path:
     root = (Path(candidate).expanduser() if candidate else
             Path(__file__).parent / "reconstruction" / "gs_tools").resolve()
     if not (root / "gs_tools" / "cli.py").is_file():
-        raise FileNotFoundError(
-            f"Gaussian runtime not found at {root}. Pass runtime pointing to "
-            "open4d/reconstruction/gs_tools in a configured source checkout."
-        )
+        raise FileNotFoundError(missing_runtime(
+            "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "open4d/reconstruction/gs_tools"))
     return root
 
 
 def _run(runtime: Path, python: str, arguments: Sequence[str]) -> None:
-    child_env = dict(os.environ, PYTHONPATH=str(runtime), OPEN4D_GS_ROOT=str(runtime))
+    # gs_tools imports open4d and the streamer package. Use the runtime's own
+    # checkout for both rather than whatever the CUDA environment has installed.
+    path = [runtime]
+    checkout = runtime.parents[2] if len(runtime.parents) > 2 else runtime
+    if (checkout / "open4d" / "__init__.py").is_file():
+        path.append(checkout)
+        if (checkout / "open4d" / "streamer" / "streamer" / "__init__.py").is_file():
+            path.append(checkout / "open4d" / "streamer")
+    child_env = dict(os.environ, PYTHONPATH=os.pathsep.join(map(str, path)),
+                     OPEN4D_GS_ROOT=str(runtime))
     subprocess.run([python, "-m", "gs_tools.cli", *arguments], cwd=runtime,
                    env=child_env, check=True)
 
@@ -171,21 +206,26 @@ class GaussianRun:
                 object.__setattr__(self, name, Path(value).expanduser().resolve())
         object.__setattr__(self, "python", str(self.python))
 
+    def _frame_directories(self) -> list[Path]:
+        if self.method == "queen":
+            return sorted((path for path in (self.path / "frames").glob("[0-9]*")
+                           if path.is_dir() and path.name.isdigit()),
+                          key=lambda path: int(path.name))
+        return sorted((path for path in self.path.glob("frame[0-9]*")
+                       if path.is_dir() and path.name[5:].isdigit()),
+                      key=lambda path: int(path.name[5:]))
+
     @property
     def frame_paths(self) -> tuple[Path, ...]:
-        """Dense PLY exports, in frame order; not decoded compressed residuals."""
-        if self.method == "queen":
-            frames = sorted((path for path in (self.path / "frames").glob("[0-9]*")
-                             if path.is_dir() and path.name.isdigit()),
-                            key=lambda path: int(path.name))
-        else:
-            frames = sorted((path for path in self.path.glob("frame[0-9]*")
-                             if path.is_dir() and path.name[5:].isdigit()),
-                            key=lambda path: int(path.name[5:]))
+        """Dense PLY exports, in frame order; not decoded compressed residuals.
+
+        A 3DGStream frame also includes the Gaussians its second stage added,
+        which upstream saves separately; ``load_frame`` combines the two.
+        """
         result = []
         if self.method == "3dgstream" and self.initial_model is not None:
             result.append(self.initial_model)
-        for frame in frames:
+        for frame in self._frame_directories():
             canonical = frame / "point_cloud.ply"
             if canonical.is_file():
                 result.append(canonical)
@@ -197,9 +237,35 @@ class GaussianRun:
             result.append(max(snapshots, key=lambda path: int(path.name[10:])) / "point_cloud.ply")
         return tuple(result)
 
+    def _added_path(self, index: int) -> Path | None:
+        """3DGStream's second-stage Gaussians for a frame, if it saved any."""
+        if self.method != "3dgstream":
+            return None
+        offset = int(self.initial_model is not None)
+        if index < offset:
+            return None
+        frame = self._frame_directories()[index - offset]
+        snapshots = [path for path in (frame / "point_cloud").glob("iteration_*")
+                     if path.name[10:].isdigit() and (path / "added" / "point_cloud.ply").is_file()]
+        if not snapshots:
+            return None
+        return max(snapshots, key=lambda path: int(path.name[10:])) / "added" / "point_cloud.ply"
+
     def load_frame(self, index: int) -> GaussianSplats:
         """Read a saved dense frame without importing the CUDA training runtime."""
-        return load_gaussians(self.frame_paths[index])
+        paths = self.frame_paths
+        index = range(len(paths))[index]
+        frame = load_gaussians(paths[index])
+        added_path = self._added_path(index)
+        if added_path is None:
+            return frame
+        added = load_gaussians(added_path)
+        if added.sh_degree != frame.sh_degree:
+            raise ValueError(f"3DGStream added Gaussians use a different SH degree: {added_path}")
+        return GaussianSplats(**{
+            name: np.concatenate((getattr(frame, name), getattr(added, name)))
+            for name in ("positions", "scales", "rotations", "opacities", "spherical_harmonics")
+        })
 
     def render(self, *, compressed: bool = True, options: Sequence[str] = ()) -> Path:
         """Render QUEEN's camera path to PNG frames and MP4 using its runtime."""
@@ -211,7 +277,11 @@ class GaussianRun:
             command += ["--config", str(self.config)]
         if not compressed:
             command.append("--dense")
-        command += ["--", *_options(options)]
+        extras = _options(options)
+        if not any(item.split("=", 1)[0] == "--max_frames" for item in extras):
+            # The config's max_frames can exceed what training saved.
+            extras = ("--max_frames", str(len(self.frame_paths)), *extras)
+        command += ["--", *extras]
         _run(self.runtime, self.python, command)
         result = self.path / ("spiral_compressed" if compressed else "spiral_rendered")
         if not (result / "output.mp4").is_file():
@@ -236,7 +306,7 @@ def _options(options: Sequence[str]) -> tuple[str, ...]:
 
 
 def reconstruct_gaussians(
-    source: str | Path,
+    source: str | Path | OrbitScene,
     output: str | Path,
     *,
     method: str = "queen",
@@ -247,19 +317,71 @@ def reconstruct_gaussians(
     initial_model: str | Path | None = None,
     initial_iterations: int = 15000,
     ntc: str | Path | None = None,
+    frames: int | slice | range | None = None,
+    max_width: int | None = None,
+    test_views: Sequence[int] | None = None,
+    initial_points: str | None = None,
+    depth_priors: bool = False,
+    depth_python: str | Path | None = None,
 ) -> GaussianRun:
     """Reconstruct calibrated multiview video with QUEEN or 3DGStream.
 
     Install the native method's CUDA dependencies in ``python`` first. ``runtime``
     points to the checkout's gs_tools directory. The result keeps each method's
     native files. ``options`` contains extra upstream training arguments.
+
+    ``source`` can be a folder in the method's own layout, an ORBIT object folder,
+    or an ``OrbitScene``. ORBIT input is converted into ``output/input``;
+    ``frames`` selects frames, images wider than ``max_width`` (default 1600) are
+    downscaled, and cameras ``test_views`` are held out for evaluation (default
+    the first; ``()`` trains on every view).
+    ``initial_points`` is ``"bounds"`` (default) or ``"carve"``; see
+    ``open4d.orbit.prepare``.
+
+    ``depth_priors=True`` (QUEEN) keeps the default config's MiDaS depth
+    initialisation: ``gs-tools depth-prior`` first caches each camera's depth in
+    the scene's ``depth_priors`` folder, using ``depth_python`` -- an interpreter
+    with ``requirements-midas.txt`` -- so the training environment needs no MiDaS.
+    That initialisation fills image regions the initial points leave uncovered,
+    which suits full scenes; on black-background captures it fills the background.
     """
+    from .orbit import DEFAULT_MAX_WIDTH, OrbitScene, is_orbit, load_orbit
+    from .orbit import check as check_orbit
+    from .orbit import prepare as prepare_orbit
+
     if method not in ("queen", "3dgstream"):
         raise ValueError("method must be 'queen' or '3dgstream'")
+    if (depth_priors or depth_python is not None) and method != "queen":
+        raise ValueError("depth_priors applies only to QUEEN")
+    if depth_python is not None and not depth_priors:
+        raise TypeError("depth_python is the interpreter for depth_priors=True")
     extras = _options(options)
-    source, output = Path(source).expanduser().resolve(), Path(output).expanduser().resolve()
-    if not source.is_dir():
-        raise FileNotFoundError(source)
+    output = Path(output).expanduser().resolve()
+    scene = source if isinstance(source, OrbitScene) else None
+    if scene is None:
+        source = Path(source).expanduser().resolve()
+        if not source.is_dir():
+            raise FileNotFoundError(source)
+        if is_orbit(source):
+            scene = load_orbit(source)
+    if scene is None:
+        if any(value is not None for value in (frames, max_width, test_views, initial_points)):
+            raise TypeError("frames, max_width, test_views and initial_points apply to ORBIT input")
+    else:
+        if frames is not None:
+            scene = scene.select(frames)
+        max_width = DEFAULT_MAX_WIDTH if max_width is None else max_width
+        initial_points = initial_points or "bounds"
+        check_orbit(scene, method, max_width=max_width, test_views=test_views,
+                    initial_points=initial_points)
+        held = (scene.cameras[0].view_id,) if test_views is None else tuple(test_views)
+        source = output / "input"
+        if depth_priors and scene.background == "black":
+            warnings.warn(
+                "QUEEN's depth initialisation adds points wherever the initial cloud leaves "
+                "the image uncovered; on a black-background ORBIT capture that is the "
+                "background, which fills with points at MiDaS depth and trains worse",
+                RuntimeWarning, stacklevel=2)
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
     root = _runtime(runtime)
@@ -275,13 +397,20 @@ def reconstruct_gaussians(
     if method == "queen":
         if initial_model is not None or ntc is not None:
             raise ValueError("initial_model and ntc apply only to 3DGStream")
-        commands.append([*common, "--", "--log_ply", "--log_compressed", *extras])
+        held_out = ["--test-indices", *map(str, range(len(held)))] if scene is not None else []
+        if depth_priors:
+            commands.append(["depth-prior", "-s", str(source), "--python", str(depth_python or executable)])
+            held_out.append("--depth-priors")
+        commands.append([*common, *held_out, "--", "--log_ply", "--log_compressed", *extras])
     else:
         if isinstance(initial_iterations, bool) or not isinstance(initial_iterations, int) or initial_iterations < 1:
             raise ValueError("initial_iterations must be a positive integer")
-        if not (source / "frame000000").is_dir():
+        if scene is not None:
+            frame_count = len(scene)
+        elif not (source / "frame000000").is_dir():
             raise FileNotFoundError("3DGStream needs a calibrated frame000000 directory")
-        frame_count = sum(path.is_dir() and path.name[5:].isdigit() for path in source.glob("frame[0-9]*"))
+        else:
+            frame_count = sum(path.is_dir() and path.name[5:].isdigit() for path in source.glob("frame[0-9]*"))
         if frame_count < 2:
             raise ValueError("3DGStream needs frame000000 and at least one later frame")
         cache = (Path(ntc).expanduser().resolve() if ntc else
@@ -300,11 +429,16 @@ def reconstruct_gaussians(
                          "--frame-end", str(frame_count), "--", *extras])
     output.mkdir(parents=True)
     try:
+        if scene is not None:
+            prepare_orbit(scene, source, method=method, max_width=max_width, test_views=held,
+                          initial_points=initial_points)
         for command in commands:
             _run(root, executable, command)
-            if (method == "3dgstream" and command[command.index("--stage") + 1] == "init"
-                    and not initial_ply.is_file()):
+            if (method == "3dgstream" and "--stage" in command
+                    and command[command.index("--stage") + 1] == "init" and not initial_ply.is_file()):
                 raise RuntimeError(f"3DGStream did not save its initial model: {initial_ply}")
+        if method == "queen" and (output / "queen_config.yaml").is_file():
+            config_path = output / "queen_config.yaml"  # the config gs_tools trained with
         result = GaussianRun(method, output, source, root, executable, config_path, initial_ply)
         paths = result.frame_paths
         if not paths or (method == "3dgstream" and len(paths) != frame_count):
@@ -315,15 +449,28 @@ def reconstruct_gaussians(
         raise
 
 
+#: Opacity margin for Vega's logits: 1 - 2**-24 is the largest float32 below 1.
+#: A Graphdeco PLY logit above about 17.3 reads back as an opacity of exactly 1.0
+#: in float32, whose logit is infinite.
+_VEGA_OPACITY_EPSILON = 2.0 ** -24
+
+
 def _vega_runtime(path: str | Path | None) -> Path:
     root = Path(path or os.environ.get("OPEN4D_VEGA_ROOT") or
                 Path(__file__).parent / "reconstruction" / "vega").expanduser().resolve()
-    if not (root / "vega" / "encoder.py").is_file():
-        raise FileNotFoundError(f"Vega runtime not found at {root}; pass runtime pointing to its source directory")
+    _check_vega_runtime(root)
     return root
 
 
+def _check_vega_runtime(root: Path) -> None:
+    if not (root / "vega" / "encoder.py").is_file():
+        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "open4d/reconstruction/vega"))
+
+
 def _vega_command(runtime: Path, python: str, request: dict, work: Path) -> None:
+    # Decoding and colour queries reach here with the runtime a NativeSequence
+    # chose, which nothing has checked yet.
+    _check_vega_runtime(runtime)
     request_path = work / "request.json"
     request_path.write_text(json.dumps(request), encoding="utf-8")
     subprocess.run([python, str(Path(__file__).with_name("_gaussian_worker.py")),
@@ -373,6 +520,7 @@ class VegaRun:
     path: Path
     runtime: Path
     python: str
+    _owner: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path).expanduser().resolve())
@@ -412,7 +560,10 @@ def encode_gaussians(
 
     Each frame is treated as one object. The native writer stores one colour
     model; runs that require multiple groups are rejected instead of saving
-    earlier frames with the wrong model.
+    earlier frames with the wrong model. Vega trains opacity logits, so
+    opacities of exactly 0 or 1 -- which float32 rounding produces from finite
+    PLY logits above about 17 -- are moved to the nearest values with a finite
+    float32 logit.
     """
     if codec != "vega":
         raise ValueError("Gaussian array encoding currently supports codec='vega'")
@@ -423,8 +574,6 @@ def encode_gaussians(
         raise ValueError("frames must contain nonempty GaussianSplats")
     if any(frame.sh_degree > 3 for frame in frames):
         raise ValueError("Vega supports SH degrees 0 through 3")
-    if any(np.any((frame.opacities <= 0) | (frame.opacities >= 1)) for frame in frames):
-        raise ValueError("Vega training requires opacities strictly between 0 and 1")
     for value in (key_iterations, residual_iterations):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError("training iteration counts must be positive integers")
@@ -438,8 +587,8 @@ def encode_gaussians(
         for index, frame in enumerate(frames):
             np.savez(work / f"frame_{index:06d}.npz", **{
                 name: getattr(frame, name) for name in
-                ("positions", "scales", "rotations", "opacities", "spherical_harmonics")
-            })
+                ("positions", "scales", "rotations", "spherical_harmonics")
+            }, opacities=np.clip(frame.opacities, _VEGA_OPACITY_EPSILON, 1 - _VEGA_OPACITY_EPSILON))
         staged = work / "encoded"
         _vega_command(root, executable,
                       {"operation": "encode", "source": str(work), "output": str(staged),
@@ -466,17 +615,36 @@ def decode_gaussians(
 
 class _VegaCodec:
     id = "vega"
-    suffixes = (".vega",)
+    suffixes = (".o4d",)
     representation = "gaussian_splats"
     backend = "research-subprocess"
     lossless = False
     preserves = ("positions", "scales", "rotations", "opacities", "neural_appearance")
 
-    def encode(self, sequence, destination: Path, **options) -> Path:
-        return encode_gaussians(sequence, destination, **options).path
+    def can_decode(self, source):
+        from .codec._o4d_format import contains_codec
+        return contains_codec(source, self.id)
 
-    def decode(self, source: Path, **options) -> tuple[NeuralGaussianFrame, ...]:
-        return decode_gaussians(source, **options)
+    def encode(self, sequence, destination: Path, **options) -> Path:
+        from .codec._metadata import require_o4d_destination
+        from .native import NativeSequence, import_native, save_native
+        from .codec._native_temporal import encode_native
+        destination = require_o4d_destination(destination)
+        if isinstance(sequence, (NativeSequence, VegaRun, str, os.PathLike)):
+            return encode_native(sequence, destination, codec="vega", **options)
+        overwrite = options.pop("overwrite", False)
+        if destination.exists() and not overwrite:
+            raise FileExistsError(destination)
+        timeline = {key: options.pop(key) for key in ("fps", "timestamps", "frame_indices", "metadata", "frame_metadata") if key in options}
+        with tempfile.TemporaryDirectory(prefix="open4d-vega-encode-") as folder:
+            encoded = encode_gaussians(sequence, Path(folder) / "native", **options)
+            with import_native(encoded, **timeline) as native:
+                return save_native(native, destination, overwrite=overwrite)
+
+    def decode(self, source: Path, **options) -> NativeSequence:
+        """Open the owned native state; call ``.decode()`` to evaluate frames."""
+        from .codec._native_temporal import NativeTemporalCodec
+        return NativeTemporalCodec("vega").decode(source, **options)
 
 
 VEGA_CODEC = _VegaCodec()

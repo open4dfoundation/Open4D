@@ -1,6 +1,6 @@
 # Open4D examples
 
-Two programs on one loader:
+Sequence playback and comparison tools:
 
 | | |
 | --- | --- |
@@ -24,22 +24,18 @@ python examples/visualization/compare_sequences.py ref/ decoded/ --info  # numbe
 python examples/visualization/compare_sequences.py ref/ decoded/         # side by side
 ```
 
-`--info` needs no window, no GL and no display, so it works over ssh. Run it
-first: it catches a bad path, a frame-count mismatch, or misaligned frames in a
-second, before you wait for a window.
+`--info` checks input paths and frame alignment without a window or display,
+including over SSH.
 
-Try it on the 10 basketball frames the TVMC codec vendors:
+Try it on the generated wave sequence:
 
 ```bash
-python examples/visualization/visualize_sequence.py \
-    open4d/codecs/tvmc/arap-volume-tracking/data/basketball_player \
-    --up y --fps 10 --azimuth 180
+open4d demo wave/
+python examples/visualization/visualize_sequence.py wave/
 ```
 
-That capture faces away at the default azimuth, hence `--azimuth 180`. There is
-no universal front, so nothing infers one — find the angle for your subject once
-and reuse it. No decoded counterpart is vendored, so to try the comparison, run a
-codec over those frames and point the program at both folders.
+To compare it, encode and decode the frames with a codec, then pass the
+reference and decoded folders.
 
 In either window: drag to orbit, scroll to zoom, drag the slider to scrub, space
 to pause, left/right to step, `q` to quit. In the comparison both panes orbit
@@ -49,8 +45,7 @@ saved GIF looks like what you saw.
 ## Comparing
 
 Left pane the reference as geometry, right pane the decoded mesh coloured by its
-distance from it, under one shared camera — two independently posed views tell you
-nothing.
+distance from it, under one shared camera.
 
 A decoded mesh has its own vertex count and connectivity, so error is a
 nearest-neighbour distance, not a per-vertex difference:
@@ -61,14 +56,13 @@ nearest-neighbour distance, not a per-vertex difference:
 | `--metric plane` | that offset projected onto the reference normal (C2P), so error sliding *along* the surface is not counted. The MPEG definition |
 
 Both are one-sided, so every figure is reported in both directions and the
-symmetric one is the worse of the two — a codec that deletes a limb scores well
-one way round. PSNR uses the reference bounding-box diagonal as its peak, fixed
+symmetric one is the worse of the two, capturing missing geometry as well as
+displaced vertices. PSNR uses the reference bounding-box diagonal as its peak, fixed
 for the whole sequence so frames stay comparable.
 
 The colour scale is likewise fixed for the whole sequence, at the 99th percentile
-of every measured distance by default. Rescaling per frame would make each still
-prettier and the animation a lie. Values above the top take the top colour, and
-the colourbar labels that end `≥`.
+of measured distances by default. Values above the maximum use the top colour
+and are labelled `≥` on the colourbar.
 
 ### Reading the numbers
 
@@ -110,28 +104,29 @@ one and say so.
 | Folder of `.obj` or `.ply` frames | nothing |
 | Folder of `.stl` `.off` `.glb` `.gltf` frames | `.[tools]` |
 | One USD file (`.usd` `.usda` `.usdc` `.usdz`) | `.[usd]` |
-| Raw MPEG V-DMC bitstream (`.vmesh`) | a compatible native V-DMC decoder |
+| Standalone `.o4d` with a mesh profile | the codec's configured decoder/runtime |
 | One mesh file | as above |
 
 Frames are ordered by **the last number in the filename**, so `frame_2.obj` comes
 before `frame_10.obj` — but `frame_003_qp9.obj` sorts on 9, not 3. A codec that
-puts a parameter last will silently misalign every frame and look far worse than
-it is; rename before comparing. A frame with no faces is drawn as a point cloud.
+puts a parameter last will misalign frames; rename before comparing. A frame with no faces is drawn as a point cloud.
 
-### Raw V-DMC bitstreams
+### Compressed O4D sequences
 
-Raw `.vmesh` input needs a compatible native decoder:
+The O4D descriptor selects the codec and preserves frame indices, timestamps
+and coordinate metadata. Configure that codec's runtime before loading. For
+example, a V-DMC profile needs its native decoder:
 
 ```bash
-export OPEN4D_VDMC_DECODER=/path/to/vmesh-decoder
+export OPEN4D_VDMC_DECODER=/path/to/o4d-decoder
 export OPEN4D_VDMC_DECODER_CONFIG=/path/to/decoder.cfg  # optional
-python examples/visualization/visualize_sequence.py capture.vmesh --info
+python examples/visualization/visualize_sequence.py capture.o4d --info
 ```
 
-This path is read-only and geometry-only. It defaults to 30 fps, accepts
-`--fps N`, and displays the coordinates emitted by the decoder. Open4D removes
-the temporary decoded OBJ files when the sequence closes. Use `.v4d` when the
-sequence also needs Open4D timestamps, metadata, and coordinate bounds.
+The viewer displays decoded geometry. Open4D removes temporary decoded files
+when the sequence closes. `--fps N` overrides playback speed without replacing
+the stored O4D timestamps. Native Gaussian and neural-field profiles use
+their representation-specific decode/render paths rather than this mesh viewer.
 
 ## Flags
 
@@ -150,11 +145,8 @@ Shared: `--info` `--stride N` `--fps` `--up {x,y,z}` `--save out.gif`
 | `--max-error` `--percentile` | Where the top of the colour scale sits |
 | `--error-shading` | How far the light may darken the error colours, 0–1 |
 
-`--up` is the one to reach for first; `visualize_sequence.py` warns when the
-subject looks like it is lying across the view. Error colours are shaded only
-slightly by default: the ramp is monotone in lightness, so brightness already
-carries the magnitude and at full shading a dark patch is ambiguous between deep
-shadow and large error. That is also why the comparison background is dark.
+`visualize_sequence.py` warns about likely axis mismatches; correct them with
+`--up`. Error colours use light shading to preserve the scale's brightness cues.
 
 Single-sequence playback decodes on demand with a bounded cache. Comparison
 still measures both complete sequences up front, so reach for `--stride N`

@@ -176,3 +176,13 @@ def test_a_source_path_is_loaded_and_added(tmp_path):
         clip = clips.add_source(frames, name="loaded")
     assert clip.name == "loaded"
     assert len(clip.frames) == 3
+
+
+def test_the_default_rendition_records_its_size_for_the_browser(tmp_path):
+    # The client's ladder reads the default's rate from here; it cannot stat
+    # files, so without it the default could be switched away from and never
+    # back to.
+    with session.Bundle(tmp_path) as clips:
+        clip = clips.add(sequence_of(), name="capture", rungs=["ply", "draco@8"])
+    on_disk = sum((tmp_path / frame).stat().st_size for frame in clip.frames)
+    assert clip.detail["bytes_per_frame"] == on_disk / len(clip.frames)

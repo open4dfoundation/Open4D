@@ -6,18 +6,21 @@ from importlib import import_module
 import json
 from pathlib import Path
 import tempfile
+from zipfile import ZipFile
 
 import numpy as np
 
 from open4d.core import Frame, MemoryFrameProvider, Sequence, TopologyMode, TriangleMesh
 
-from ._npz import _json_value, _publish_file, _validate_manifest
+from ._metadata import _json_value
+from ._npz import NumPyZipCodec, _read_array
+from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 from ._protocol import CodecError
 
 
 def _manifest(sequence, codec):
     return {
-        "schema": f"open4d.{codec}-sequence/v1", "codec": codec,
+        "version": 1, "codec": codec, "native": {"profile": f"{codec}/1"},
         "metadata": _json_value(sequence.metadata, "sequence"),
         "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
         "frames": [{
@@ -94,25 +97,21 @@ class TemporalMeshCodec:
         if identifier not in {"temporal-delta", "temporal-pca"}:
             raise ValueError(f"unknown experimental temporal profile: {identifier}")
         self.id = identifier
-        self.suffixes = ((".td4d",) if identifier == "temporal-delta" else (".tp4d",))
-        self.schema = f"open4d.{identifier}-sequence/v1"
+        self.suffixes = (".o4d",)
 
     def can_decode(self, source: Path) -> bool:
-        try:
-            with np.load(source, allow_pickle=False) as artifact:
-                manifest = json.loads(artifact["manifest"].tobytes())
-                return isinstance(manifest, dict) and manifest.get("schema") == self.schema
-        except (OSError, ValueError, TypeError, KeyError):
-            return False
+        return contains_codec(source, self.id)
 
     def encode(
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
         face_budget: int = 3000, quantization_bits: int = 16,
         components: int = 5,
     ) -> Path:
-        if face_budget < 1:
+        if type(face_budget) is not int or face_budget < 1:
             raise ValueError("face_budget must be positive")
         destination = Path(destination).absolute()
+        if destination.suffix.lower() != ".o4d":
+            raise ValueError("temporal destination must have a .o4d extension")
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
         reference, faces, fitted = _fit(sequence, face_budget)
@@ -140,31 +139,33 @@ class TemporalMeshCodec:
         manifest = _manifest(sequence, self.id)
         manifest["quantization_bits"] = quantization_bits
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{destination.name}.", suffix=".tmp",
-            dir=destination.parent, delete=False,
-        ) as stream:
-            temporary = Path(stream.name)
-        try:
-            with temporary.open("wb") as stream:
-                np.savez_compressed(
-                    stream,
-                    manifest=np.frombuffer(json.dumps(manifest).encode(), dtype=np.uint8),
-                    **payload,
-                )
-            _publish_file(temporary, destination, overwrite=overwrite)
-        except Exception:
-            temporary.unlink(missing_ok=True)
-            raise
+        with tempfile.TemporaryDirectory(prefix="open4d-temporal-") as directory:
+            native = Path(directory)
+            np.savez_compressed(native / "sequence.npz", **payload)
+            (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
+            pack_o4d(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path, *, device: str | None = None) -> Sequence:
         if device not in (None, "cpu"):
             raise ValueError(f"{self.id} decoding is NumPy-based; device must be 'cpu'")
+        source = Path(source).absolute()
+        if source.suffix.lower() != ".o4d":
+            raise CodecError("temporal decoding requires .o4d; re-encode older private artifacts")
+        if probe_codec(source) != self.id:
+            raise CodecError(f"O4D does not contain {self.id}")
         try:
-            with np.load(source, allow_pickle=False) as artifact:
-                manifest = json.loads(artifact["manifest"].tobytes())
-                _validate_manifest(manifest, schema=self.schema, codec=self.id)
+            with tempfile.TemporaryDirectory(prefix="open4d-temporal-decode-") as directory:
+                native = Path(directory) / "native"
+                unpack_o4d(source, native)
+                manifest = json.loads((native / "metadata.json").read_text(encoding="utf-8"))
+                with ZipFile(native / "sequence.npz") as archive:
+                    members = archive.namelist()
+                    if (len(members) != len(set(members))
+                            or set(members) != {f"{name}.npy" for name in _temporal_fields(self.id)}):
+                        raise CodecError("unexpected temporal native arrays")
+                    artifact = {name: _read_array(archive, name, _PLAIN_ARRAYS)
+                                for name in _temporal_fields(self.id)}
                 reference, faces = artifact["reference"], artifact["triangles"]
                 reference_mesh = TriangleMesh(reference, faces)
                 count, vertices = len(manifest["frames"]), len(reference_mesh.positions)
@@ -213,6 +214,13 @@ class TemporalMeshCodec:
             ),
         ))
 
+
+def _temporal_fields(codec):
+    return ({"reference", "triangles", "displacement", "scale"} if codec == "temporal-delta"
+            else {"reference", "triangles", "coefficients", "basis", "mean", "scale"})
+
+
+_PLAIN_ARRAYS = NumPyZipCodec("raw", rle=False)
 
 TEMPORAL_DELTA_CODEC = TemporalMeshCodec("temporal-delta")
 TEMPORAL_PCA_CODEC = TemporalMeshCodec("temporal-pca")

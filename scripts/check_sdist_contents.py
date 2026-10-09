@@ -12,6 +12,8 @@ from check_wheel_contents import expected_python_files
 
 
 ALLOWED_ROOT_FILES = {
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "LICENSE",
     "MANIFEST.in",

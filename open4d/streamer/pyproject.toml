@@ -2,6 +2,7 @@
 name = "open4d-streamer"
 version = "0.1.0"
 description = "Streaming and playback for 4D reconstructions"
+readme = "README.md"
 requires-python = ">=3.10"
 # `open4d` for `open4d.core.Representation` and `open4d.core.Dependency`: a
 # bundle names representations with core's vocabulary rather than its own, and

@@ -1,0 +1,42 @@
+diff --git a/scene/gaussian_model.py b/scene/gaussian_model.py
+--- a/scene/gaussian_model.py
++++ b/scene/gaussian_model.py
+@@ -500,7 +500,7 @@ class GaussianModel:
+         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+ 
+         added_mask=torch.zeros((self.get_xyz.shape[0]), device="cuda", dtype=torch.bool)
+-        added_mask[-self._added_xyz.shape[0]:]=True
++        added_mask[self._xyz.shape[0]:]=True
+         self._added_mask=added_mask
+         
+     def adding_and_clone(self, grads, grad_threshold, scene_extent):
+@@ -552,7 +552,10 @@ class GaussianModel:
+     def prune_added_points(self, min_opacity, extent):
+         prune_mask = (self.get_opacity < min_opacity).squeeze()
+         big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+-        prune_mask = torch.logical_or(prune_mask, big_points_ws)[-self._added_xyz.shape[0]:]
++        # Open4D: the added Gaussians follow the self._xyz.shape[0] base ones. Slicing
++        # from -len(added) selected every Gaussian when none had been added, since
++        # -0 == 0, and the prune mask then failed against the empty optimizer state.
++        prune_mask = torch.logical_or(prune_mask, big_points_ws)[self._xyz.shape[0]:]
+         valid_points_mask = ~prune_mask
+         optimizable_tensors = self._prune_optimizer(valid_points_mask)
+ 
+@@ -569,7 +572,7 @@ class GaussianModel:
+         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+ 
+         added_mask=torch.zeros((self.get_xyz.shape[0]), device="cuda", dtype=torch.bool)
+-        added_mask[-self._added_xyz.shape[0]:]=True
++        added_mask[self._xyz.shape[0]:]=True
+         self._added_mask=added_mask
+         torch.cuda.empty_cache()
+         
+@@ -670,7 +673,7 @@ class GaussianModel:
+         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+                
+         added_mask=torch.zeros((self.get_xyz.shape[0]), device="cuda", dtype=torch.bool)
+-        added_mask[-self._added_xyz.shape[0]:]=True
++        added_mask[self._xyz.shape[0]:]=True
+         self._added_mask=added_mask
+         
+         torch.cuda.empty_cache()

@@ -70,6 +70,16 @@ def test_load_gaussian_ply_preserves_sh_order_and_activates_parameters(tmp_path)
                                [[[0.1, 0.2, 0.3], [0, 3, 6], [1, 4, 7], [2, 5, 8]]])
 
 
+def test_zero_quaternion_in_ply_reads_as_the_identity_it_renders_as(tmp_path):
+    pytest.importorskip("plyfile")
+    path = tmp_path / "frame.ply"
+    write_ply(path)
+    path.write_text(path.read_text().replace("2 0 0 0 0.1", "0 0 0 0 0.1"))
+    np.testing.assert_array_equal(gaussians.load_gaussians(path).rotations, [[1, 0, 0, 0]])
+    with pytest.raises(ValueError, match="nonzero"):
+        dataclasses.replace(splats(), rotations=np.zeros((2, 4)))
+
+
 @pytest.mark.parametrize("omit,match", [(('scale_1',), 'missing'), (('f_rest_4',), 'incomplete')])
 def test_rejects_incomplete_gaussian_ply(tmp_path, omit, match):
     pytest.importorskip("plyfile")
@@ -97,6 +107,7 @@ def cli_runtime(tmp_path):
         "run.mkdir(parents=True, exist_ok=True)\n"
         "(run / 'arguments.json').write_text(json.dumps(args))\n"
         "if '--fail' in args: raise SystemExit(7)\n"
+        "if '--config' not in args: (run / 'queen_config.yaml').write_text('model_params: {}')\n"
         "for i in (1, 2):\n"
         "    frame = run / 'frames' / f'{i:04d}' / 'point_cloud.ply'\n"
         "    frame.parent.mkdir(parents=True, exist_ok=True)\n"
@@ -112,6 +123,7 @@ def test_reconstruction_uses_isolated_runtime_and_preserves_arguments(tmp_path, 
     result = gaussians.reconstruct_gaussians(scene, output, runtime=cli_runtime,
                                              options=("--max_frames", "2"))
     assert result.method == "queen"
+    assert result.config == output / "queen_config.yaml"
     assert len(result.frame_paths) == 2
     arguments = json.loads((output / "arguments.json").read_text())
     assert arguments[arguments.index("-s") + 1] == str(scene)
@@ -170,6 +182,66 @@ def test_reconstruction_refuses_existing_output_before_launch(tmp_path, cli_runt
     assert not (output / "arguments.json").exists()
 
 
+def test_reconstruction_runs_gs_tools_against_its_own_checkout(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "open4d").mkdir(parents=True)
+    (checkout / "open4d" / "__init__.py").write_text("")
+    streamer = checkout / "open4d" / "streamer" / "streamer"
+    streamer.mkdir(parents=True)
+    (streamer / "__init__.py").write_text("")
+    runtime = checkout / "open4d" / "reconstruction" / "gs_tools"
+    (runtime / "gs_tools").mkdir(parents=True)
+    (runtime / "gs_tools" / "__init__.py").write_text("")
+    (runtime / "gs_tools" / "cli.py").write_text(
+        "import json, sys, open4d, streamer\nfrom pathlib import Path\n"
+        "args = sys.argv[1:]\nrun = Path(args[args.index('-m') + 1])\n"
+        "frame = run / 'frames' / '0001' / 'point_cloud.ply'\n"
+        "frame.parent.mkdir(parents=True)\nframe.write_text('fixture')\n"
+        "(run / 'imports.json').write_text(json.dumps([open4d.__file__, streamer.__file__]))\n"
+    )
+    scene = tmp_path / "scene"
+    scene.mkdir()
+    gaussians.reconstruct_gaussians(scene, tmp_path / "out", runtime=runtime)
+    imported = [Path(path) for path in json.loads((tmp_path / "out" / "imports.json").read_text())]
+    assert imported == [(checkout / "open4d" / "__init__.py").resolve(),
+                        (streamer / "__init__.py").resolve()]
+
+
+def test_3dgstream_frame_includes_second_stage_gaussians(tmp_path):
+    pytest.importorskip("plyfile")
+    initial = tmp_path / "init.ply"
+    write_ply(initial)
+    snapshots = tmp_path / "run" / "frame000001" / "point_cloud"
+    (snapshots / "iteration_150").mkdir(parents=True)
+    (snapshots / "iteration_250" / "added").mkdir(parents=True)
+    write_ply(snapshots / "iteration_150" / "point_cloud.ply")
+    write_ply(snapshots / "iteration_250" / "added" / "point_cloud.ply")
+    run = gaussians.GaussianRun("3dgstream", tmp_path / "run", tmp_path, tmp_path, "python",
+                                initial_model=initial)
+    assert run.frame_paths[1] == (snapshots / "iteration_150" / "point_cloud.ply").resolve()
+    assert len(run.load_frame(0)) == 1
+    assert len(run.load_frame(1)) == len(run.load_frame(-1)) == 2
+    with pytest.raises(IndexError):
+        run.load_frame(2)
+
+
+def test_3dgstream_frame_with_no_second_stage_gaussians(tmp_path):
+    pytest.importorskip("plyfile")
+    initial = tmp_path / "init.ply"
+    write_ply(initial)
+    snapshots = tmp_path / "run" / "frame000001" / "point_cloud"
+    (snapshots / "iteration_150").mkdir(parents=True)
+    (snapshots / "iteration_250" / "added").mkdir(parents=True)
+    write_ply(snapshots / "iteration_150" / "point_cloud.ply")
+    added = snapshots / "iteration_250" / "added" / "point_cloud.ply"
+    write_ply(added)
+    header, _ = added.read_text().split("end_header\n")
+    added.write_text(header.replace("element vertex 1", "element vertex 0") + "end_header\n")
+    run = gaussians.GaussianRun("3dgstream", tmp_path / "run", tmp_path, tmp_path, "python",
+                                initial_model=initial)
+    assert len(run.load_frame(1)) == 1
+
+
 def test_native_render_commands_do_not_call_destructive_extractor(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "streamer", None)
     root = Path(__file__).resolve().parents[2] / "reconstruction" / "gs_tools"
@@ -188,6 +260,79 @@ def test_native_render_commands_do_not_call_destructive_extractor(monkeypatch, t
         for name in list(sys.modules):
             if name == "gs_tools" or name.startswith("gs_tools."):
                 sys.modules.pop(name)
+
+
+def test_gs_tools_default_configs_match_the_runtime(monkeypatch, tmp_path):
+    yaml = pytest.importorskip("yaml")
+    monkeypatch.setitem(sys.modules, "streamer", None)
+    root = Path(__file__).resolve().parents[2] / "reconstruction" / "gs_tools"
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        base = importlib.import_module("gs_tools.methods.base")
+        queen = importlib.import_module("gs_tools.methods.queen")
+        gstream = importlib.import_module("gs_tools.methods.gstream")
+        spec = base.RunSpec(tmp_path, tmp_path / "out")
+        upstream = yaml.safe_load((root.parent / "queen" / "configs" / "dynerf.yaml").read_text())
+        queen._write_config(spec, None)
+        derived = yaml.safe_load((spec.run_dir / queen.DEFAULT_CONFIG_NAME).read_text())
+        assert derived["model_params"]["depth_init"] is False
+        assert "test_indices" not in derived["model_params"]
+        custom = tmp_path / "custom.yaml"
+        custom.write_text("model_params:\n  sh_degree: 1\n  depth_init: true\n")
+        held = base.RunSpec(tmp_path, tmp_path / "held", config=custom)
+        queen._write_config(held, [])
+        written = yaml.safe_load((held.run_dir / queen.DEFAULT_CONFIG_NAME).read_text())
+        assert written["model_params"] == {"sh_degree": 1, "depth_init": True, "test_indices": []}
+        assert queen._config(held) == held.run_dir.resolve() / queen.DEFAULT_CONFIG_NAME
+        depth = base.RunSpec(tmp_path, tmp_path / "depth")
+        queen._write_config(depth, None, depth_priors=True)
+        kept = yaml.safe_load((depth.run_dir / queen.DEFAULT_CONFIG_NAME).read_text())["model_params"]
+        assert kept["depth_init"] is True and kept["lambda_depthssim"] == upstream["model_params"]["lambda_depthssim"]
+        (tmp_path / "cam00" / "images").mkdir(parents=True)
+        assert queen.missing_depth_priors(tmp_path) == ["cam00"]
+        assert queen.train(base.RunSpec(tmp_path, tmp_path / "nopriors"), depth_priors=True) == 1
+        (tmp_path / "depth_priors").mkdir()
+        np.save(tmp_path / "depth_priors" / "cam00.npy", np.ones((2, 2)))
+        assert queen.missing_depth_priors(tmp_path) == []
+        assert derived["model_params"]["lambda_depthssim"] == 0
+        assert derived["opt_params_rest"] == upstream["opt_params_rest"]
+        assert queen.train_command(spec)[3] == str(spec.run_dir.resolve() / queen.DEFAULT_CONFIG_NAME)
+        older = base.RunSpec(tmp_path, tmp_path / "older")
+        older.run_dir.mkdir()
+        assert queen._config(older).name == "dynerf.yaml"
+
+        command = gstream.train_command(spec)
+        config = Path(command[command.index("--config_path") + 1])
+        assert "--read_config" in command and config == root / "configs" / "3dgstream" / "paper.json"
+        paper = json.loads(config.read_text())
+        assert paper["iterations"] in paper["save_iterations"]
+        assert paper["load_iteration"] == paper["iterations"]
+        assert not {"images", "frame_end", "ntc_path", "source_path"} & set(paper)
+        assert "--eval" in gstream.init_command(spec, gstream.GstreamOptions())
+        monkeypatch.setattr(gstream, "run", lambda *args, **kwargs: 0)
+        assert gstream.train(spec) == 0
+        assert (spec.run_dir / "ntc_config.json").read_bytes() == gstream._ntc_conf(
+            gstream.GstreamOptions()).read_bytes()
+    finally:
+        for name in list(sys.modules):
+            if name == "gs_tools" or name.startswith("gs_tools."):
+                sys.modules.pop(name)
+
+
+def test_queen_render_stops_at_the_trained_frames(tmp_path, monkeypatch):
+    for index in (1, 2):
+        (tmp_path / "run" / "frames" / f"{index:04d}").mkdir(parents=True)
+        (tmp_path / "run" / "frames" / f"{index:04d}" / "point_cloud.ply").write_text("fixture")
+    video = tmp_path / "run" / "spiral_compressed" / "output.mp4"
+    video.parent.mkdir()
+    video.write_text("fixture")
+    commands = []
+    monkeypatch.setattr(gaussians, "_run", lambda runtime, python, command: commands.append(command))
+    run = gaussians.GaussianRun("queen", tmp_path / "run", tmp_path, tmp_path, "python")
+    assert run.render() == video.resolve()
+    assert run.render(options=("--max_frames=1",)) == video.resolve()
+    assert commands[0][-2:] == ["--max_frames", "2"]
+    assert commands[1][-1:] == ["--max_frames=1"] and commands[1].count("--max_frames") == 0
 
 
 def test_vega_encoding_rolls_back_failed_run(tmp_path, monkeypatch):
@@ -238,10 +383,48 @@ def native_bitstream(path, count=2):
 
 
 @pytest.mark.parametrize("opacity", [0, 1])
-def test_vega_rejects_infinite_training_logits(tmp_path, opacity):
-    frame = dataclasses.replace(splats(), opacities=np.full(2, opacity))
-    with pytest.raises(ValueError, match="strictly between"):
-        gaussians.encode_gaussians([frame, frame], tmp_path / "encoded")
+def test_vega_keeps_training_logits_finite(tmp_path, monkeypatch, opacity):
+    # A QUEEN PLY logit of 17.7 reads back as opacity 1.0 in float32; Vega
+    # trains logits, so encoding must not hand it an infinite one.
+    runtime = tmp_path / "vega"
+    (runtime / "vega").mkdir(parents=True)
+    (runtime / "vega" / "encoder.py").touch()
+    seen = []
+
+    def encode(runtime, python, request, work):
+        for path in sorted(Path(request["source"]).glob("frame_*.npz")):
+            with np.load(path) as data:
+                seen.append(data["opacities"])
+        native_bitstream(Path(request["output"]))
+
+    monkeypatch.setattr(gaussians, "_vega_command", encode)
+    saturated = dataclasses.replace(splats(), opacities=np.array([opacity, 0.5]))
+    gaussians.encode_gaussians([saturated, splats()], tmp_path / "encoded", runtime=runtime)
+    assert seen[0].dtype == np.float32 and seen[0][1] == np.float32(0.5)
+    assert 0 < seen[0][0] < 1
+    logits = np.log(seen[0]) - np.log1p(-seen[0])
+    assert np.isfinite(logits).all() and abs(logits[0]) < 17
+
+
+def test_ply_logit_that_rounds_to_one_still_encodes(tmp_path, monkeypatch):
+    pytest.importorskip("plyfile")
+    from plyfile import PlyData, PlyElement
+
+    names = ["x", "y", "z", "opacity", *(f"scale_{i}" for i in range(3)),
+             *(f"rot_{i}" for i in range(4)), *(f"f_dc_{i}" for i in range(3))]
+    vertex = np.zeros(2, dtype=[(name, "f4") for name in names])
+    vertex["rot_0"] = 1
+    vertex["opacity"] = [17.741018, 0.0]  # observed in a QUEEN ORBIT run
+    path = tmp_path / "frame.ply"
+    PlyData([PlyElement.describe(vertex, "vertex")]).write(path)
+    frame = gaussians.load_gaussians(path)
+    assert frame.opacities[0] == 1
+    runtime = tmp_path / "vega"
+    (runtime / "vega").mkdir(parents=True)
+    (runtime / "vega" / "encoder.py").touch()
+    monkeypatch.setattr(gaussians, "_vega_command",
+                        lambda runtime, python, request, work: native_bitstream(Path(request["output"])))
+    assert gaussians.encode_gaussians([frame, frame], tmp_path / "encoded", runtime=runtime).path.is_dir()
 
 
 @pytest.mark.parametrize("incomplete", ["count", "chunk"])
@@ -326,19 +509,54 @@ def test_real_vega_round_trip(tmp_path):
 
 def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch):
     import open4d
-    from types import SimpleNamespace
+    from open4d.codec import inspect_o4d
+    from open4d.native import NativeSequence
 
     frames = [splats(), splats()]
-    output = tmp_path / "capture.vega"
+    output = tmp_path / "capture.o4d"
     calls = []
+
     def encode(values, path, **options):
         calls.append((values, path, options))
-        return SimpleNamespace(path=path)
+        native_bitstream(path)
+        return gaussians.VegaRun(path, tmp_path, sys.executable)
+
     monkeypatch.setattr(gaussians, "encode_gaussians", encode)
-    monkeypatch.setattr(gaussians, "decode_gaussians", lambda path, **options: tuple(frames))
     assert open4d.encode(frames, output, codec="vega", key_iterations=10) == output
-    assert calls == [(frames, output, {"key_iterations": 10})]
-    assert open4d.decode(output) == tuple(frames)
+    assert calls[0][0] is frames
+    assert calls[0][1].name == "native"
+    assert calls[0][2] == {"key_iterations": 10}
+    assert not calls[0][1].exists()
+    assert inspect_o4d(output)["codec"] == "vega"
+    with open4d.decode(output) as restored:
+        assert isinstance(restored, NativeSequence)
+        assert restored.codec == "vega"
+        assert restored.frame_indices == (0, 1)
+        assert restored.timestamps == (0, 1 / 30)
+
+
+@pytest.mark.parametrize("extension", ["vega", "zip", ""])
+def test_public_vega_output_requires_o4d(tmp_path, monkeypatch, extension):
+    import open4d
+    monkeypatch.setattr(gaussians, "encode_gaussians", lambda *args, **kwargs: pytest.fail("native encoder launched"))
+    output = tmp_path / (f"capture.{extension}" if extension else "capture")
+    with pytest.raises(ValueError, match=".o4d"):
+        open4d.encode([splats(), splats()], output, codec="vega")
+    assert not output.exists()
+
+
+def test_missing_runtimes_name_their_variables(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPEN4D_GS_ROOT", raising=False)
+    with pytest.raises(FileNotFoundError, match="OPEN4D_GS_ROOT") as error:
+        gaussians._runtime(tmp_path / "missing")
+    assert "github.com/open4dfoundation/Open4D" in str(error.value)
+    with pytest.raises(FileNotFoundError, match="OPEN4D_VEGA_ROOT"):
+        gaussians.encode_gaussians([splats(), splats()], tmp_path / "out", runtime=tmp_path / "missing")
+    # Decoding takes its runtime from a NativeSequence, unchecked until here.
+    native_bitstream(tmp_path / "native")
+    monkeypatch.setattr(gaussians.subprocess, "run", lambda *a, **k: pytest.fail("no worker without a runtime"))
+    with pytest.raises(FileNotFoundError, match="OPEN4D_VEGA_ROOT"):
+        gaussians.VegaRun(tmp_path / "native", tmp_path / "missing", sys.executable).decode()
 
 
 def test_public_reconstruction_dispatch(tmp_path, monkeypatch):
@@ -352,3 +570,18 @@ def test_public_reconstruction_dispatch(tmp_path, monkeypatch):
                       {"method": "queen", "config": "camera.json"})]
     with pytest.raises(ValueError, match="method"):
         open4d.reconstruct([], method="unknown")
+
+
+def test_public_rgbd_reconstruction_takes_color_positionally(monkeypatch):
+    import open4d
+    from open4d.reconstruction import rgbd
+
+    calls = []
+    monkeypatch.setattr(rgbd, "reconstruct", lambda *args, **options: calls.append((args, options)))
+    depth, rgb = np.zeros((1, 2, 2)), np.zeros((1, 2, 2, 3), np.uint8)
+    open4d.reconstruct(depth, rgb, intrinsics=(1, 1, 0, 0))
+    assert calls == [((depth,), {"color": rgb, "intrinsics": (1, 1, 0, 0)})]
+    with pytest.raises(TypeError, match="both"):
+        open4d.reconstruct(depth, rgb, color=rgb)
+    with pytest.raises(TypeError, match="omit output"):
+        open4d.reconstruct(depth, Path("mesh_folder"))

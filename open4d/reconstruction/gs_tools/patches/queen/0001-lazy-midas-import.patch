@@ -1,5 +1,4 @@
 diff --git a/scene/utils.py b/scene/utils.py
-index 0a6238a..dad329d 100644
 --- a/scene/utils.py
 +++ b/scene/utils.py
 @@ -26,11 +26,16 @@ PathType = Union[Text, pathlib.PurePosixPath]
@@ -21,7 +20,6 @@ index 0a6238a..dad329d 100644
      model, transform, net_w, net_h = load_model(device, args.depth_model_ckpt, 'dpt_beit_large_512', 
                                                  optimize=False, height=None, square=False)
 diff --git a/train.py b/train.py
-index 5726e64..05fa4ab 100644
 --- a/train.py
 +++ b/train.py
 @@ -47,7 +47,6 @@ from utils.loader_utils import SequentialMultiviewSampler, MultiViewVideoDataset
@@ -32,14 +30,48 @@ index 5726e64..05fa4ab 100644
  from scene.decoders import LatentDecoder, LatentDecoderRes, Gate
  from generate_video_all import symlink
  
-@@ -169,6 +168,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
+@@ -185,17 +184,33 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
+         frame_iters = np.array([opt.iterations]+[opt.opt_rest['epochs_rest']*n_cams]*(n_frames-1))
      if opt.lambda_depth>0.0 or dataset.depth_init:
  
-         ## MiDas model for monocular depth estimation
-+        # Imported here, not at module scope: MiDaS needs timm==0.6.13, which
-+        # Open4D installs in a separate environment. See gs_tools/README.md.
-+        from MiDaS.run import process
+-        ## MiDas model for monocular depth estimation
+-        depth_model, transform, net_w, net_h = get_depth_model(dataset)
+-        for camera in train_cameras:
+-            gt_image = camera.original_image.permute(1,2,0).detach().cpu().numpy()
+-            image = transform({"image": gt_image})["image"]
+-            with torch.no_grad():
+-                prediction = process(torch.device("cuda" if torch.cuda.is_available() else "cpu"), 
+-                                     depth_model, 'dpt_beit_large_512', image, (net_w, net_h), 
+-                                     gt_image.shape[1::-1],
+-                                     False, False)
+-                camera.gt_depth = torch.tensor(prediction).cuda()
++        # `gs-tools depth-prior` caches MiDaS's prediction for each camera's first
++        # image as depth_priors/<camera>.npy, so training needs no MiDaS install.
++        cache = os.path.join(dataset.source_path, "depth_priors")
++        cached = [os.path.join(cache, os.path.basename(os.path.dirname(os.path.dirname(camera.image_path))) + ".npy")
++                  for camera in train_cameras]
++        if all(os.path.isfile(path) for path in cached):
++            for camera, path in zip(train_cameras, cached):
++                prior = torch.tensor(np.load(path), dtype=torch.float32)[None, None]
++                prior = torch.nn.functional.interpolate(prior, size=tuple(camera.original_image.shape[1:]),
++                                                        mode="bicubic", align_corners=False)
++                camera.gt_depth = prior[0, 0].cuda()
++        else:
++            ## MiDas model for monocular depth estimation
++            # Imported here, not at module scope: MiDaS needs timm==0.6.13, which
++            # Open4D installs in a separate environment. See gs_tools/README.md.
++            from MiDaS.run import process
 +
-         depth_model, transform, net_w, net_h = get_depth_model(dataset)
-         for camera in train_cameras:
-             gt_image = camera.original_image.permute(1,2,0).detach().cpu().numpy()
++            depth_model, transform, net_w, net_h = get_depth_model(dataset)
++            for camera in train_cameras:
++                gt_image = camera.original_image.permute(1,2,0).detach().cpu().numpy()
++                image = transform({"image": gt_image})["image"]
++                with torch.no_grad():
++                    prediction = process(torch.device("cuda" if torch.cuda.is_available() else "cpu"),
++                                         depth_model, 'dpt_beit_large_512', image, (net_w, net_h),
++                                         gt_image.shape[1::-1],
++                                         False, False)
++                    camera.gt_depth = torch.tensor(prediction).cuda()
+ 
+         # Add points to gaussian model using the monocular depth
+         if dataset.depth_init:

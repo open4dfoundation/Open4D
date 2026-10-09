@@ -14,6 +14,63 @@ from open4d.io import open_sequence, write_sequence
 pytestmark = [pytest.mark.gpu, pytest.mark.slow]
 
 
+def test_tsmc_gpu_solver_repeats_exactly():
+    import subprocess
+
+    python = os.environ.get("OPEN4D_TEST_TSMC_PYTHON")
+    if not python:
+        pytest.skip("set OPEN4D_TEST_TSMC_PYTHON to the CUDA TSMC environment")
+    backend = Path(__file__).resolve().parents[2] / "codecs/tsmc/tsmc"
+    subprocess.run([python, "-c", """
+import sys
+import numpy as np
+import cupy as cp
+import cupyx.scipy.sparse as sparse
+sys.path.insert(0, sys.argv[1])
+from util import solve_sparse_least_squares_cg
+rng = np.random.default_rng(41)
+A = rng.normal(size=(257, 128)).astype(np.float32)
+A[rng.random(A.shape) < .7] = 0
+expected = rng.normal(size=(128, 3)).astype(np.float32)
+matrix = sparse.csr_matrix(cp.asarray(A))
+rhs = cp.asarray(A @ expected)
+results = [cp.asnumpy(solve_sparse_least_squares_cg(
+    matrix, rhs, maxiter=500, tol=1e-6)) for _ in range(6)]
+np.testing.assert_allclose(results[0], expected, rtol=1e-4, atol=1e-4)
+for result in results[1:]:
+    np.testing.assert_array_equal(result, results[0])
+""", str(backend)], check=True, timeout=120)
+
+
+def test_tsmc_single_component_survives_fresh_process_decode(tmp_path):
+    import subprocess
+    import sys
+    from open4d.codec import unpack_o4d
+
+    source = os.environ.get("OPEN4D_TEST_TSMC_SEQUENCE")
+    if not source:
+        pytest.skip("set OPEN4D_TEST_TSMC_SEQUENCE to a prepared two-frame mesh sequence")
+    artifact = encode_sequence(source, tmp_path / "single.o4d", codec="tsmc",
+                               num_centers=40, grid_resolution=32, components=1)
+    native = unpack_o4d(artifact, tmp_path / "native")
+    with np.load(native / "entropy_model.npz", allow_pickle=False) as model:
+        assert model["shape"][1] == 1
+    exported = tmp_path / "fresh.usdc"
+    subprocess.run([sys.executable, "-c", """
+import sys
+import open4d
+with open4d.decode(sys.argv[1]) as sequence:
+    assert len(sequence) == 2
+    assert all(len(f.geometry.positions) and len(f.geometry.triangles) for f in sequence)
+    open4d.save(sequence, sys.argv[2])
+""", str(artifact), str(exported)], check=True, timeout=300)
+    with open_sequence(source) as original, open_sequence(exported) as fresh, decode_sequence(artifact) as repeated:
+        assert fresh.timestamps == repeated.timestamps == original.timestamps
+        for expected, actual in zip(fresh, repeated, strict=True):
+            np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
+            np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
+
+
 def surface_rms_fraction(expected, actual, seed):
     pcu = pytest.importorskip("point_cloud_utils")
     clouds = []
@@ -73,8 +130,8 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
             num_layers=3, batch_size=256, device="cuda:0",
         ),
     }
-    suffix = {"klt": ".k4d", "n4mc": ".n4d", "qndf": ".q4d",
-              "qndf-int8": ".qi4d"}[codec]
+    suffix = {"klt": ".o4d", "n4mc": ".o4d", "qndf": ".o4d",
+              "qndf-int8": ".o4d"}[codec]
     artifact = encode_sequence(
         input_path, tmp_path / f"rafa-{codec}{suffix}",
         codec=codec,
@@ -96,6 +153,7 @@ def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
         exported = write_sequence(
             first, tmp_path / f"{codec}-{input_format}-{output_format}",
             format=output_format,
+            allow_lossy=output_format == "stl",
         )
         assert len(open_sequence(exported)) == 2
     first.close()

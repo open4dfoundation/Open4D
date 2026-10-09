@@ -217,6 +217,23 @@ def test_gstream_added_gaussians_are_not_a_frame(tmp_path):
     assert frames[0][1].parent.name == "iteration_150"
 
 
+def test_gstream_export_includes_each_frames_added_gaussians(tmp_path):
+    """Upstream renders a frame with its added Gaussians, so the export must too."""
+    from gs_tools.methods import gaussian
+
+    run = tmp_path / "run"
+    for index, added in ((1, 2), (2, 0)):
+        base = run / f"frame{index:06d}" / "point_cloud"
+        (base / "iteration_150").mkdir(parents=True)
+        ply.write(base / "iteration_150" / "point_cloud.ply", **_gaussians(3))
+        if added:
+            (base / "iteration_250" / "added").mkdir(parents=True)
+            ply.write(base / "iteration_250" / "added" / "point_cloud.ply", **_gaussians(added))
+    gaussian.build_clips(run, tmp_path / "bundle", gaussian.GaussianExportOptions())
+    exported = sorted((tmp_path / "bundle").rglob("frame_*.ply"))
+    assert [ply.count(path) for path in exported] == [5, 3]
+
+
 def test_viewable_means_exportable_not_merely_recognised(tmp_path):
     """These disagreed: `inspect` said viewable, then `export` refused."""
     assert not outputs.detect(tmp_path).viewable

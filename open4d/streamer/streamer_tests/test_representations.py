@@ -75,11 +75,11 @@ def test_registering_a_codec_changes_what_a_representation_serves(monkeypatch):
     monkeypatch.setattr(codecs, "_REGISTRY", dict(codecs._REGISTRY))
     codecs.register(
         codecs.CodecSpec(
-            name="mesh-vdmc", suffix=".v4d", representation=Representation.MESH
+            name="mesh-vdmc", suffix=".o4d", representation=Representation.MESH
         )
     )
-    assert ".v4d" in representations.spec("mesh").media_types
-    assert ".v4d" in representations.media_types()
+    assert ".o4d" in representations.spec("mesh").media_types
+    assert ".o4d" in representations.media_types()
 
 
 def test_a_representation_exposes_its_codecs():

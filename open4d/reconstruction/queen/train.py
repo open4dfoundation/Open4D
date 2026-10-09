@@ -74,6 +74,23 @@ try:
 except ImportError:
     WANDB_FOUND = False
 
+def _save_frame_outputs(scene, gaussians, dataset, frame_idx, iteration, qp):
+    if not (dataset.log_ply or dataset.log_compressed):
+        return
+    gate = gaussians.gate_atts
+    was_training = gate.training if gate is not None else False
+    if gate is not None:
+        gate.eval()
+    try:
+        if dataset.log_ply or frame_idx == 1:
+            scene.save(iteration, save_point_cloud=True)
+        if dataset.log_compressed and frame_idx > 1:
+            scene.save_compressed(-1, qp)
+    finally:
+        if gate is not None:
+            gate.train(was_training)
+
+
 def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams, qp:QuantizeParams, testing_iterations: list, 
              saving_iterations: list, checkpoint_iterations, checkpoint: str, debug_from, args):
     """Main training function for QUEEN compressed Gaussian splatting."""
@@ -167,21 +184,33 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
         frame_iters = np.array([opt.iterations]+[opt.opt_rest['epochs_rest']*n_cams]*(n_frames-1))
     if opt.lambda_depth>0.0 or dataset.depth_init:
 
-        ## MiDas model for monocular depth estimation
-        # Imported here, not at module scope: MiDaS needs timm==0.6.13, which
-        # Open4D installs in a separate environment. See gs_tools/README.md.
-        from MiDaS.run import process
+        # `gs-tools depth-prior` caches MiDaS's prediction for each camera's first
+        # image as depth_priors/<camera>.npy, so training needs no MiDaS install.
+        cache = os.path.join(dataset.source_path, "depth_priors")
+        cached = [os.path.join(cache, os.path.basename(os.path.dirname(os.path.dirname(camera.image_path))) + ".npy")
+                  for camera in train_cameras]
+        if all(os.path.isfile(path) for path in cached):
+            for camera, path in zip(train_cameras, cached):
+                prior = torch.tensor(np.load(path), dtype=torch.float32)[None, None]
+                prior = torch.nn.functional.interpolate(prior, size=tuple(camera.original_image.shape[1:]),
+                                                        mode="bicubic", align_corners=False)
+                camera.gt_depth = prior[0, 0].cuda()
+        else:
+            ## MiDas model for monocular depth estimation
+            # Imported here, not at module scope: MiDaS needs timm==0.6.13, which
+            # Open4D installs in a separate environment. See gs_tools/README.md.
+            from MiDaS.run import process
 
-        depth_model, transform, net_w, net_h = get_depth_model(dataset)
-        for camera in train_cameras:
-            gt_image = camera.original_image.permute(1,2,0).detach().cpu().numpy()
-            image = transform({"image": gt_image})["image"]
-            with torch.no_grad():
-                prediction = process(torch.device("cuda" if torch.cuda.is_available() else "cpu"), 
-                                     depth_model, 'dpt_beit_large_512', image, (net_w, net_h), 
-                                     gt_image.shape[1::-1],
-                                     False, False)
-                camera.gt_depth = torch.tensor(prediction).cuda()
+            depth_model, transform, net_w, net_h = get_depth_model(dataset)
+            for camera in train_cameras:
+                gt_image = camera.original_image.permute(1,2,0).detach().cpu().numpy()
+                image = transform({"image": gt_image})["image"]
+                with torch.no_grad():
+                    prediction = process(torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                                         depth_model, 'dpt_beit_large_512', image, (net_w, net_h),
+                                         gt_image.shape[1::-1],
+                                         False, False)
+                    camera.gt_depth = torch.tensor(prediction).cuda()
 
         # Add points to gaussian model using the monocular depth
         if dataset.depth_init:
@@ -451,11 +480,14 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                 if any([gating!="none" for gating in qp.gate_params]):
                     if dataset.update_mask == "viewspace_diff":
                         # Use gradient differences for gate initialization
-                        init_probs = grad_diff/(grad_diff+grad_diff.median())
+                        # Open4D: when most Gaussians see no change the median is 0, and
+                        # 0/0 made their gates, then their positions, NaN. No change
+                        # means probability 0, which the gate clamps to epsilon.
+                        init_probs = grad_diff/(grad_diff+grad_diff.median()).clamp_min(1e-30)
                         gaussians.init_probs = init_probs.flatten()
                     elif dataset.update_mask == "diff":
                         # Use frame differences for gate initialization  
-                        init_probs = net_influence/(net_influence+net_influence.mean())
+                        init_probs = net_influence/(net_influence+net_influence.mean()).clamp_min(1e-30)
                         gaussians.init_probs = init_probs.flatten()
                     else:
                         gaussians.init_probs = None
@@ -800,13 +832,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                         if dataset.log_images:
                             save_image(gt_image,os.path.join(scene.model_path, "gt.png"))
 
-                        if dataset.log_ply:
-                            scene.save(iteration, save_point_cloud=True)
-                        
-                        if dataset.log_compressed:
-                            if frame_idx == 1:
-                                scene.save(frame_idx, save_point_cloud=True)                                
-
                         if frame_idx>1 and (dataset.adaptive_render and dataset.adaptive_update_period>0.0) and dataset.update_mask!="none":
                             torchvision.utils.save_image(train_cameras[cam_idx].mask.unsqueeze(0)*gt_image,
                                                          os.path.join(scene.model_path, "mask.png"))
@@ -876,19 +901,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
             else:
                 raise ValueError(f"Invalid save format {args.save_format}")
 
-        if dataset.log_compressed:
-            if frame_idx == 1:
-                scene.save(frame_idx, save_point_cloud=True)
-            else:
-                gate = gaussians.gate_atts
-                was_training = gate.training if gate is not None else False
-                if gate is not None:
-                    gate.eval()
-                try:
-                    scene.save_compressed(-1, qp)
-                finally:
-                    if gate is not None:
-                        gate.train(was_training)
+        _save_frame_outputs(scene, gaussians, dataset, frame_idx, opt.iterations, qp)
 
 
         # Update previous frame's attributes and latents for next frame's residual encoding

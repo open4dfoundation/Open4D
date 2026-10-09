@@ -405,7 +405,13 @@ def readCamerasFromPoseBounds(poses_path=None, image_wh=[0,0], N_video_views=300
                                              zfar=near_fars[idx][1],
                                              principle_point=None))
         
-    video_poses = get_spiral(poses, near_fars, N_views=N_video_views)
+    # An explicit render_path.npy beside poses_bounds.npy, (N, 3, 4) in the same
+    # axes as `poses`, replaces the spiral, which assumes forward-facing cameras.
+    render_path = os.path.join(os.path.dirname(poses_path), "render_path.npy") if poses_path else ""
+    if render_path and os.path.isfile(render_path):
+        video_poses = np.load(render_path)
+    else:
+        video_poses = get_spiral(poses, near_fars, N_views=N_video_views)
     video_cameras = getVideoCameras(video_poses, image_wh, focal,
                                     znear=np.median(near_fars[:,0]),
                                     zfar=np.median(near_fars[:,1]))

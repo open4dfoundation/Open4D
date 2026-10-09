@@ -53,7 +53,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     print("\nrasterizers")
     for name, where in rast.probe().items():
         print(f"  {name:<30} {where or 'not built'}")
-    return status
+    stale = [name for name, draws in rast.near_plane_check().items() if draws is False]
+    for name in stale:
+        print(f"  FAIL: {name} culls splats 1 unit from the camera; it was built from "
+              "a source that culled nearer than 4 units. Rebuild with scripts/setup.sh")
+    return status or int(bool(stale))
 
 
 def _cmd_data(args: argparse.Namespace) -> int:
@@ -75,7 +79,7 @@ def _cmd_data(args: argparse.Namespace) -> int:
 def _cmd_train(args: argparse.Namespace) -> int:
     spec = _spec(args)
     if args.method == "queen":
-        return queen.train(spec)
+        return queen.train(spec, test_indices=args.test_indices, depth_priors=args.depth_priors)
     options = gstream.GstreamOptions(
         init_dir=Path(args.init).expanduser() if args.init else None,
         images=args.images,
@@ -288,14 +292,24 @@ def _cmd_view(args: argparse.Namespace) -> int:
 
 
 def _cmd_depth_prior(args: argparse.Namespace) -> int:
-    # Deliberately not implemented yet: it runs in the separate open4d-gs-midas
-    # environment (timm==0.6.13), and wiring it before phase 1 has trained
-    # anything would be guessing at the interface.
-    print(
-        "depth-prior is not wired up yet -- see README.md 'MiDaS depth priors'.\n"
-        f"For now, run upstream directly from {paths.upstream('queen')}."
-    )
-    return 2
+    """Cache MiDaS depth priors for a QUEEN scene, in the MiDaS environment.
+
+    The interpreter is ``--python`` (default: this one), so timm==0.6.13 lives
+    in its own environment. QUEEN's train.py reads ``<scene>/depth_priors``.
+    """
+    import subprocess
+
+    scene = Path(args.scene).expanduser().resolve()
+    weights = Path(args.weights).expanduser().resolve() if args.weights else (
+        paths.upstream("queen") / "MiDaS" / "weights" / "dpt_beit_large_512.pt")
+    if not weights.is_file():
+        print(f"MiDaS weights not found at {weights}; run scripts/setup.sh --midas-weights")
+        return 1
+    python = args.python or sys.executable
+    worker = Path(__file__).with_name("depth_prior.py")
+    print(f"$ {python} {worker} {paths.upstream('queen')} {scene} {weights}")
+    return subprocess.run([python, str(worker), str(paths.upstream("queen")), str(scene), str(weights)],
+                          cwd=paths.upstream("queen"), check=False).returncode
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -314,8 +328,10 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--layout", choices=[layout.value for layout in layouts.Layout])
     data.set_defaults(func=_cmd_data)
 
-    depth = sub.add_parser("depth-prior", help="generate MiDaS depth maps (QUEEN)")
+    depth = sub.add_parser("depth-prior", help="cache MiDaS depth priors for a QUEEN scene")
     depth.add_argument("-s", "--scene", required=True)
+    depth.add_argument("--python", help="interpreter with MiDaS's requirements (default: this one)")
+    depth.add_argument("--weights", help="dpt_beit_large_512.pt (default: QUEEN's MiDaS/weights)")
     depth.set_defaults(func=_cmd_depth_prior)
 
     train = sub.add_parser("train", help="train a method on a scene")
@@ -329,6 +345,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("init", "frames"),
         help="3DGStream only: 'init' trains the timestep-0 model first",
     )
+    train.add_argument("--test-indices", type=int, nargs="*", dest="test_indices",
+                       help="QUEEN only: held-out camera indices (none: train on all)")
+    train.add_argument("--depth-priors", action="store_true", dest="depth_priors",
+                       help="QUEEN only: keep the default config's depth priors; needs `depth-prior` first")
     train.add_argument("--init", help="3DGStream only: initial 3DGS dir (default <run>/init)")
     train.add_argument("--images", help="3DGStream only: image subdirectory inside each timestep")
     train.add_argument("--first-load-iteration", type=int, default=15000, dest="first_load_iteration")

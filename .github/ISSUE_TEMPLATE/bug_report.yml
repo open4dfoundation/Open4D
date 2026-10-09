@@ -1,0 +1,86 @@
+name: Bug report
+description: Something in encode, decode, reconstruct, stream, load/save or the viewer does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Remove credentials, device serials, private captures and
+        identifying content before posting. Report vulnerabilities through the
+        [security advisory form](https://github.com/open4dfoundation/Open4D/security/advisories/new) instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - encode / decode (.o4d)
+        - load / save (OpenUSD, PLY, OBJ, frame folders)
+        - reconstruct (RGB-D)
+        - reconstruct (QUEEN, 3DGStream, Vega)
+        - stream / send / receive
+        - visualize / open4d view
+        - open4d command line
+        - installation or packaging
+        - other
+    validations:
+      required: true
+  - type: dropdown
+    id: codec
+    attributes:
+      label: Codec
+      description: Select the codec involved, if any.
+      options:
+        - not codec-specific
+        - vdmc
+        - faster_vdmc
+        - tvmc
+        - tsmc
+        - klt
+        - n4mc
+        - qndf
+        - qndf-int8
+        - vega
+        - queen
+        - 3dgstream
+        - rerf
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The smallest code or command that shows the problem. If possible, use
+        `open4d.demo.mesh_sequence()` or `open4d demo` instead of private data.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output
+      description: The full traceback or command output.
+      render: text
+  - type: input
+    id: revision
+    attributes:
+      label: Open4D version or commit
+      description: Output of `pip show open4d`, or `git rev-parse --short HEAD` for a checkout.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, operating system, installed extras, and GPU/CUDA or native backend versions if relevant.
+      placeholder: |
+        Python 3.12, Ubuntu 24.04, open4d[usd,player], CUDA 12.4, RTX 4090
+    validations:
+      required: true

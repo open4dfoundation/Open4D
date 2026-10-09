@@ -1,5 +1,12 @@
 """Open4D public Python API."""
 
+from importlib.metadata import PackageNotFoundError, version as _version
+
+try:
+    __version__ = _version("open4d")
+except PackageNotFoundError:  # running from a source tree without installation
+    __version__ = "0+unknown"
+
 from .core import (
     ATTRIBUTE_FLOAT_DTYPE,
     ATTRIBUTE_INT_DTYPE,
@@ -25,11 +32,14 @@ from .core import (
 )
 from ._api import load, save, unload, reconstruct, stream
 from ._streamer import StreamerDependencyError
-from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode
-from .streaming import receive, send
+from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode, migrate_legacy
+from .transport import receive, send
 from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
 from .metrics import compare_meshes, compare_sequences
 from .visualization import visualize
+from .native import NativeSequence, NeuralFieldFrame, import_native
+from .orbit import OrbitCamera, OrbitScene, load_orbit
+from .reconstruction.rgbd import RGBDCapture, load_capture as load_rgbd_capture
 
 __all__ = [
     "ATTRIBUTE_FLOAT_DTYPE",
@@ -41,6 +51,12 @@ __all__ = [
     "GaussianSplats",
     "GaussianRun",
     "NeuralGaussianFrame",
+    "NativeSequence",
+    "NeuralFieldFrame",
+    "import_native",
+    "OrbitCamera",
+    "OrbitScene",
+    "RGBDCapture",
     "FrameProvider",
     "GaussianCloud",
     "Geometry",
@@ -59,11 +75,14 @@ __all__ = [
     "available_codecs",
     "decode",
     "encode",
+    "migrate_legacy",
     "compare_meshes",
     "compare_sequences",
     "dtypes",
     "load",
     "load_gaussians",
+    "load_orbit",
+    "load_rgbd_capture",
     "reconstruct",
     "receive",
     "stream",
