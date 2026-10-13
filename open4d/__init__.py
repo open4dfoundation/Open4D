@@ -36,10 +36,12 @@ from .codec import available_codecs, decode_sequence as decode, encode_sequence 
 from .transport import receive, send
 from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
 from .metrics import compare_meshes, compare_sequences
-from .visualization import visualize
+from .visualization import Visualizer, visualize
 from .native import NativeSequence, NeuralFieldFrame, import_native
 from .orbit import OrbitCamera, OrbitScene, load_orbit
 from .reconstruction.rgbd import RGBDCapture, load_capture as load_rgbd_capture
+from .reconstruction import MultiviewCapture, available_methods
+from . import data, ml
 
 __all__ = [
     "ATTRIBUTE_FLOAT_DTYPE",
@@ -57,6 +59,8 @@ __all__ = [
     "OrbitCamera",
     "OrbitScene",
     "RGBDCapture",
+    "MultiviewCapture",
+    "Visualizer",
     "FrameProvider",
     "GaussianCloud",
     "Geometry",
@@ -73,6 +77,9 @@ __all__ = [
     "TriangleMesh",
     "UV_DTYPE",
     "available_codecs",
+    "available_methods",
+    "data",
+    "ml",
     "decode",
     "encode",
     "migrate_legacy",

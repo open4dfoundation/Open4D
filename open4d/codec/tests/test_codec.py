@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import subprocess
 from pathlib import Path
@@ -197,11 +198,10 @@ def test_reference_codecs_remain_usable_privately(tmp_path, codec):
     decoded.close()
 
 
-def test_public_registry_contains_research_codecs_only():
+def test_public_registry_contains_installed_numpy_core():
     identifiers = {info.id for info in available_codecs()}
-    assert {"klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc", "tvmc", "tsmc"} <= identifiers
-    assert not {"npz", "raw", "deflate", "bzip2", "lzma", "rle", "draco",
-                "temporal-delta", "temporal-pca"} & identifiers
+    assert {"npz", "raw", "deflate", "bzip2", "lzma", "rle"} <= identifiers
+    assert not {"klt", "n4mc", "qndf", "queen", "tvmc"} & identifiers
     import open4d.codec as public
     assert not any(hasattr(public, name) for name in
                    ("DracoCodec", "NumPyZipCodec", "TemporalMeshCodec"))
@@ -372,6 +372,25 @@ def test_o4d_uses_one_native_call_per_sequence_direction(tmp_path, monkeypatch, 
     decoded.close()
 
 
+def test_vdmc_finds_a_separately_built_codec_under_its_root(tmp_path, monkeypatch):
+    import open4d.codec._o4d as implementation
+
+    monkeypatch.delenv("OPEN4D_VDMC_DECODER", raising=False)
+    monkeypatch.setenv("OPEN4D_VDMC_ROOT", str(tmp_path / "mpeg-vdmc-tm"))
+    with pytest.raises(CodecError, match="OPEN4D_VDMC_ROOT"):
+        implementation._executable(None, "vdmc", "decoder")
+    built = tmp_path / "mpeg-vdmc-tm/build/Release/bin" / ("decode.exe" if os.name == "nt" else "decode")
+    built.parent.mkdir(parents=True)
+    built.write_text("native test double", encoding="ascii")
+    built.chmod(0o700)
+    assert implementation._executable(None, "vdmc", "decoder") == built.absolute()
+    chosen = tmp_path / "decoder"
+    chosen.write_text("native test double", encoding="ascii")
+    chosen.chmod(0o700)
+    monkeypatch.setenv("OPEN4D_VDMC_DECODER", str(chosen))
+    assert implementation._executable(None, "vdmc", "decoder") == chosen.absolute()
+
+
 def test_o4d_decodes_a_raw_bitstream_without_an_open4d_manifest(
     tmp_path, monkeypatch
 ):
@@ -424,7 +443,7 @@ def test_o4d_decodes_a_raw_bitstream_without_an_open4d_manifest(
 
 
 @pytest.mark.parametrize("requested", ["cpu", "auto"])
-def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, requested):
+def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, requested, registered_research_codecs):
     import open4d.codec._klt as implementation
 
     source = Sequence(MemoryFrameProvider([

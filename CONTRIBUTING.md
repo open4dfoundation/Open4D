@@ -53,6 +53,14 @@ python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
 python -m twine check --strict dist/*
 ```
 
+Build the wiki and generated API reference with `python -m pip install -e
+'.[docs]'`, then `python -m
+mkdocs build --strict --site-dir /tmp/open4d-site`. Update existing docs and
+public docstrings with code changes. Research plugin registrations use
+`open4d.codecs` and `open4d.reconstruction` entry points; their packages may not
+include upstream research code, weights, datasets or binaries without a
+separate reviewed distribution basis.
+
 The package checks enforce an explicit file list for wheels and source archives.
 The compile check matches CI's supported Python paths; vendored tools such as
 Eigen's historical Python 2 maintenance scripts are outside that check.

@@ -90,7 +90,7 @@ def component_count(mesh):
     }),
 ))
 def test_research_codec_cpu_encode_and_fresh_decode(
-    tmp_path, codec, suffix, options
+    tmp_path, codec, suffix, options, registered_research_codecs
 ):
     pytest.importorskip("torch")
     pytest.importorskip("trimesh")
@@ -124,7 +124,7 @@ def test_research_codec_cpu_encode_and_fresh_decode(
 
 
 @pytest.mark.gpu
-def test_n4mc_auto_encode_and_decode_on_apple_mps_runtime(tmp_path):
+def test_n4mc_auto_encode_and_decode_on_apple_mps_runtime(tmp_path, registered_research_codecs):
     torch = pytest.importorskip("torch")
     pytest.importorskip("trimesh")
     pytest.importorskip("point_cloud_utils")
@@ -158,7 +158,7 @@ def test_n4mc_auto_encode_and_decode_on_apple_mps_runtime(tmp_path):
         "hidden_dim": 8, "num_layers": 2, "batch_size": 32,
     }),
 ))
-def test_neural_codec_mps_encode_and_fresh_decode(tmp_path, codec, suffix, options):
+def test_neural_codec_mps_encode_and_fresh_decode(tmp_path, codec, suffix, options, registered_research_codecs):
     torch = pytest.importorskip("torch")
     pytest.importorskip("trimesh")
     pytest.importorskip("point_cloud_utils")

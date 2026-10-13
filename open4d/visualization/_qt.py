@@ -42,6 +42,8 @@ def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
     ]
     if frame.is_mesh:
         lines.append(f"{len(frame.triangles):,} tris")
+    elif getattr(frame, "representation", None) == "gaussians":
+        lines.append("Gaussian centers (point preview; not splat rendering)")
     else:
         lines.append("point cloud")
     return lines

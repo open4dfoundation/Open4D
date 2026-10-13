@@ -1,7 +1,21 @@
 # Python API
 
-The public API loads, saves, unloads, and visualizes whole finite triangle-mesh
-sequences independently of their storage format:
+The public API loads, saves, encodes, decodes, reconstructs, streams and
+visualizes finite geometry sequences. The NumPy-only core is separate from
+installed research plugins and their independently acquired backends.
+
+This example needs no downloaded dataset or native codec:
+
+```python
+import open4d as o4d
+
+with o4d.data.SyntheticMeshSequence().load() as source:
+    o4d.encode(source, "sample.o4d", codec="npz")
+with o4d.decode("sample.o4d") as restored:
+    print(restored.frame(0).geometry.positions.shape)
+```
+
+OpenUSD export needs the optional `usd-core` package:
 
 ```python
 import open4d
@@ -87,6 +101,46 @@ one time-sampled geometry prim; select it with
 `options={"prim_path": "/World/Mesh"}`.
 Compressed `.o4d` artifacts use a separate custom prim, described under
 [USD interchange](#usd-interchange).
+
+## Reconstruction
+
+Prepared RGB-D data can be reconstructed and encoded in one call:
+
+```python
+import open4d as o4d
+
+capture = o4d.RGBDCapture.from_folder("capture/")
+o4d.reconstruct(capture, "reconstructed.o4d", method="tsdf", codec="npz")
+with o4d.decode("reconstructed.o4d") as meshes:
+    o4d.save(meshes, "reconstructed.usdc")  # needs open4d[usd]
+```
+
+`rgbd` is the canonical built-in method; `tsdf` is its alias. Without an output
+path, it returns a lazy `Sequence`. Reconstruction needs Open3D 0.19.x and
+already aligned, undistorted, calibrated and synchronized depth/RGB/poses.
+Capture loading and hardware acquisition remain separate from reconstruction.
+The destination and codec are validated before expensive RGB-D processing.
+
+`MultiviewCapture.from_colmap(model, images, scale_to_meters=...)` reads text
+COLMAP `PINHOLE` or `SIMPLE_PINHOLE` calibrations. It requires an explicit scale
+because COLMAP does not determine metres, and rejects distorted camera models.
+The container is for plugins that explicitly support calibrated multiview
+inputs; native QUEEN expects its own prepared scene directory.
+
+`available_methods()` lists the built-in `rgbd` and installed reconstruction
+providers. After separately installing the QUEEN adapter and compatible runtime:
+
+```python
+run = o4d.reconstruct("prepared-scene/", "run/", method="queen")
+o4d.encode(run, "scene.o4d", codec="queen")
+# Or train into an owned temporary directory and package the native result:
+o4d.reconstruct("prepared-scene/", "scene.o4d", method="queen", codec="queen")
+```
+
+This carries the actual backend model state, not a mesh automatically converted
+to Gaussians. Neural runtime, configuration and initial-model dependencies keep
+their own requirements. GPU reconstruction is not validated by the core CPU
+tests or this example.
 
 ## Streaming
 
@@ -195,15 +249,29 @@ N4MC carries independent quantized TSDF latents sharing one model. KLT carries a
 shared transform basis and compressed frame coefficients. QNDF carries coarse meshes and independent
 displacement models; QNDF-int8 uses quantized model weights.
 
-`available_codecs()` lists the public research adapters: `klt`, `n4mc`, `qndf`,
-`qndf-int8`, `vdmc`, `faster_vdmc`, `tvmc`, `tsmc`, `vega`, `queen`,
-`3dgstream`, and `rerf`. Native payloads include NumPy archives, model
-checkpoints and Draco files.
+`available_codecs()` lists core NumPy profiles and installed plugins. Install a
+research adapter from this checkout, for example `pip install ./plugins/klt`
+or `pip install ./plugins/vdmc`; `pip install ./plugins/research` registers all
+research adapters. These adapter packages contain MIT registration glue, not
+research implementations, native binaries, datasets or weights, and are not
+claimed to be published on PyPI. The backends retain their original terms.
+No-license and no-redistribution components remain excluded from artifacts.
 
-The lightweight wheel includes the adapters but excludes their research
-implementations. KLT, N4MC and QNDF need a source checkout and their optional
-dependencies; set `OPEN4D_RESEARCH_ROOT` to that checkout when using an installed
-wheel. Internal benchmark experiments are not public codec choices. The V-DMC adapters do not execute
+Third-party packages register codec objects or zero-argument factories through
+the `open4d.codecs` entry point group. Reconstruction functions use
+`open4d.reconstruction`. Discovery is lazy; inspecting availability does not
+execute a plugin. Invalid, duplicate or unavailable plugins produce diagnostic
+errors when selected rather than silently overriding core codecs.
+Entry points extend implementations of the reviewed O4D profiles in the core.
+A new native wire layout also needs a versioned profile and validation in the
+core; arbitrary plugin-defined extraction schemas are deliberately rejected.
+
+The core `npz`, `raw`, `deflate`, `bzip2`, `lzma` and `rle` profiles preserve
+TriangleMesh, PointCloud and GaussianCloud frame arrays. Research codecs still
+require their declared representation. KLT, N4MC and QNDF need their external
+source and optional dependencies; set `OPEN4D_KLT_ROOT`, `OPEN4D_N4MC_ROOT` or
+`OPEN4D_QNDF_ROOT` to the corresponding source directory, or use
+`OPEN4D_RESEARCH_ROOT` for compatibility with a full checkout. The V-DMC adapters do not execute
 shell scripts, but they do invoke configured native encoder and decoder
 processes once per sequence. Callers can also register another
 `open4d.codec.Codec`.
@@ -223,19 +291,21 @@ locations are the codec and reconstruction trees.
 | Variable | Used by | Default |
 | --- | --- | --- |
 | `OPEN4D_RESEARCH_ROOT` | KLT, N4MC, QNDF, QNDF-int8 | This checkout, if present |
-| `OPEN4D_VDMC_ENCODER`, `OPEN4D_VDMC_DECODER` | `vdmc` (`encoder=`, `decoder=`) | None; required |
-| `OPEN4D_FASTER_VDMC_ENCODER`, `OPEN4D_FASTER_VDMC_DECODER` | `faster_vdmc` | None; required |
+| `OPEN4D_VDMC_ENCODER`, `OPEN4D_VDMC_DECODER` | `vdmc` (`encoder=`, `decoder=`) | `build/Release/bin/encode` and `decode` under `OPEN4D_VDMC_ROOT` |
+| `OPEN4D_FASTER_VDMC_ENCODER`, `OPEN4D_FASTER_VDMC_DECODER` | `faster_vdmc` | The same under `OPEN4D_FASTER_VDMC_ROOT` |
+| `OPEN4D_VDMC_ROOT`, `OPEN4D_FASTER_VDMC_ROOT` | V-DMC built from source | `open4d/codecs/vdmc`, `open4d/codecs/faster_vdmc` |
 | `OPEN4D_VDMC_DECODER_CONFIG`, `OPEN4D_FASTER_VDMC_DECODER_CONFIG` | V-DMC decoding (`decoder_config=`) | The carried `decoder.cfg` |
 | `OPEN4D_TVMC_ROOT`, `OPEN4D_TSMC_ROOT` | TVMC, TSMC (`backend=`) | `open4d/codecs/tvmc`, `open4d/codecs/tsmc` |
 | `OPEN4D_TVMC_PYTHON`, `OPEN4D_TSMC_PYTHON` | TVMC, TSMC (`python=`) | The backend's `.venv`, else this interpreter |
 | `DRACO_ENCODER`, `DRACO_DECODER` | TVMC, TSMC | The backend's `draco/build` |
 | `OPEN4D_GS_ROOT` | QUEEN and 3DGStream reconstruction (`runtime=`) | `open4d/reconstruction/gs_tools` |
+| `OPEN4D_QUEEN_PYTHON`, `OPEN4D_3DGSTREAM_PYTHON`, `OPEN4D_VEGA_PYTHON` | Reconstruction and Vega encoding (`python=`) | This interpreter |
 | `OPEN4D_VEGA_ROOT` | Vega encoding and decoding (`runtime=`) | `open4d/reconstruction/vega` |
-| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`) | `open4d/reconstruction/<codec>` |
+| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`); `OPEN4D_3DGSTREAM_ROOT` also holds 3DGStream's NTC checkpoint (`ntc=`) | `open4d/reconstruction/<codec>` |
 | `OPEN4D_<CODEC>_PYTHON` | `NativeSequence.decode` (`python=`) | This interpreter |
 | `OPEN4D_NATIVE_TIMEOUT` | Native mesh encoder and decoder processes | No limit |
 
-An installed wheel contains none of these trees, so every research codec needs
+An installed core or adapter wheel contains none of these trees, so every research codec needs
 its variable or keyword argument there.
 
 ### Device selection
@@ -253,6 +323,29 @@ an additional CUDA acceptance test gated by `OPEN4D_TEST_RESEARCH_CODECS=1` and
 `OPEN4D_RAFA_DATASET`.
 
 ## Comparing sequences
+
+For visual comparison, `open4d.visualize(decoded, baseline=source)` opens two
+panes with linked cameras and frame playback. Explicit RGB(A) texture arrays
+use the mesh's vertex or corner UVs; pass `texture=` and `baseline_texture=`.
+The caller supplies textures and does not lose them through hidden file lookup.
+Metric comparisons remain separate from the viewer.
+
+For incremental geometry or a network receiver:
+
+```python
+with open4d.Visualizer(title="Comparison") as viewer:
+    viewer.add_geometry(reference_frame, baseline=True)
+    viewer.add_geometry(decoded_frame)
+    while viewer.poll_events():
+        # When a new frame arrives:
+        # viewer.update_geometry(next_frame)
+        viewer.render()
+```
+
+`viewer.stream(receiver)` uses a bounded background reader while the Qt event
+loop stays on the main thread. Close the caller-owned receiver to interrupt a
+blocked network read. PointClouds render as points. GaussianClouds are colored,
+opacity-weighted center previews, not a full Gaussian covariance renderer.
 
 `open4d.compare_sequences` measures a decoded sequence against its source,
 frame by frame. It needs SciPy (`open4d[metrics]`). Either argument can be a
@@ -295,7 +388,8 @@ timing and payload sizes. It works for every profile without a codec backend;
 payload hashes are verified but nothing is decoded. `--decode` also decodes a
 mesh profile and reports its topology and first frame, which needs the codec
 backend. With `--json`, container details are under `container`. `view` plays
-triangle-mesh profiles and refuses Gaussian and field profiles.
+mesh profiles and NumPy geometry sequences (points or Gaussian center previews).
+Native trained Gaussian and field profiles still require their native renderer.
 
 ## O4D format
 
@@ -313,6 +407,10 @@ All integers in the container are unsigned and big endian. The file starts with
 eight bytes: `56 4d 45 53 48 00 01 00` (`VMESH`, zero, version 1, reserved zero).
 The signature and manifest schema retain their original wire identifiers;
 renaming the public format to O4D does not change encoded bytes.
+Version 1 of the envelope is fixed. New codec payload layouts require their
+own native profile version; unsupported versions are rejected before native
+execution. NumPy geometry profiles use native version 2 with an explicit
+representation per frame and can still decode earlier version 1 mesh payloads.
 Each following record is:
 
 | Field | Bytes | Meaning |
@@ -328,7 +426,7 @@ There is exactly one manifest, followed by all payload chunks in manifest file
 order, followed by exactly one end record. The end data is the 32-byte SHA-256
 of the exact manifest bytes. No trailing bytes are permitted.
 
-The UTF-8 JSON manifest has `schema: "vmesh/1"`, `codec`, `native_version: 1`,
+The UTF-8 JSON manifest has `schema: "vmesh/1"`, `codec`, a profile-specific `native_version`,
 `representation`, `dependency_mode`, `frame_count`, `sequence`, `files`, and
 codec-specific `native` settings when required. `sequence` contains version 1,
 the codec ID, frame indices, timestamps in seconds, JSON metadata, and optional

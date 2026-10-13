@@ -1,0 +1,37 @@
+site_name: Open4D
+site_description: Python tools for 4D geometry, codecs, reconstruction and streaming.
+site_url: https://open4dfoundation.github.io/Open4D/
+repo_url: https://github.com/open4dfoundation/Open4D
+edit_uri: blob/main/docs/
+docs_dir: docs
+theme:
+  name: null
+  custom_dir: docs/theme
+  static_templates: [404.html]
+nav:
+  - Overview: index.md
+  - Python guide: api.md
+  - Installation and codecs: requirements.md
+  - Datasets and models: artifacts.md
+  - API reference: reference.md
+  - Licenses and release: licenses.md
+hooks:
+  - docs/hooks.py
+plugins:
+  - search
+markdown_extensions:
+  - tables
+  - fenced_code
+  - toc:
+      permalink: true
+exclude_docs: |
+  /assets/
+  /theme/
+  *.py
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn

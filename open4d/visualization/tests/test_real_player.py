@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import warnings
+import threading
 
 import numpy as np
 import pytest
 
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from open4d.demo import mesh_sequence
-from open4d.visualization import render_gif, visualize
+from open4d.visualization import Visualizer, render_gif, visualize
 
 pytestmark = [pytest.mark.player, pytest.mark.slow]
 
@@ -79,3 +80,60 @@ def test_sequence_with_empty_first_frame_renders(tmp_path):
         assert not np.any(np.asarray(image.convert("RGB")) < 240)
         image.seek(1)
         assert np.any(np.asarray(image.convert("RGB")) < 240)
+
+
+def test_live_viewer_renders_interpolated_texture_and_baseline():
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    pytest.importorskip("PyQt6.QtWidgets")
+    mesh = TriangleMesh(
+        [[-1., -1, 0], [1., -1, 0], [1., 1, 0], [-1., 1, 0]], [[0, 1, 2], [0, 2, 3]],
+        texture_coordinates=[[[0., 0], [1., 0], [1., 1]], [[0., 0], [1., 1], [0., 1]]],
+    )
+    # Every corner is red, but the center is green: sampled vertex colors alone
+    # would render no green at all, so this proves fragment texture sampling.
+    texture = np.full((32, 32, 3), [240, 20, 20], dtype=np.uint8)
+    texture[8:24, 8:24] = [20, 230, 20]
+    with Visualizer(width=800, height=400, elevation=90, azimuth=0, distance=2.5) as viewer:
+        viewer.add_geometry(mesh, texture=texture)
+        viewer.add_geometry(mesh, baseline=True)
+        assert viewer.poll_events()
+        textured = viewer.capture_screen()
+        reference = viewer.capture_screen(baseline=True)
+        green = (textured[:, :, 1] > 180) & (textured[:, :, 0] < 80)
+        red = (textured[:, :, 0] > 180) & (textured[:, :, 1] < 80)
+        assert green.mean() > 0.02 and red.mean() > 0.02
+        assert not np.any((reference[:, :, 1] > 180) & (reference[:, :, 0] < 80))
+        # Stream updates preserve GPU texture state, and explicitly clearing it
+        # recreates a normal mesh item without leaving the old texture visible.
+        viewer.update_geometry(mesh, texture=None)
+        untextured = viewer.capture_screen()
+        assert not np.any((untextured[:, :, 1] > 180) & (untextured[:, :, 0] < 80))
+
+
+def test_live_viewer_displays_a_real_tcp_stream():
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    from open4d.transport import receive, send
+
+    mesh = TriangleMesh([[-1., -1, 0], [1., -1, 0], [0., 1, 0]], [[0, 1, 2]],
+                        colors=[[0., 0, 1], [0., 0, 1], [0., 0, 1]])
+    source = Sequence(MemoryFrameProvider([Frame(index, index / 30, mesh) for index in range(3)]))
+    sent, errors = [], []
+    with receive(port=0, timeout=3) as receiver:
+        def publish():
+            try:
+                sent.append(send(source, *receiver.address, realtime=False))
+            except Exception as error:
+                errors.append(error)
+
+        sender = threading.Thread(target=publish)
+        sender.start()
+        with Visualizer(width=320, height=240, elevation=90, distance=2.5) as viewer:
+            assert viewer.stream(receiver) == 3
+            pixels = viewer.capture_screen()
+            blue = (pixels[:, :, 2] > 180) & (pixels[:, :, 0] < 80)
+            assert blue.mean() > 0.01
+        sender.join(timeout=3)
+    assert not sender.is_alive() and not errors and sent == [3]
+    assert not source.closed

@@ -58,6 +58,13 @@ class RGBDCapture:
     def __len__(self) -> int:
         return len(self.pair_numbers)
 
+    @classmethod
+    def from_folder(cls, pairs, calibration, *, frames=None, metadata=None,
+                    serials=None) -> "RGBDCapture":
+        """Load saved pairs with explicit rig calibration (see ``load_capture``)."""
+        return load_capture(pairs, calibration, frames=frames, metadata=metadata,
+                            serials=serials)
+
 
 @cache
 def _dependencies():

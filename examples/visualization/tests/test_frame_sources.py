@@ -49,7 +49,9 @@ def test_documentation_does_not_advertise_usd_frame_directories():
     assert "Folder of `.usd` frames" not in readme
 
 
-def test_example_helpers_advertise_raw_vdmc_as_a_sequence_source(tmp_path):
+def test_example_helpers_advertise_raw_vdmc_as_a_sequence_source(tmp_path, monkeypatch):
+    # Classification must not depend on a research codec plugin being installed.
+    monkeypatch.setattr(frame_sources, "available_codecs", lambda: ())
     bitstream = tmp_path / "capture.o4d"
     bitstream.write_bytes(b"raw bitstream")
 

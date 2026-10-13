@@ -5,7 +5,7 @@ from open4d.codec._api import _CODECS
 
 
 def test_public_codecs_share_one_custom_output_extension():
-    assert len(available_codecs()) == 12
+    assert len(available_codecs()) >= 6
     assert all(info.suffixes == (".o4d",) for info in available_codecs())
 
 
@@ -34,14 +34,14 @@ def test_pack_is_not_an_implicit_archive_converter(tmp_path):
 
 
 @pytest.mark.parametrize("identifier", ("vega", "queen", "3dgstream", "rerf"))
-def test_native_codec_rejects_a_retired_extension_before_loading(identifier, tmp_path):
+def test_native_codec_rejects_a_retired_extension_before_loading(identifier, tmp_path, registered_research_codecs):
     from open4d.codec import CodecError
 
     source = tmp_path / "renamed.retired"
     source.write_bytes(b"VMESH\x00\x01\x00")
-    assert not _CODECS[identifier].can_decode(source)
+    assert not registered_research_codecs[identifier].can_decode(source)
     with pytest.raises(CodecError, match=".o4d"):
-        _CODECS[identifier].decode(source)
+        registered_research_codecs[identifier].decode(source)
 
 
 @pytest.mark.parametrize("identifier", ("npz", "raw", "deflate", "bzip2", "lzma", "rle"))

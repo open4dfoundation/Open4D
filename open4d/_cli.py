@@ -55,7 +55,7 @@ def _source_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="open4d", description="Generate, inspect, and view triangular mesh sequences.",
+        prog="open4d", description="Generate, inspect, and view 4D geometry sequences.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="generate a shareable PLY wave animation")
@@ -229,7 +229,8 @@ def _run(args: argparse.Namespace, source: Path, native: NativeSequence | None) 
     if container is not None:
         if args.format is not None or args.input_fps is not None:
             raise TypeError("O4D stores its own representation and timestamps; omit --format and --input-fps")
-        if decode and not container["decodes_to_mesh"]:
+        array_preview = args.command == "view" and container["representation"] == "geometry_sequence"
+        if decode and not container["decodes_to_mesh"] and not array_preview:
             reader = "the viewer shows" if args.command == "view" else "--decode reports"
             raise ValueError(f"{native.codec} stores {_stores(container)}; {reader} triangle meshes")
         if not decode:

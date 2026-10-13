@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open4d-qndf"
+version = "0.3.0"
+description = "MIT Open4D adapter registrations; no research implementations, data or weights"
+readme = {text = "This MIT package registers Open4D adapters only. It contains no research implementations, models, datasets, native binaries or CUDA extensions. Install the matching Open4D core from this revision, independently acquire each external runtime under its own license, and configure the documented OPEN4D backend root. Installing this adapter does not grant rights to any external runtime.", content-type = "text/plain"}
+requires-python = ">=3.10,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["open4d>=0.3.0,<0.4"]
+
+[project.entry-points."open4d.codecs"]
+"qndf" = "open4d.codec._qndf:QNDF_CODEC"
+"qndf-int8" = "open4d.codec._qndf:QNDF_INT8_CODEC"
+
+[project.optional-dependencies]
+runtime = ["torch", "open3d>=0.19,<0.20", "trimesh", "tqdm"]
+
+[tool.setuptools]
+packages = []
+include-package-data = false

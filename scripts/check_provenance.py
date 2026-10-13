@@ -24,11 +24,14 @@ EXPLICIT_REQUIRED_LEDGER_PATHS = (
     "integrations/unity",
     "open4d/streamer",
     "open4d/streamer/study",
+    "plugins",
 )
 ALLOWED_PACKAGES = {
     "open4d",
     "open4d.codec",
     "open4d.core",
+    "open4d.data",
+    "open4d.ml",
     "open4d.io",
     "open4d.reconstruction",
     "open4d.reconstruction.rgbd",

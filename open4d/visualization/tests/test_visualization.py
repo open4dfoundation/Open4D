@@ -469,3 +469,25 @@ def test_mesh_o4d_path_reaches_player_and_releases_owned_payloads(tmp_path, monk
     visualize(target)
     np.testing.assert_array_equal(seen["positions"], mesh.positions)
     assert seen["sequence"].closed
+
+
+@pytest.mark.parametrize("kind", ["points", "gaussians"])
+def test_numpy_geometry_o4d_path_reaches_player(tmp_path, monkeypatch, kind):
+    import open4d
+    from open4d.visualization import _qt
+    if kind == "gaussians":
+        source = open4d.data.SyntheticGaussianSequence(cache_dir=tmp_path / "data").load()
+    else:
+        source = Sequence(MemoryFrameProvider([
+            Frame(0, 0, open4d.PointCloud([[0., 0, 0], [1., 0, 0]]))]))
+    with source:
+        path = open4d.encode(source, tmp_path / "geometry.o4d", codec="npz")
+    seen = []
+    monkeypatch.setattr(_qt, "check_available", lambda **options: None)
+    def play(frames, options):
+        assert frames.sequence[0].geometry.representation.value == kind
+        assert not frames[0].is_mesh and len(frames[0].positions) > 0
+        seen.append(frames.sequence)
+    monkeypatch.setattr(_qt, "play", play)
+    visualize(path)
+    assert len(seen) == 1 and seen[0].closed

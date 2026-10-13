@@ -13,6 +13,18 @@ from open4d.demo import mesh_sequence, write_demo
 pytestmark = pytest.mark.cpu
 
 
+def test_view_previews_numpy_gaussian_geometry(tmp_path, monkeypatch):
+    import open4d
+    with open4d.data.SyntheticGaussianSequence(cache_dir=tmp_path / "data").load() as source:
+        path = open4d.encode(source, tmp_path / "cloud.o4d", codec="npz")
+    seen = []
+    monkeypatch.setattr("open4d.visualization._qt.check_available", lambda: None)
+    monkeypatch.setattr("open4d.visualization.visualize", lambda sequence, **_options:
+                        seen.append(sequence[0].geometry.representation.value))
+    assert main(["view", str(path)]) == 0
+    assert seen == ["gaussians"]
+
+
 def npz_o4d(tmp_path, monkeypatch):
     from open4d.codec import _api
     from open4d.codec._npz import NumPyZipCodec
@@ -97,13 +109,13 @@ def test_inspect_reads_mesh_o4d_header_without_decoding(tmp_path, capsys, monkey
     assert "topology" not in info and "first_frame" not in info
     container = info["container"]
     assert container["format"] == "o4d" and container["codec"] == "npz"
-    assert container["representation"] == "triangle_mesh" and container["decodes_to_mesh"] is True
+    assert container["representation"] == "geometry_sequence" and container["decodes_to_mesh"] is True
     assert container["dependency_mode"] == "independent"
     assert container["payload_files"] == 2
     assert 0 < container["payload_bytes"] < container["file_bytes"] == path.stat().st_size
     assert main(["inspect", str(path)]) == 0
     report = capsys.readouterr().out
-    assert "Container: O4D, codec npz, triangle_mesh" in report
+    assert "Container: O4D, codec npz, geometry_sequence" in report
     assert "Payload: 2 files" in report and "pass --decode" in report
     assert main(["inspect", str(path), "--input-fps", "10"]) == 1
     assert "omit --format and --input-fps" in capsys.readouterr().err
@@ -128,7 +140,7 @@ def test_inspect_gaussian_o4d_header_and_mesh_only_commands(tmp_path, capsys, mo
     assert "queen stores gaussian_splats; the viewer shows triangle meshes" in capsys.readouterr().err
 
 
-def test_inspect_o4d_usd_prim(tmp_path, capsys, monkeypatch):
+def test_inspect_o4d_usd_prim(tmp_path, capsys, monkeypatch, registered_research_codecs):
     pytest.importorskip("pxr.Usd")
     from open4d.native import NativeSequence, save_native
 

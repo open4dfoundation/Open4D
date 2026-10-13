@@ -26,7 +26,7 @@ def test_all_extra_contains_every_runtime_feature_dependency():
     feature_dependencies = set().union(*(
         map(requirement, dependencies)
         for name, dependencies in extras.items()
-        if name not in {"all", "dev"}
+        if name not in {"all", "dev", "docs"}
     ))
 
     assert feature_dependencies <= set(map(requirement, extras["all"]))

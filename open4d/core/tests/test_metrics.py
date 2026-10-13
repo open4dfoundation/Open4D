@@ -159,7 +159,7 @@ def test_opened_paths_close_when_comparison_fails(tmp_path, monkeypatch):
     assert len(opened) == 3 and all(item.closed for item in opened)
 
 
-def test_non_mesh_paths_are_rejected_and_closed(tmp_path, monkeypatch):
+def test_non_mesh_paths_are_rejected_and_closed(tmp_path, monkeypatch, registered_research_codecs):
     import open4d
 
     root = tmp_path.resolve() / "run"  # Native import refuses symlinked parents.

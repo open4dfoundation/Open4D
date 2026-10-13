@@ -227,7 +227,7 @@ def test_pack_requires_self_contained_native_payload(tmp_path, case):
 
 
 @pytest.mark.parametrize("codec", ["tvmc", "tsmc"])
-def test_dispatch_selects_embedded_codec_and_rejects_conflicts(tmp_path, monkeypatch, codec):
+def test_dispatch_selects_embedded_codec_and_rejects_conflicts(tmp_path, monkeypatch, codec, registered_research_codecs):
     source, _ = native_directory(tmp_path, codec)
     path = pack_o4d(source, tmp_path / "take.o4d")
     calls = []
@@ -242,11 +242,11 @@ def test_dispatch_selects_embedded_codec_and_rejects_conflicts(tmp_path, monkeyp
         open4d.load(path, fps=24)
 
 
-def test_raw_vdmc_o4d_keeps_existing_decoder_and_fps(tmp_path, monkeypatch):
+def test_raw_vdmc_o4d_keeps_existing_decoder_and_fps(tmp_path, monkeypatch, registered_research_codecs):
     path = tmp_path / "raw.o4d"
     path.write_bytes(b"ordinary VDMC stream (decoder stub)")
     calls = []
-    monkeypatch.setattr(_api.VDMC_CODEC, "decode", lambda source, **kw: calls.append((source, kw)))
+    monkeypatch.setattr(registered_research_codecs["vdmc"], "decode", lambda source, **kw: calls.append((source, kw)))
     open4d.load(path, fps=24)
     assert calls == [(path, {"fps": 24})]
 
@@ -278,7 +278,7 @@ def test_tsmc_real_entropy_stream_decodes_after_packing_and_removing_source(tmp_
 
 
 @pytest.mark.parametrize("codec", ["tvmc", "tsmc"])
-def test_usdc_o4d_usdc_api_round_trip_with_native_worker_stub(tmp_path, monkeypatch, codec):
+def test_usdc_o4d_usdc_api_round_trip_with_native_worker_stub(tmp_path, monkeypatch, codec, registered_research_codecs):
     pytest.importorskip("pxr.Usd")
     source, metadata = native_directory(tmp_path, codec)
     expected = {p.name: p.read_bytes() for p in source.iterdir() if p.name != "metadata.json"}
@@ -361,7 +361,7 @@ def test_json_rejects_overflow_and_ambiguous_values(data):
 
 
 @pytest.mark.parametrize('codec', ['vdmc', 'faster_vdmc'])
-def test_vdmc_adapter_carries_actual_backend_bytes_and_restores_timing(tmp_path, monkeypatch, codec):
+def test_vdmc_adapter_carries_actual_backend_bytes_and_restores_timing(tmp_path, monkeypatch, codec, registered_research_codecs):
     from open4d.codec import _o4d
     frames = [open4d.Frame(i + 7, t, open4d.TriangleMesh(
         [[float(i), 0, 0], [i + 1., 0, 0], [float(i), 1, 0]], [[0, 1, 2]]))

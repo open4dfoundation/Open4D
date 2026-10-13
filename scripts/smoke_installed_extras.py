@@ -196,7 +196,7 @@ def research(component: str, directory: Path) -> None:
             try:
                 open4d.encode(source, directory / f"{component}.o4d", codec=component)
             except CodecError as error:
-                assert "OPEN4D_RESEARCH_ROOT" in str(error), error
+                assert "pip install ./plugins/research" in str(error), error
             else:
                 raise AssertionError("research implementations must remain outside the wheel")
     finally:

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page %}{{ page.title }} - {% endif %}Open4D</title>
+  <meta name="description" content="{{ config.site_description }}">
+  {% if page and page.canonical_url %}<link rel="canonical" href="{{ page.canonical_url }}">{% endif %}
+  <link rel="stylesheet" href="{{ 'wiki.css' | url }}">
+  <script src="{{ 'wiki.js' | url }}" defer data-search-url="{{ 'search/search_index.json' | url }}"></script>
+</head>
+<body>
+  <a class="skip" href="#article">Skip to content</a>
+  <header class="masthead">
+    <a class="brand" href="{{ nav.homepage.url | url }}">Open4D <span>Python library</span></a>
+    <form class="search" role="search">
+      <label for="wiki-search">Search documentation</label>
+      <input id="wiki-search" type="search" placeholder="Search documentation" autocomplete="off" aria-controls="search-results">
+      <div id="search-results" hidden aria-live="polite"></div>
+    </form>
+    <a class="source" href="{{ config.repo_url }}">GitHub</a>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <details class="navigation" open>
+        <summary>Documentation</summary>
+        <nav aria-label="Documentation">
+        {% for item in nav %}<a {% if item.active %}aria-current="page"{% endif %} href="{{ item.url | url }}">{{ item.title }}</a>{% endfor %}
+        </nav>
+      </details>
+      <div class="version">Version {{ open4d_version | default('development') }}<br>Python 3.10 - 3.13</div>
+    </aside>
+    <main id="article" tabindex="-1">
+      <div class="article-tools"><span>Documentation</span>{% if page and page.edit_url %}<a href="{{ page.edit_url }}">View source</a>{% endif %}</div>
+      <article>{% if page %}{{ page.content }}{% else %}<h1>Page not found</h1><p>Use the documentation navigation or search to find a page.</p>{% endif %}</article>
+      <footer>Open4D core is MIT licensed. Research backends, datasets and models have separate terms. <a href="{{ 'licenses/' | url }}">Review the release ledger.</a></footer>
+    </main>
+    {% if page and page.toc %}
+    <aside class="contents" aria-label="On this page"><strong>On this page</strong>
+      {% for top in page.toc %}{% if top.children %}{% for item in top.children %}<a href="{{ item.url }}">{{ item.title }}</a>{% endfor %}{% else %}<a href="{{ top.url }}">{{ top.title }}</a>{% endif %}{% endfor %}
+    </aside>
+    {% endif %}
+  </div>
+</body>
+</html>

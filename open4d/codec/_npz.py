@@ -19,16 +19,24 @@ from zipfile import (
 
 import numpy as np
 
-from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh, PointCloud, GaussianCloud
 
 from ._protocol import CodecError
 from ._metadata import _json_value
 from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 
 _MAX_ARRAY_BYTES = 256 * 1024 * 1024
+_MAX_FRAME_BYTES = 512 * 1024 * 1024
+_MAX_FRAME_MEMBERS = 256
 # Worst-case RLE doubles its input, plus its length prefix and the NPY header.
 _MAX_RLE_MEMBER_BYTES = 2 * _MAX_ARRAY_BYTES + 8 + 4096
 _FIELDS = ("positions", "triangles", "colors", "normals", "texture_coordinates")
+_GEOMETRIES = {
+    "mesh": (TriangleMesh, _FIELDS, {"positions", "triangles"}),
+    "points": (PointCloud, ("positions", "colors", "normals"), {"positions"}),
+    "gaussians": (GaussianCloud, ("positions", "scales", "rotations", "opacities", "colors"),
+                  {"positions", "scales", "rotations", "opacities"}),
+}
 
 
 def _array_bytes(array: np.ndarray) -> bytes:
@@ -50,16 +58,42 @@ def _array_from_bytes(payload: bytes) -> np.ndarray:
     return np.load(BytesIO(payload), allow_pickle=False, max_header_size=4096)
 
 
-def _read_array(archive: ZipFile, name: str, codec: "NumPyZipCodec") -> np.ndarray:
+def _member_charge(archive: ZipFile, member, codec: "NumPyZipCodec") -> int:
+    """Bound an RLE expansion from its header before allocating any array."""
+    if not codec.rle:
+        return member.file_size
+    with archive.open(member) as stream:
+        version = np.lib.format.read_magic(stream)
+        readers = {(1, 0): np.lib.format.read_array_header_1_0,
+                   (2, 0): np.lib.format.read_array_header_2_0}
+        if version not in readers:
+            raise CodecError("unsupported array NPY version")
+        shape, _, dtype = readers[version](stream, max_header_size=4096)
+        if (dtype != np.uint8 or len(shape) != 1 or shape[0] < 8
+                or shape[0] != member.file_size - stream.tell()):
+            raise CodecError("RLE array payload must contain encoded bytes")
+        prefix = stream.read(8)
+        if len(prefix) != 8:
+            raise CodecError("invalid RLE payload")
+        expanded = int.from_bytes(prefix, "little")
+        if expanded > _MAX_ARRAY_BYTES:
+            raise CodecError("RLE payload length outside limits")
+        return max(member.file_size, expanded)
+
+
+def _read_array(archive: ZipFile, name: str, codec: "NumPyZipCodec", budget=None) -> np.ndarray:
     try:
         member = archive.getinfo(f"{name}.npy")
         limit = _MAX_RLE_MEMBER_BYTES if codec.rle else _MAX_ARRAY_BYTES
         if not 0 < member.file_size <= limit:
             raise CodecError("array payload outside limits")
+        expanded_bytes = _member_charge(archive, member, codec)
+        if budget is not None:
+            if expanded_bytes > budget[0]:
+                raise CodecError("aggregate frame array payload outside limits")
+            budget[0] -= expanded_bytes
         value = _array_from_bytes(archive.read(member))
         if codec.rle:
-            if value.dtype != np.uint8 or value.ndim != 1:
-                raise CodecError("RLE array payload must contain encoded bytes")
             value = _array_from_bytes(codec.unpack(value.tobytes()))
         return value
     except (BadZipFile, KeyError, ValueError, TypeError) as error:
@@ -105,19 +139,30 @@ class _ZipProvider:
         except BadZipFile as error:
             raise CodecError(f"invalid array payload frame {index}: {error}") from error
         with archive:
+            budget = [_MAX_FRAME_BYTES]
             values = {
-                name: _read_array(archive, path, self.codec)
+                name: _read_array(archive, path, self.codec, budget)
                 for name, path in arrays.items()
                 if name != "attributes"
             }
             attributes = {
-                name: _read_array(archive, path, self.codec)
+                name: _read_array(archive, path, self.codec, budget)
                 for name, path in arrays.get("attributes", {}).items()
             }
+        geometry_type = _GEOMETRIES[record.get("representation", "mesh")][0]
+        geometry = geometry_type(**values, attributes=attributes)
+        if geometry_type is GaussianCloud:
+            # Canonical GaussianCloud quaternions are already normalized.
+            # Preserve their exact float bit patterns through a lossless codec.
+            rotations = values["rotations"]
+            norms = np.linalg.norm(rotations, axis=1)
+            if (rotations.dtype == geometry.rotations.dtype
+                    and np.allclose(norms, 1, rtol=0, atol=4 * np.finfo(rotations.dtype).eps)):
+                object.__setattr__(geometry, "rotations", rotations)
         return Frame(
             frame_index=record["frame_index"],
             timestamp=record["timestamp"],
-            geometry=TriangleMesh(**values, attributes=attributes),
+            geometry=geometry,
             metadata=record.get("metadata", {}),
         )
 
@@ -126,12 +171,13 @@ class _ZipProvider:
 
 
 class NumPyZipCodec:
-    """Losslessly carry standard NumPy frame arrays in standalone O4D."""
+    """Losslessly carry mesh, point and Gaussian frame arrays in O4D."""
 
     suffixes = (".o4d",)
     backend = "python"
     lossless = True
-    preserves = (*_FIELDS, "attributes")
+    preserves = (*_FIELDS, "scales", "rotations", "opacities", "attributes")
+    representation = "geometry_sequence"
 
     def __init__(
         self,
@@ -173,7 +219,7 @@ class NumPyZipCodec:
             raise CodecError("RLE payload length does not match its bounded header")
         return np.repeat(pairs[:, 1], pairs[:, 0]).tobytes()
 
-    def _member(self, value: np.ndarray, label: str) -> bytes:
+    def _member(self, value: np.ndarray, label: str, budget=None) -> bytes:
         # Enforce the decoder's bound here so encode never publishes an
         # artifact that its own decoder would reject.
         payload = _array_bytes(value)
@@ -181,9 +227,17 @@ class NumPyZipCodec:
             raise CodecError(
                 f"{self.id} array {label} is {len(payload)} bytes; the limit is {_MAX_ARRAY_BYTES}"
             )
+        original_bytes = len(payload)
+        if budget is not None and original_bytes > budget[0]:
+            raise CodecError("aggregate frame array payload outside limits")
         payload = self.pack(payload)
         if self.rle:
             payload = _array_bytes(np.frombuffer(payload, dtype=np.uint8))
+        if budget is not None:
+            charge = max(original_bytes, len(payload))
+            if charge > budget[0]:
+                raise CodecError("aggregate frame array payload outside limits")
+            budget[0] -= charge
         return payload
 
     def can_decode(self, source: Path) -> bool:
@@ -210,7 +264,7 @@ class NumPyZipCodec:
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
             "version": 1, "codec": self.id,
-            "native": {"profile": f"{self.id}/1", "rle": self.rle},
+            "native": {"profile": f"{self.id}/2", "rle": self.rle},
             "metadata": _json_value(sequence.metadata, "sequence"),
             "topology": sequence.topology.value,
             "has_constant_vertex_count": sequence.has_constant_vertex_count,
@@ -221,22 +275,31 @@ class NumPyZipCodec:
         with tempfile.TemporaryDirectory(prefix="open4d-arrays-") as directory:
             native = Path(directory)
             for ordinal, frame in enumerate(sequence):
+                representation = frame.geometry.representation.value
+                if representation not in _GEOMETRIES:
+                    raise TypeError(f"array codecs do not support {representation!r} frames")
+                fields = _GEOMETRIES[representation][1]
+                member_count = sum(getattr(frame.geometry, name) is not None for name in fields)
+                if member_count + len(frame.geometry.attributes) > _MAX_FRAME_MEMBERS:
+                    raise CodecError("frame array member count outside limits")
+                budget = [_MAX_FRAME_BYTES]
                 arrays = {}
                 with ZipFile(native / f"frame_{ordinal:06d}.npz", "w", compression=self.compression,
                              compresslevel=level) as archive:
-                    for name in _FIELDS:
+                    for name in fields:
                         value = getattr(frame.geometry, name)
                         if value is not None:
-                            archive.writestr(f"{name}.npy", self._member(value, f"frame {ordinal} {name}"))
+                            archive.writestr(f"{name}.npy", self._member(value, f"frame {ordinal} {name}", budget))
                             arrays[name] = name
                     attributes = {}
                     for number, (name, value) in enumerate(frame.geometry.attributes.items()):
                         key = f"attribute_{number:04d}"
-                        archive.writestr(f"{key}.npy", self._member(value, f"frame {ordinal} attribute {name!r}"))
+                        archive.writestr(f"{key}.npy", self._member(value, f"frame {ordinal} attribute {name!r}", budget))
                         attributes[name] = key
                     arrays["attributes"] = attributes
                 manifest["frames"].append({
                     "frame_index": frame.frame_index, "timestamp": frame.timestamp,
+                    "representation": representation,
                     "metadata": _json_value(frame.metadata, f"frame {ordinal}"), "arrays": arrays,
                 })
             (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
@@ -254,10 +317,17 @@ class NumPyZipCodec:
             native = Path(temporary.name) / "native"
             unpack_o4d(source, native)
             manifest = json.loads((native / "metadata.json").read_text(encoding="utf-8"))
+            decoder = NumPyZipCodec(self.id, rle=manifest["native"]["rle"])
             for ordinal, frame in enumerate(manifest["frames"]):
+                representation = frame.get("representation", "mesh")
+                if representation not in _GEOMETRIES:
+                    raise CodecError("invalid array frame representation")
+                if manifest["native"]["profile"] == f"{self.id}/1" and representation != "mesh":
+                    raise CodecError("array profile version 1 supports mesh frames only")
+                _, fields, required = _GEOMETRIES[representation]
                 arrays = frame.get("arrays")
-                if (not isinstance(arrays, dict) or not {"positions", "triangles"} <= set(arrays)
-                        or not set(arrays) <= {*_FIELDS, "attributes"}
+                if (not isinstance(arrays, dict) or not required <= set(arrays)
+                        or not set(arrays) <= {*fields, "attributes"}
                         or any(value != name for name, value in arrays.items() if name != "attributes")):
                     raise CodecError("invalid mesh array field index")
                 attributes = arrays.get("attributes", {})
@@ -268,9 +338,12 @@ class NumPyZipCodec:
                 expected.update(f"{key}.npy" for key in attributes.values())
                 with ZipFile(native / f"frame_{ordinal:06d}.npz") as archive:
                     members = archive.namelist()
+                    if len(members) > _MAX_FRAME_MEMBERS:
+                        raise CodecError("frame array member count outside limits")
+                    if sum(_member_charge(archive, item, decoder) for item in archive.infolist()) > _MAX_FRAME_BYTES:
+                        raise CodecError("aggregate frame array payload outside limits")
                     if len(members) != len(set(members)) or set(members) != expected:
                         raise CodecError("unexpected NPZ frame arrays")
-            decoder = NumPyZipCodec(self.id, rle=manifest["native"]["rle"])
             return Sequence(_ZipProvider(temporary, native, manifest, decoder))
         except BaseException:
             temporary.cleanup()

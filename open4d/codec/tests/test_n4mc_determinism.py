@@ -11,7 +11,7 @@ from open4d.codec.tests.test_research_cpu import moving_cube
 
 
 @pytest.mark.gpu
-def test_n4mc_cuda_decode_is_stable_in_fresh_processes(tmp_path):
+def test_n4mc_cuda_decode_is_stable_in_fresh_processes(tmp_path, registered_research_codecs):
     torch = pytest.importorskip("torch")
     pytest.importorskip("point_cloud_utils")
     pytest.importorskip("skimage")

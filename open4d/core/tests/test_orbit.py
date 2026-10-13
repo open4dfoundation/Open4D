@@ -262,7 +262,7 @@ def fake_runtime(tmp_path):
     return runtime
 
 
-def test_reconstruct_converts_orbit_input_inside_the_run(tmp_path, fake_runtime):
+def test_reconstruct_converts_orbit_input_inside_the_run(tmp_path, fake_runtime, registered_research_methods):
     import open4d
 
     make_corpus(tmp_path / "data", frames=4)
@@ -301,7 +301,7 @@ def test_reconstruct_validates_orbit_options_before_creating_output(tmp_path, fa
     assert "gs_tools" not in sys.modules
 
 
-def test_reconstruct_caches_depth_priors_with_their_own_interpreter(tmp_path, fake_runtime):
+def test_reconstruct_caches_depth_priors_with_their_own_interpreter(tmp_path, fake_runtime, registered_research_methods):
     import open4d
 
     make_corpus(tmp_path / "data")

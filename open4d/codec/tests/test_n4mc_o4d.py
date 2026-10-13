@@ -104,7 +104,7 @@ def test_n4mc_native_usdc_preserves_compressed_state_without_decoding(tmp_path, 
     assert repacked.read_bytes() == expected
 
 
-def test_corrupt_n4mc_o4d_fails_before_loading_model(tmp_path, monkeypatch):
+def test_corrupt_n4mc_o4d_fails_before_loading_model(tmp_path, monkeypatch, registered_research_codecs):
     source = tmp_path / "original.n4d"
     legacy_archive(source)
     artifact = migrate_legacy(source, tmp_path / "original.o4d")
@@ -118,7 +118,7 @@ def test_corrupt_n4mc_o4d_fails_before_loading_model(tmp_path, monkeypatch):
 
 @pytest.mark.torch
 @pytest.mark.slow
-def test_real_n4mc_mesh_usdc_o4d_decode_matches_legacy_latents(tmp_path):
+def test_real_n4mc_mesh_usdc_o4d_decode_matches_legacy_latents(tmp_path, registered_research_codecs):
     pytest.importorskip("pxr.Usd")
     pytest.importorskip("torch")
     pytest.importorskip("trimesh")

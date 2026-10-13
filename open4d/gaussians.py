@@ -170,6 +170,11 @@ def _runtime(path: str | Path | None) -> Path:
     return root
 
 
+def _python(value: str | Path | None, method: str) -> str:
+    """The method's interpreter: python=, then OPEN4D_<METHOD>_PYTHON, then this one."""
+    return str(value or os.environ.get(f"OPEN4D_{method.upper()}_PYTHON") or sys.executable)
+
+
 def _run(runtime: Path, python: str, arguments: Sequence[str]) -> None:
     # gs_tools imports open4d and the streamer package. Use the runtime's own
     # checkout for both rather than whatever the CUDA environment has installed.
@@ -385,7 +390,7 @@ def reconstruct_gaussians(
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
     root = _runtime(runtime)
-    executable = str(python or sys.executable)
+    executable = _python(python, method)
     config_path = Path(config).expanduser().resolve() if config else None
     if config_path is not None and not config_path.is_file():
         raise FileNotFoundError(config_path)
@@ -413,8 +418,10 @@ def reconstruct_gaussians(
             frame_count = sum(path.is_dir() and path.name[5:].isdigit() for path in source.glob("frame[0-9]*"))
         if frame_count < 2:
             raise ValueError("3DGStream needs frame000000 and at least one later frame")
+        gstream = os.environ.get("OPEN4D_3DGSTREAM_ROOT")
+        gstream = Path(gstream).expanduser() if gstream else root.parent / "3dgstream"
         cache = (Path(ntc).expanduser().resolve() if ntc else
-                 root.parent / "3dgstream" / "ntc" / "flame_steak_ntc_params_F_4.pth")
+                 gstream / "ntc" / "flame_steak_ntc_params_F_4.pth")
         if not cache.is_file():
             raise FileNotFoundError(f"3DGStream NTC initialization checkpoint not found: {cache}")
         init_dir = Path(initial_model).expanduser().resolve() if initial_model else output / "init"
@@ -580,7 +587,7 @@ def encode_gaussians(
     destination = Path(output).expanduser().resolve()
     if destination.exists():
         raise FileExistsError(destination)
-    root, executable = _vega_runtime(runtime), str(python or sys.executable)
+    root, executable = _vega_runtime(runtime), _python(python, "vega")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".open4d-vega-", dir=destination.parent) as folder:
         work = Path(folder)
@@ -610,7 +617,7 @@ def decode_gaussians(
     source = Path(source).expanduser().resolve()
     if not (source / "manifest.json").is_file() or not (source / "color_model.pt").is_file():
         raise FileNotFoundError(f"No native Vega bitstream at {source}")
-    return VegaRun(source, _vega_runtime(runtime), str(python or sys.executable)).decode()
+    return VegaRun(source, _vega_runtime(runtime), _python(python, "vega")).decode()
 
 
 class _VegaCodec:

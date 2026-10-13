@@ -110,7 +110,7 @@ def native_run(tmp_path, codec):
 
 
 @pytest.mark.parametrize("codec", sorted(NEURAL_CODECS))
-def test_native_import_excludes_dense_exports_and_survives_source_removal(tmp_path, codec):
+def test_native_import_excludes_dense_exports_and_survives_source_removal(tmp_path, codec, registered_research_codecs):
     source, options = native_run(tmp_path, codec)
     with open4d.import_native(source, codec=codec, timestamps=[.125, .875], frame_indices=[12, 40],
                              metadata={"units": "m"}, frame_metadata=[{"label": "key"}, {"label": "later"}], **options) as native:
@@ -135,7 +135,7 @@ def test_native_import_excludes_dense_exports_and_survives_source_removal(tmp_pa
 
 
 @pytest.mark.parametrize("codec", sorted(NEURAL_CODECS))
-def test_self_contained_usdc_restores_identical_native_bytes_without_runtime(tmp_path, codec, monkeypatch):
+def test_self_contained_usdc_restores_identical_native_bytes_without_runtime(tmp_path, codec, monkeypatch, registered_research_codecs):
     pytest.importorskip("pxr.Usd")
     import open4d.native as module
     monkeypatch.setattr(module, "run", lambda *a, **k: pytest.fail("USD interchange must not execute native models"))
@@ -191,7 +191,7 @@ def test_legacy_compressed_usd_restores_bytes_and_exports_renamed_prim(tmp_path,
 
 
 @pytest.mark.parametrize("codec", sorted(NEURAL_CODECS))
-def test_public_encode_accepts_native_research_outputs(tmp_path, codec):
+def test_public_encode_accepts_native_research_outputs(tmp_path, codec, registered_research_codecs):
     source, options = native_run(tmp_path, codec)
     result = open4d.encode(source, tmp_path / "encoded.o4d", codec=codec, fps=12, **options)
     assert inspect_o4d(result)["sequence"]["frames"][1]["timestamp"] == 1 / 12
@@ -202,7 +202,7 @@ def test_public_encode_accepts_native_research_outputs(tmp_path, codec):
 
 
 @pytest.mark.parametrize("config_file", [False, True])
-def test_3dgstream_training_config_retains_saved_decoder_defaults(tmp_path, config_file):
+def test_3dgstream_training_config_retains_saved_decoder_defaults(tmp_path, config_file, registered_research_codecs):
     source, _ = native_run(tmp_path, "3dgstream")
     config = {"iterations": 150}
     if config_file:
@@ -215,7 +215,7 @@ def test_3dgstream_training_config_retains_saved_decoder_defaults(tmp_path, conf
     assert profile["rotate_sh"] is True and profile["only_mlp"] is False
 
 
-def test_3dgstream_explicit_configuration_overrides_saved_defaults(tmp_path):
+def test_3dgstream_explicit_configuration_overrides_saved_defaults(tmp_path, registered_research_codecs):
     source, _ = native_run(tmp_path, "3dgstream")
     config = {"sh_degree": 2, "rotate_sh": False, "only_mlp": False}
     artifact = open4d.encode(source, tmp_path / "gstream.o4d", codec="3dgstream", config=config)

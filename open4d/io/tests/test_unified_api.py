@@ -102,10 +102,19 @@ def test_top_level_api_exports_visualize():
     assert callable(open4d.visualize)
 
 
-@pytest.mark.parametrize("codec", ["draco", "raw", "npz", "temporal-delta"])
+@pytest.mark.parametrize("codec", ["draco", "temporal-delta"])
 def test_utility_codecs_are_not_public_choices(tmp_path, codec):
     with pytest.raises(ValueError, match="unknown codec"):
         open4d.encode(sequence(), tmp_path / "take.o4d", codec=codec)
+
+
+@pytest.mark.parametrize("codec", ["raw", "npz"])
+def test_public_array_codecs_roundtrip_without_research_plugins(tmp_path, codec):
+    with sequence() as original:
+        path = open4d.encode(original, tmp_path / "take.o4d", codec=codec)
+        with open4d.decode(path) as restored:
+            np.testing.assert_array_equal(restored[0].geometry.positions, original[0].geometry.positions)
+            np.testing.assert_array_equal(restored[0].geometry.triangles, original[0].geometry.triangles)
 
 
 def test_encoding_requires_an_explicit_codec(tmp_path):

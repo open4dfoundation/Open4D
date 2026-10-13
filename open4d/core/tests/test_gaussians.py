@@ -96,7 +96,10 @@ def test_missing_ply_dependency_has_install_hint(monkeypatch):
 
 
 @pytest.fixture
-def cli_runtime(tmp_path):
+def cli_runtime(tmp_path, monkeypatch):
+    for method in ("QUEEN", "3DGSTREAM"):
+        monkeypatch.delenv(f"OPEN4D_{method}_PYTHON", raising=False)
+        monkeypatch.delenv(f"OPEN4D_{method}_ROOT", raising=False)
     runtime = tmp_path / "runtime with spaces" / "gs_tools"
     package = runtime / "gs_tools"
     package.mkdir(parents=True)
@@ -172,6 +175,39 @@ def test_3dgstream_does_not_return_initial_model_as_completed_sequence(tmp_path,
                                        initial_iterations=10, ntc=ntc)
     assert ply.read_text() == "fixture"
     assert not (tmp_path / "output").exists()
+
+
+def test_3dgstream_takes_its_interpreter_and_checkout_from_the_environment(tmp_path, cli_runtime, monkeypatch):
+    scene = tmp_path / "scene"
+    for index in range(2):
+        (scene / f"frame{index:06d}").mkdir(parents=True)
+    initial = tmp_path / "initial"
+    ply = initial / "point_cloud" / "iteration_10" / "point_cloud.ply"
+    ply.parent.mkdir(parents=True)
+    ply.write_text("fixture")
+    checkout = tmp_path / "3DGStream clone"
+    ntc = checkout / "ntc" / "flame_steak_ntc_params_F_4.pth"
+    ntc.parent.mkdir(parents=True)
+    ntc.write_text("fixture")
+    monkeypatch.setenv("OPEN4D_3DGSTREAM_PYTHON", "/envs/3dgstream/bin/python")
+    monkeypatch.setenv("OPEN4D_3DGSTREAM_ROOT", str(checkout))
+    calls = []
+    monkeypatch.setattr(gaussians, "_run", lambda runtime, python, arguments: calls.append((python, arguments)))
+    with pytest.raises(RuntimeError, match="every Gaussian frame"):
+        gaussians.reconstruct_gaussians(scene, tmp_path / "output", method="3dgstream",
+                                       runtime=cli_runtime, initial_model=initial,
+                                       initial_iterations=10)
+    [(python, arguments)] = calls
+    assert python == "/envs/3dgstream/bin/python"
+    assert arguments[arguments.index("--ntc-path") + 1] == str(ntc)
+
+
+def test_method_interpreter_prefers_argument_then_environment(monkeypatch):
+    monkeypatch.delenv("OPEN4D_VEGA_PYTHON", raising=False)
+    assert gaussians._python(None, "vega") == sys.executable
+    monkeypatch.setenv("OPEN4D_VEGA_PYTHON", "/envs/vega/bin/python")
+    assert gaussians._python(None, "vega") == "/envs/vega/bin/python"
+    assert gaussians._python("/other/python", "vega") == "/other/python"
 
 
 def test_reconstruction_refuses_existing_output_before_launch(tmp_path, cli_runtime):
@@ -507,7 +543,7 @@ def test_real_vega_round_trip(tmp_path):
     assert np.all((colors >= 0) & (colors <= 1))
 
 
-def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch):
+def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch, registered_research_codecs):
     import open4d
     from open4d.codec import inspect_o4d
     from open4d.native import NativeSequence
@@ -559,7 +595,7 @@ def test_missing_runtimes_name_their_variables(tmp_path, monkeypatch):
         gaussians.VegaRun(tmp_path / "native", tmp_path / "missing", sys.executable).decode()
 
 
-def test_public_reconstruction_dispatch(tmp_path, monkeypatch):
+def test_public_reconstruction_dispatch(tmp_path, monkeypatch, registered_research_methods):
     import open4d
 
     calls = []
@@ -583,5 +619,5 @@ def test_public_rgbd_reconstruction_takes_color_positionally(monkeypatch):
     assert calls == [((depth,), {"color": rgb, "intrinsics": (1, 1, 0, 0)})]
     with pytest.raises(TypeError, match="both"):
         open4d.reconstruct(depth, rgb, color=rgb)
-    with pytest.raises(TypeError, match="omit output"):
+    with pytest.raises(ValueError, match="output must end"):
         open4d.reconstruct(depth, Path("mesh_folder"))
