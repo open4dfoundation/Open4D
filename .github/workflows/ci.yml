@@ -176,7 +176,8 @@ jobs:
         run: >-
           xvfb-run -a -s '-screen 0 1024x768x24'
           gdb -nx -batch --return-child-result
-          -ex 'set print thread-events off' -ex run -ex 'bt 32' --args
+          -ex 'set print thread-events off' -ex run
+          -ex 'python if gdb.selected_thread() is not None: gdb.execute("bt 32")' --args
           python -m pytest open4d/visualization/tests/test_real_player.py
           examples/visualization/tests/test_compare.py
           -k 'synthetic or empty or gif_after_single or live_viewer or sequential' --basetemp '${{ runner.temp }}/open4d-render'
