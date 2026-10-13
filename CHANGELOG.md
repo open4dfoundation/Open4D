@@ -43,7 +43,8 @@ versions may change the public API.
 - OBJ sequence loading retains vertex and corner UVs without changing position
   topology or following material/image paths.
 - Repeated Qt exports retain the application between viewers; texture shaders
-  declare float precision for OpenGL ES contexts.
+  declare float precision for OpenGL ES contexts. Comparison panes initialize
+  their shared contexts before geometry uploads and reuse them when revealed.
 
 ## [0.2.0] - Unreleased
 

@@ -139,9 +139,17 @@ class LiveWindow:
             column.addWidget(view, stretch=1)
             layout.addWidget(pane, stretch=1)
             self.panes[baseline], self.views[baseline], self.labels[baseline] = pane, view, label
-        self.panes[True].hide()
         self.window.setCentralWidget(central)
+        # Realize both native GL contexts together, before any item uploads.
+        # Creating the initially hidden comparison context after the current
+        # pane has already rendered can crash Qt's X11 composition/context
+        # sharing path when setVisible() first realizes that child widget.
         self.window.show()
+        self.application.processEvents()
+        if not all(view.isValid() for view in self.views.values()):
+            self.close()
+            raise RuntimeError("Qt could not initialize both OpenGL panes; use a desktop display")
+        self.panes[True].hide()
         self.application.processEvents()
 
     def _sync_camera(self, source):

@@ -158,3 +158,24 @@ def test_live_viewer_keeps_one_application_after_repeated_gifs(tmp_path):
         assert viewer._backend.application is application
         assert viewer.poll_events()
         assert np.any(viewer.capture_screen() < 240)
+
+
+def test_live_viewer_initializes_comparison_contexts_before_geometry():
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    pytest.importorskip("PyQt6.QtWidgets")
+    frame = mesh_sequence(side=8, frames=1)[0]
+    with Visualizer(width=640, height=320, elevation=30, distance=2) as viewer:
+        views = viewer._backend.views
+        contexts = {key: view.context() for key, view in views.items()}
+        assert all(view.isValid() for view in views.values()), "both panes must initialize before uploads"
+        assert all(context is not None for context in contexts.values())
+        assert contexts[False].shareGroup() is contexts[True].shareGroup()
+        viewer.add_geometry(frame)
+        for _ in range(3):
+            viewer.add_geometry(frame, baseline=True)
+            assert viewer.poll_events()
+            assert np.any(viewer.capture_screen(baseline=True) < 240)
+            viewer.remove_geometry(baseline=True)
+            assert viewer.poll_events()
+            assert views[True].context() is contexts[True], "revealing a pane must reuse its existing context"
