@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from open4d import Frame, MemoryFrameProvider, Sequence, PointCloud, GaussianCloud
-from open4d.codec import available_codecs, encode_sequence, decode_sequence, CodecError
+from open4d.codec import available_codecs, codec_info, encode_sequence, decode_sequence, CodecError
 from open4d.codec._npz import NumPyZipCodec, REFERENCE_CODECS
 from open4d.reconstruction import available_methods
 from open4d.reconstruction._registry import get_method
@@ -62,6 +62,22 @@ def test_plugin_discovery_is_lazy_and_uninstallation_is_observed(entries, tmp_pa
     assert entry.calls == 1
     entries.clear()
     assert "external" not in {info.id for info in available_codecs()}
+
+
+def test_selected_plugin_capabilities_are_resolved_without_loading_other_providers(entries):
+    selected = Entry("selected", "open4d.codecs", lambda: NumPyZipCodec("selected"))
+    unrelated = Entry("unrelated", "open4d.codecs", ImportError("optional CUDA missing"))
+    entries.extend([selected, unrelated])
+    assert codec_info("selected").representation == "plugin"
+    assert codec_info("selected").preserves == ()
+    assert selected.calls == unrelated.calls == 0
+    assert codec_info("selected", resolve=True).representation == "geometry_sequence"
+    assert selected.calls == 1 and unrelated.calls == 0
+    assert codec_info("selected", resolve=True).representation == "geometry_sequence"
+    assert selected.calls == 1
+    # The global discovery contract stays metadata-only, even after selection.
+    assert {info.id for info in available_codecs()} >= {"selected", "unrelated"}
+    assert unrelated.calls == 0
 
 
 def test_bad_plugin_does_not_break_core_discovery_or_operations(entries, tmp_path):
@@ -213,3 +229,23 @@ def test_aggregate_budget_uses_the_artifact_rle_setting_not_the_registry_default
     monkeypatch.setattr(_npz, "_array_from_bytes", lambda *args: pytest.fail("budget must precede allocation"))
     with pytest.raises(CodecError, match="aggregate frame"):
         NumPyZipCodec().decode(artifact)
+
+
+def test_cache_identity_accepts_mixed_entry_point_implementations(entries, tmp_path):
+    from open4d.codec._api import _codec
+
+    class VendoredEntry(Entry):
+        def __eq__(self, other):
+            # Some vendored importlib.metadata versions compare private APIs
+            # absent on the standard library's EntryPoint implementation.
+            raise AttributeError("'EntryPoint' object has no attribute '_key'")
+
+    first = VendoredEntry("mixed", "open4d.codecs", lambda: NumPyZipCodec("mixed"))
+    first.value = "package:factory"
+    entries.append(first)
+    resolved = _codec("mixed", tmp_path / "take.o4d")
+    second = Entry("mixed", "open4d.codecs", AssertionError("same provider must retain the loaded codec"))
+    second.value = "package:factory"
+    entries[0] = second
+    assert _codec("mixed", tmp_path / "take.o4d") is resolved
+    assert first.calls == 1 and second.calls == 0

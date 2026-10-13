@@ -20,7 +20,7 @@ LINK = re.compile(r"(!?\[[^\]]*\]\()([^\s)]+)(\))")
 PUBLIC = {
     "open4d": ["load", "save", "encode", "decode", "reconstruct", "stream", "send", "receive", "visualize", "available_codecs"],
     "open4d.core": ["Sequence", "Frame", "TriangleMesh", "PointCloud", "GaussianCloud"],
-    "open4d.codec": ["register_codec", "inspect_o4d", "pack_o4d", "unpack_o4d"],
+    "open4d.codec": ["codec_info", "register_codec", "inspect_o4d", "pack_o4d", "unpack_o4d"],
     "open4d.reconstruction": ["available_methods", "MultiviewCapture"],
     "open4d.reconstruction.rgbd": ["RGBDCapture", "load_capture", "reconstruct"],
     "open4d.data": ["DatasetSpec", "DownloadableDataset", "SyntheticMeshSequence", "SyntheticGaussianSequence"],

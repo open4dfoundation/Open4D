@@ -25,6 +25,7 @@ def test_n4mc_cuda_decode_is_stable_in_fresh_processes(tmp_path, registered_rese
     program = """
 import hashlib, json, sys, torch
 from open4d.codec import decode_sequence
+from open4d.codec._n4mc import N4MC_CODEC
 from open4d.codec._research import research_module
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = False
@@ -39,7 +40,9 @@ def checked(self, *arguments):
     assert torch.backends.cudnn.allow_tf32 == before[3]
     return original(self, *arguments)
 model.decode_quantized_latent = checked
-with decode_sequence(sys.argv[1], device='cuda') as decoded:
+# This adapter contract test passes the implementation explicitly: the parent
+# fixture's application registration cannot cross a subprocess boundary.
+with decode_sequence(sys.argv[1], codec=N4MC_CODEC, device='cuda') as decoded:
     frames = [{'index': f.frame_index, 'timestamp': f.timestamp,
                'positions': hashlib.sha256(f.geometry.positions.tobytes()).hexdigest(),
                'triangles': hashlib.sha256(f.geometry.triangles.tobytes()).hexdigest()}

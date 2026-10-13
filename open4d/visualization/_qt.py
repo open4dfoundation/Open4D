@@ -29,6 +29,18 @@ from ._deps import require
 from . import _frames as render_frames
 
 
+# Qt's application owns process-wide platform/OpenGL state. Keep it alive
+# between standalone GIF calls and explicit-lifetime viewers instead of
+# repeatedly destroying/recreating it as a temporary Scene goes out of scope.
+_APPLICATION = None
+
+
+def _application(QtWidgets):
+    global _APPLICATION
+    _APPLICATION = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    return _APPLICATION
+
+
 def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
     """The few numbers worth showing while a sequence plays.
 
@@ -82,9 +94,7 @@ class Scene:
         from pyqtgraph import Vector
 
         # Qt refuses to build widgets before an application exists.
-        self.application = (
-            QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        )
+        self.application = _application(QtWidgets)
         self.frames = frames
         self.args = args
         self.index = 0

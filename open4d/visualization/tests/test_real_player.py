@@ -137,3 +137,24 @@ def test_live_viewer_displays_a_real_tcp_stream():
         sender.join(timeout=3)
     assert not sender.is_alive() and not errors and sent == [3]
     assert not source.closed
+
+
+def test_live_viewer_keeps_one_application_after_repeated_gifs(tmp_path):
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    QtWidgets = pytest.importorskip("PyQt6.QtWidgets")
+    sequence = mesh_sequence(side=8, frames=2)
+    application = None
+    for index in range(2):
+        render_gif(sequence, tmp_path / f"repeat-{index}.gif", width=320, height=240)
+        current = QtWidgets.QApplication.instance()
+        assert current is not None, "rendering must retain the process-wide Qt application"
+        if application is not None:
+            assert current is application
+        application = current
+    with Visualizer(width=640, height=240, elevation=90, distance=2.5) as viewer:
+        viewer.add_geometry(sequence[0])
+        viewer.add_geometry(sequence[0], baseline=True)
+        assert viewer._backend.application is application
+        assert viewer.poll_events()
+        assert np.any(viewer.capture_screen() < 240)

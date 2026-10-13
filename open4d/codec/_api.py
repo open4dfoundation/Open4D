@@ -45,6 +45,7 @@ class _PluginCodec:
     suffixes = (".o4d",)
     backend = "entry-point"
     representation = "plugin"
+    preserves = ()  # Capabilities are unknown until this provider is selected.
 
     def __init__(self, entry):
         self.id = entry.name
@@ -77,6 +78,14 @@ class _PluginCodec:
         return probe_codec(source) == self.id
 
 
+def _entry_identity(entry):
+    # Standard-library and vendored EntryPoint implementations can coexist
+    # after loading optional dependencies. Their equality methods may rely on
+    # incompatible private APIs; compare only public registration metadata.
+    value = getattr(entry, "value", None)
+    return (entry.name, entry.group, value, id(entry) if value is None else None)
+
+
 def _all_codecs():
     installed = entry_points("open4d.codecs")
     plugins = {}
@@ -84,7 +93,8 @@ def _all_codecs():
         if identifier in _CODECS:
             continue
         previous = _PLUGIN_CODECS.get(identifier)
-        plugins[identifier] = (previous if previous is not None and previous.entry == entry
+        plugins[identifier] = (previous if previous is not None
+                               and _entry_identity(previous.entry) == _entry_identity(entry)
                                else _PluginCodec(entry))
     _PLUGIN_CODECS.clear()
     _PLUGIN_CODECS.update(plugins)
@@ -102,22 +112,47 @@ def register_codec(codec: Codec, *, replace: bool = False) -> None:
     _CODECS[codec.id] = codec
 
 
+def _describe(codec: Codec) -> CodecInfo:
+    return CodecInfo(
+        codec.id,
+        tuple(codec.suffixes),
+        getattr(codec, "backend", "custom"),
+        getattr(codec, "lossless", None),
+        tuple(getattr(codec, "preserves", ("positions", "triangles"))),
+        getattr(codec, "representation", "triangle_mesh"),
+    )
+
+
 def available_codecs() -> tuple[CodecInfo, ...]:
     """List NumPy codecs and installed entry points without importing plugins.
 
     An installed adapter can still require an external licensed runtime.
     """
     return tuple(
-        CodecInfo(
-            codec.id,
-            tuple(codec.suffixes),
-            getattr(codec, "backend", "custom"),
-            getattr(codec, "lossless", None),
-            tuple(getattr(codec, "preserves", ("positions", "triangles"))),
-            getattr(codec, "representation", "triangle_mesh"),
-        )
+        _describe(codec)
         for codec in sorted(_all_codecs().values(), key=lambda item: item.id)
     )
+
+
+def codec_info(identifier: str, *, resolve: bool = False) -> CodecInfo:
+    """Describe one installed codec, optionally loading its selected provider.
+
+    Discovery stays metadata-only by default. A lazy entry point has unknown
+    representation (``"plugin"``); ``resolve=True`` obtains truthful capabilities
+    from only that provider. This can import that plugin's optional dependencies
+    and raise CodecError if they are missing. Unrelated providers are not loaded.
+    """
+    if not isinstance(identifier, str) or not identifier:
+        raise ValueError("identifier must be a nonempty codec id")
+    if not isinstance(resolve, bool):
+        raise TypeError("resolve must be bool")
+    implementation = _all_codecs().get(identifier)
+    if implementation is None:
+        # Share the selection API's actionable missing-adapter error.
+        implementation = _codec(identifier, Path("."))
+    if resolve and isinstance(implementation, _PluginCodec):
+        implementation = implementation.resolve()
+    return _describe(implementation)
 
 
 def _codec(value: str | Codec | None, path: Path) -> Codec:

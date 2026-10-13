@@ -3,6 +3,7 @@
 from ._api import (
     CodecInfo,
     available_codecs,
+    codec_info,
     decode_sequence,
     encode_sequence,
     register_codec,
@@ -26,6 +27,7 @@ __all__ = [
     "O4DCodec",
     "TrackedMeshCodec",
     "available_codecs",
+    "codec_info",
     "decode_sequence",
     "encode_sequence",
     "register_codec",

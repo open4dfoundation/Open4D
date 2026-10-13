@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._qt import _mesh_shader, _qt
+from ._qt import _application, _mesh_shader, _qt
 from ._frames import bounds, vertex_colors
 
 
@@ -27,6 +27,9 @@ def _textured_item(gl):
                     }
                 """),
                 shaders.FragmentShader("""
+                    #ifdef GL_ES
+                    precision mediump float;
+                    #endif
                     uniform sampler2D u_texture;
                     varying vec2 v_uv;
                     void main() { gl_FragColor = texture2D(u_texture, v_uv); }
@@ -92,8 +95,8 @@ class LiveWindow:
     """Nonblocking window with linked current/baseline cameras and real GL items."""
 
     def __init__(self, options):
-        QtWidgets, _QtCore, self.gl = _qt()
-        self.application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        QtWidgets, QtCore, self.gl = _qt()
+        self.application = _application(QtWidgets)
         self.options = options
         self.is_open = True
         self.items = {}
@@ -116,6 +119,7 @@ class LiveWindow:
                 super().closeEvent(event)
 
         self.window = Window()
+        self.window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.window.setWindowTitle(options.title)
         self.window.resize(options.width, options.height)
         if options.x is not None:

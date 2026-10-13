@@ -35,6 +35,16 @@ versions may change the public API.
 - Publication remains blocked until the provenance ledger and actual
   maintainer approval are complete; plugins do not grant backend rights.
 
+### Fixed
+
+- Browser codec rungs resolve the selected adapter's capabilities without
+  importing unrelated providers. Plugin caches compare public entry-point
+  metadata across standard-library and vendored metadata implementations.
+- OBJ sequence loading retains vertex and corner UVs without changing position
+  topology or following material/image paths.
+- Repeated Qt exports retain the application between viewers; texture shaders
+  declare float precision for OpenGL ES contexts.
+
 ## [0.2.0] - Unreleased
 
 ### Added

@@ -262,6 +262,10 @@ the `open4d.codecs` entry point group. Reconstruction functions use
 `open4d.reconstruction`. Discovery is lazy; inspecting availability does not
 execute a plugin. Invalid, duplicate or unavailable plugins produce diagnostic
 errors when selected rather than silently overriding core codecs.
+Lazy providers report an unknown `plugin` representation until selected.
+Use `open4d.codec.codec_info("klt", resolve=True)` to load only that provider
+and inspect its actual representation and preserved attributes. The browser
+streamer uses this selection step for codec rungs, including core NumPy profiles.
 Entry points extend implementations of the reviewed O4D profiles in the core.
 A new native wire layout also needs a versioned profile and validation in the
 core; arbitrary plugin-defined extraction schemas are deliberately rejected.
@@ -328,6 +332,10 @@ For visual comparison, `open4d.visualize(decoded, baseline=source)` opens two
 panes with linked cameras and frame playback. Explicit RGB(A) texture arrays
 use the mesh's vertex or corner UVs; pass `texture=` and `baseline_texture=`.
 The caller supplies textures and does not lose them through hidden file lookup.
+OBJ loading preserves vertex or per-corner `vt` coordinates, including seams
+and negative indices. Material files and texture images are not fetched;
+load the image explicitly and pass its array to the viewer. Geometry-only OBJ
+readers retain their existing three-array return value.
 Metric comparisons remain separate from the viewer.
 
 For incremental geometry or a network receiver:
