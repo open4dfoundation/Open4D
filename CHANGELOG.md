@@ -45,6 +45,8 @@ versions may change the public API.
 - Repeated Qt exports retain the application between viewers; texture shaders
   declare float precision for OpenGL ES contexts. Comparison panes initialize
   their shared contexts before geometry uploads and reuse them when revealed.
+- Export viewers break item/view reference cycles and release GPU buffers while
+  their owning context is current; empty frames do not submit zero-length draws.
 
 ## [0.2.0] - Unreleased
 

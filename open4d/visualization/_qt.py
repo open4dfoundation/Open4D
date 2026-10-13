@@ -168,9 +168,33 @@ class Scene:
             self.point_item.setData(
                 pos=frame.positions, color=self._colors(frame)
             )
-        self.mesh_item.setVisible(frame.is_mesh)
-        self.point_item.setVisible(not frame.is_mesh)
+        visible = bool(len(frame.positions))
+        # A blank frame has no GPU draw. In particular, do not send zero-byte
+        # scatter buffers through driver attribute setup merely to draw zero
+        # vertices; the next populated frame switches the items back on.
+        self.mesh_item.setVisible(visible and frame.is_mesh)
+        self.point_item.setVisible(visible and not frame.is_mesh)
         return frame
+
+    def close(self) -> None:
+        """Release item/view cycles and buffers while this view's context is current."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        valid = self.view.isValid()
+        if valid:
+            self.view.makeCurrent()
+        try:
+            # pyqtgraph holds view -> items -> view references. Closing only
+            # the widget leaves its native context awaiting arbitrary cyclic
+            # GC, potentially while another viewer creates/renders a context.
+            self.view.clear()
+            self.mesh_item = None
+            self.point_item = None
+        finally:
+            if valid:
+                self.view.doneCurrent()
+        self.view.close()
 
     def grab(self, image_module):
         """Render the current frame and return it as a PIL image.
@@ -367,7 +391,7 @@ def play(frames, args) -> None:
             event_loop.exec()
     finally:
         window.close()
-        scene.view.close()
+        scene.close()
     if errors:
         raise errors[0]
 
@@ -421,5 +445,5 @@ def record(frames, args, output: Path) -> None:
 
         _save_gif(captured, output, durations)
     finally:
-        scene.view.close()
+        scene.close()
     print(f"wrote {output} ({output.stat().st_size / 1e6:.2f} MB)")

@@ -157,7 +157,7 @@ jobs:
       - name: Install virtual display and software OpenGL
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xauth libegl1 libgl1-mesa-dri libopengl0 \
+          sudo apt-get install -y xvfb xauth gdb libegl1 libgl1-mesa-dri libopengl0 \
             libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
             libxcb-shape0 libxcb-xinerama0
       - name: Install player and OpenUSD tier
@@ -175,6 +175,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: >-
           xvfb-run -a -s '-screen 0 1024x768x24'
+          gdb -nx -batch --return-child-result
+          -ex 'set print thread-events off' -ex run -ex 'bt 32' --args
           python -m pytest open4d/visualization/tests/test_real_player.py
           examples/visualization/tests/test_compare.py
           -k 'synthetic or empty or gif_after_single or live_viewer or sequential' --basetemp '${{ runner.temp }}/open4d-render'

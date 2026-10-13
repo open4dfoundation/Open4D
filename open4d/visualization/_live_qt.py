@@ -197,10 +197,14 @@ class LiveWindow:
                 item.setData(pos=frame.positions, color=self._colors(frame), size=self.options.point_size)
         else:
             if previous is not None:
+                # Do not keep the old item alive past its context-current
+                # teardown when switching textured/mesh/point rendering.
+                previous = None
                 self._remove_item(key)
             item = self._make_item(frame, texture)
             self.views[key[0]].addItem(item)
         self.items[key] = item, frame, texture, kind
+        item.setVisible(bool(len(frame.positions)))
         self.panes[True].setVisible(any(k[0] for k in self.items))
         self._refresh_labels()
         if reset_camera:
@@ -235,14 +239,20 @@ class LiveWindow:
     def _remove_item(self, key):
         item = self.items[key][0]
         view = self.views[key[0]]
-        if hasattr(item, "dispose"):
+        valid = view.isValid()
+        if valid:
             view.makeCurrent()
-            try:
+        try:
+            if hasattr(item, "dispose"):
                 item.dispose()
-            finally:
+            view.removeItem(item)
+            del self.items[key]
+            # Dropping the last item reference destroys its Qt GL buffers.
+            # Keep the owning context current until that destruction finishes.
+            item = None
+        finally:
+            if valid:
                 view.doneCurrent()
-        view.removeItem(item)
-        del self.items[key]
 
     def remove_geometry(self, key):
         self._remove_item(key)

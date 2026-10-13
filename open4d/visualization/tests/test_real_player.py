@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import warnings
 import threading
+import gc
+import weakref
 
 import numpy as np
 import pytest
@@ -179,3 +181,34 @@ def test_live_viewer_initializes_comparison_contexts_before_geometry():
             viewer.remove_geometry(baseline=True)
             assert viewer.poll_events()
             assert views[True].context() is contexts[True], "revealing a pane must reuse its existing context"
+
+
+def test_live_viewer_releases_previous_gif_views_without_cyclic_gc(tmp_path, monkeypatch):
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    from open4d.visualization import _qt
+
+    views = []
+    original = _qt.Scene
+
+    class TrackedScene(original):
+        def __init__(self, *args, **options):
+            super().__init__(*args, **options)
+            views.append(weakref.ref(self.view))
+
+    monkeypatch.setattr(_qt, "Scene", TrackedScene)
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        sequence = mesh_sequence(side=8, frames=2)
+        for index in range(3):
+            render_gif(sequence, tmp_path / f"released-{index}.gif", width=320, height=240)
+            assert all(view() is None for view in views), "closed GPU views must not wait for later cyclic GC"
+        with Visualizer(width=640, height=320) as viewer:
+            viewer.add_geometry(sequence[0])
+            viewer.add_geometry(sequence[0], baseline=True)
+            assert viewer.poll_events()
+            assert np.any(viewer.capture_screen() < 240)
+    finally:
+        if enabled:
+            gc.enable()

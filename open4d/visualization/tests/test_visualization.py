@@ -360,6 +360,9 @@ def test_lazy_decode_failure_returns_to_viewer_caller(monkeypatch, prefetch_erro
             self.view = QtWidgets.QWidget()
             self.index = 0
 
+        def close(self):
+            self.view.close()
+
         def show_frame(self, index):
             self.index = index % 2
             return frames[self.index]
@@ -396,6 +399,9 @@ def gif_scene(monkeypatch):
             self.index = 0
             self.view = SimpleNamespace(resize=lambda *a: None, close=lambda: closed.append(True))
             self.application = SimpleNamespace(processEvents=lambda: None)
+
+        def close(self):
+            self.view.close()
 
         def show_frame(self, index):
             self.index = index
