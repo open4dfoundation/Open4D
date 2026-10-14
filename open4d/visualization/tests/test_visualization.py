@@ -44,7 +44,8 @@ def test_framebuffer_rgb_padding_preserves_pixels(width):
         for column in range(width):
             framebuffer.setPixelColor(column, row, QtGui.QColor(*map(int, expected[row, column])))
     scene = Scene.__new__(Scene)
-    scene.view = SimpleNamespace(update=lambda: None, grabFramebuffer=lambda: framebuffer)
+    scene.view = SimpleNamespace(update=lambda: None, grabFramebuffer=lambda: framebuffer,
+                                 check_context=lambda: None)
     scene.application = SimpleNamespace(processEvents=lambda: None)
     scene.args = SimpleNamespace(width=width, height=4, no_metrics=True)
 
@@ -358,6 +359,7 @@ def test_lazy_decode_failure_returns_to_viewer_caller(monkeypatch, prefetch_erro
         def __init__(self, frames, args):
             self.application = application
             self.view = QtWidgets.QWidget()
+            self.view.check_context = lambda: None
             self.index = 0
 
         def close(self):

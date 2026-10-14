@@ -173,15 +173,26 @@ jobs:
           OPEN4D_TEST_GUI: "1"
           QT_QPA_PLATFORM: xcb
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: >-
-          xvfb-run -a -s '-screen 0 1024x768x24'
-          gdb -nx -batch --return-child-result
-          -ex 'set print thread-events off' -ex run
-          -ex 'python if gdb.selected_thread() is not None: gdb.execute("bt 32")' --args
-          python -m pytest open4d/visualization/tests/test_real_player.py
-          examples/visualization/tests/test_compare.py
-          -k 'synthetic or empty or gif_after_single or live_viewer or sequential' --basetemp '${{ runner.temp }}/open4d-render'
-          --junitxml '${{ runner.temp }}/open4d-render.xml'
+        run: |
+          render_args=(
+            open4d/visualization/tests/test_real_player.py
+            examples/visualization/tests/test_compare.py
+            -k 'synthetic or empty or gif_after_single or live_viewer or sequential'
+            --basetemp "$RUNNER_TEMP/open4d-render"
+            --junitxml "$RUNNER_TEMP/open4d-render.xml"
+          )
+          if xvfb-run -a -s '-screen 0 1024x768x24' python -m pytest "${render_args[@]}"; then
+            exit 0
+          else
+            render_status=$?
+          fi
+          # Collect a native trace only after failure; never mask the original exit.
+          xvfb-run -a -s '-screen 0 1024x768x24' \
+            gdb -nx -batch --return-child-result \
+            -ex 'set print thread-events off' -ex run \
+            -ex 'python if gdb.selected_thread() is not None: gdb.execute("bt 32")' --args \
+            python -m pytest "${render_args[@]}" || true
+          exit "$render_status"
       - name: Require the render tests to have run
         run: |
           python - <<'PY'

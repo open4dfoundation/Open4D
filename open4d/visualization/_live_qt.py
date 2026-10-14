@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._qt import _application, _mesh_shader, _qt
+from ._qt import _application, _guarded_view, _mesh_shader, _qt
 from ._frames import bounds, vertex_colors
 
 
@@ -103,7 +103,7 @@ class LiveWindow:
         self._syncing = False
         owner = self
 
-        class CameraView(self.gl.GLViewWidget):
+        class CameraView(_guarded_view(self.gl)):
             def mouseMoveEvent(self, event):
                 super().mouseMoveEvent(event)
                 owner._sync_camera(self)
@@ -149,6 +149,12 @@ class LiveWindow:
         if not all(view.isValid() for view in self.views.values()):
             self.close()
             raise RuntimeError("Qt could not initialize both OpenGL panes; use a desktop display")
+        try:
+            for view in self.views.values():
+                view.check_context()
+        except Exception:
+            self.close()
+            raise
         self.panes[True].hide()
         self.application.processEvents()
 

@@ -336,6 +336,12 @@ OBJ loading preserves vertex or per-corner `vt` coordinates, including seams
 and negative indices. Material files and texture images are not fetched;
 load the image explicitly and pass its array to the viewer. Geometry-only OBJ
 readers retain their existing three-array return value.
+
+For an explicit Linux X11 EGL setup, start a fresh Python process with
+`QT_QPA_PLATFORM=xcb`, `QT_XCB_GL_INTEGRATION=xcb_egl` and
+`PYOPENGL_PLATFORM=egl`. Qt and PyOpenGL must use the same context backend;
+select these settings before importing either library. A desktop GLX setup
+uses `QT_XCB_GL_INTEGRATION=xcb_glx` and the normal PyOpenGL platform.
 Metric comparisons remain separate from the viewer.
 
 For incremental geometry or a network receiver:

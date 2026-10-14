@@ -5,6 +5,8 @@ import warnings
 import threading
 import gc
 import weakref
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -212,3 +214,40 @@ def test_live_viewer_releases_previous_gif_views_without_cyclic_gc(tmp_path, mon
     finally:
         if enabled:
             gc.enable()
+
+
+def test_live_viewer_reports_platform_mismatch_without_aborting_qt(tmp_path):
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    # Simulate the same missing public context getter that a GLX PyOpenGL
+    # platform produces for a real Qt EGL context. Use real widgets in a fresh
+    # process: raising directly through initializeGL would abort that process.
+    program = """
+import sys
+from OpenGL import platform
+from open4d.demo import mesh_sequence
+from open4d.visualization import Visualizer, render_gif, visualize
+from open4d.visualization._qt import _application, _qt
+platform.GetCurrentContext = lambda: 0
+QtWidgets, QtCore, _ = _qt()
+application = _application(QtWidgets)
+sequence = mesh_sequence(side=8, frames=1)
+actions = [lambda: render_gif(sequence, sys.argv[1]),
+           lambda: visualize(sequence), lambda: Visualizer().create_window()]
+for action in actions:
+    QtCore.QTimer.singleShot(200, application.closeAllWindows)
+    try:
+        action()
+    except RuntimeError as error:
+        assert 'PYOPENGL_PLATFORM=egl' in str(error), str(error)
+        assert 'before importing' in str(error), str(error)
+    else:
+        raise AssertionError('a mismatched context getter must fail before uploads')
+assert not sequence.closed
+print('GIF, player and live viewer reported actionable context errors')
+"""
+    result = subprocess.run([sys.executable, "-c", program, str(tmp_path / "mismatch.gif")],
+                            text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "actionable context errors" in result.stdout
+    assert not (tmp_path / "mismatch.gif").exists()

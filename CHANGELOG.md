@@ -47,6 +47,8 @@ versions may change the public API.
   their shared contexts before geometry uploads and reuse them when revealed.
 - Export viewers break item/view reference cycles and release GPU buffers while
   their owning context is current; empty frames do not submit zero-length draws.
+- Qt/PyOpenGL context backend mismatches produce actionable errors through
+  Python callers without raising through native Qt callbacks.
 
 ## [0.2.0] - Unreleased
 

@@ -86,6 +86,49 @@ def _mesh_shader():
     return shader
 
 
+def _check_current_context() -> None:
+    """Reject Qt/PyOpenGL platform mismatches while Qt's context is current."""
+    from OpenGL import contextdata, error
+
+    try:
+        contextdata.getContext()
+    except error.Error as cause:
+        raise RuntimeError(
+            "Qt's current OpenGL context is unavailable to PyOpenGL. "
+            "For EGL, set QT_XCB_GL_INTEGRATION=xcb_egl and "
+            "PYOPENGL_PLATFORM=egl before importing OpenGL. For X11 GLX, "
+            "use QT_XCB_GL_INTEGRATION=xcb_glx with its matching PyOpenGL platform."
+        ) from cause
+
+
+def _guarded_view(gl):
+    class GuardedView(gl.GLViewWidget):
+        def __init__(self, *args, **options):
+            self._context_error = None
+            super().__init__(*args, **options)
+
+        def initializeGL(self):
+            # Qt guarantees a current context here, including hidden GIF views.
+            # Do not raise through a Qt virtual callback: record the error and
+            # stop uploads/painting, then surface it through the Python caller.
+            try:
+                _check_current_context()
+                super().initializeGL()
+            except RuntimeError as error:
+                # Keep text, not a traceback retaining the callback's view.
+                self._context_error = str(error)
+
+        def paintGL(self):
+            if self._context_error is None:
+                super().paintGL()
+
+        def check_context(self):
+            if self._context_error is not None:
+                raise RuntimeError(self._context_error)
+
+    return GuardedView
+
+
 class Scene:
     """A GL view holding one sequence, with the frame it shows swappable."""
 
@@ -100,7 +143,7 @@ class Scene:
         self.index = 0
         self.gl = gl
 
-        self.view = gl.GLViewWidget()
+        self.view = _guarded_view(gl)()
         self.view.setBackgroundColor(
             tuple(int(255 * channel) for channel in args.background)
         )
@@ -160,6 +203,7 @@ class Scene:
 
     def show_frame(self, index: int):
         """Display a frame, wrapping the index, and return it."""
+        self.view.check_context()
         self.index = index % len(self.frames)
         frame = self.frames[self.index]
         if frame.is_mesh:
@@ -205,6 +249,7 @@ class Scene:
         self.view.update()
         self.application.processEvents()
         image = self.view.grabFramebuffer()
+        self.view.check_context()
         if image.isNull():
             raise RuntimeError(
                 "Qt could not create an OpenGL framebuffer. Use a desktop "
@@ -388,6 +433,7 @@ def play(frames, args) -> None:
     try:
         if not window.closed:
             window.show()
+            scene.view.check_context()
             event_loop.exec()
     finally:
         window.close()
