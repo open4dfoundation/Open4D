@@ -1,0 +1,34 @@
+"""Keep the aggregate installation extra in sync with public features."""
+
+from __future__ import annotations
+
+from tests import ROOT
+
+from pathlib import Path
+
+import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+pytestmark = pytest.mark.cpu
+
+
+def test_all_extra_contains_every_runtime_feature_dependency():
+    root = ROOT
+    with (root / "pyproject.toml").open("rb") as stream:
+        extras = tomllib.load(stream)["project"]["optional-dependencies"]
+
+    def requirement(value):
+        # Environment markers may narrow where `all` installs a dependency.
+        return value.split(";", 1)[0].strip()
+
+    feature_dependencies = set().union(*(
+        map(requirement, dependencies)
+        for name, dependencies in extras.items()
+        if name not in {"all", "dev", "docs"}
+    ))
+
+    assert feature_dependencies <= set(map(requirement, extras["all"]))

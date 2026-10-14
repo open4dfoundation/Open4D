@@ -59,7 +59,7 @@ gaussians = ["plyfile", "pillow>=9"]
 # Open3D 0.19 has no Python 3.13 or Linux aarch64 wheels, and usd-core none for
 # Linux aarch64. Capture loading works without Open3D; reconstruction does not.
 capture = ["opencv-python", "zstandard", "open3d>=0.19,<0.20; python_version < '3.13' and platform_machine != 'aarch64'", "pillow>=9"]
-docs = ["mkdocs>=1.6,<2"]
+docs = ["mkdocs>=1.6,<2", "tomli>=2; python_version < '3.11'"]
 dev    = ["build>=1.2", "twine>=6", "pytest>=8", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'", "tomli>=2; python_version < '3.11'"]
 all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph>=0.14", "PyOpenGL", "open3d>=0.19,<0.20; python_version < '3.13' and platform_machine != 'aarch64'", "pillow>=9", "usd-core>=24.3; platform_machine != 'aarch64'", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image", "opencv-python", "zstandard"]
 
@@ -84,17 +84,18 @@ packages = [
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = [
-    "open4d/core/tests",
-    "open4d/data/tests",
-    "open4d/ml/tests",
-    "open4d/codec/tests",
-    "open4d/io/tests",
-    "open4d/reconstruction/rgbd/tests",
-    "open4d/transport/tests",
-    "open4d/torch_ops/tests",
-    "open4d/visualization/tests",
-    "examples/visualization/tests",
-    "scripts/tests",
+    "tests/core",
+    "tests/data",
+    "tests/ml",
+    "tests/codec",
+    "tests/io",
+    "tests/reconstruction/rgbd",
+    "tests/transport",
+    "tests/torch_ops",
+    "tests/visualization",
+    "tests/examples/visualization",
+    "tests/examples/tutorials",
+    "tests/scripts",
 ]
 markers = [
     "cpu: deterministic tests that need no optional hardware",

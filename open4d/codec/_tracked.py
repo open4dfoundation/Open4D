@@ -11,6 +11,7 @@ import tempfile
 from types import MappingProxyType
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d._research_paths import default_runtime
 from open4d.io import open_sequence
 from open4d.io._mesh import write_obj
 
@@ -102,7 +103,7 @@ class TrackedMeshCodec:
     def _settings(self, backend, python, encoder, decoder, *, encoding):
         variable = f"OPEN4D_{self.id.upper()}_ROOT"
         root = Path(backend or os.environ.get(variable) or
-                    Path(__file__).resolve().parents[1] / "codecs" / self.id).absolute()
+                    default_runtime(self.id)).absolute()
         tools = root / ("TVMC" if self.id == "tvmc" else "tsmc")
         if (encoding or self.id == "tsmc") and not (tools / "get_displacements.py").is_file():
             raise CodecError(

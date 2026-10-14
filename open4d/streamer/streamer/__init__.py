@@ -85,7 +85,7 @@ a frame and hopes gets the wrong picture. ``Scheduler`` in
 ``client/viewer.html`` plans the chain a seek needs, then caches and prefetches
 along it. Its ``chain`` is a transcription of `Dependency.chain` into
 JavaScript, which is the liability two implementations of one rule always carry,
-so ``streamer_tests/test_scheduler.py`` runs both over the same cases.
+so ``tests/streamer/test_scheduler.py`` runs both over the same cases.
 
 The loop is closed: a method declares its output, a link constrains its
 delivery, the client measures what arrives, `metrics` says what it was worth,

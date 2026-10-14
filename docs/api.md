@@ -52,7 +52,8 @@ codec: `MESH`, `POINTS`, and `GAUSSIANS` correspond to `TriangleMesh`,
 `PointCloud`, and `GaussianCloud`. Rendered pixels have no concrete type yet;
 comparison requires their camera model.
 
-The mesh codecs accept triangle meshes. Native Gaussian and field methods require
+The NumPy profiles accept meshes, point clouds and GaussianCloud sequences.
+Research mesh codecs accept triangle meshes. Native Gaussian and field methods require
 their own trained states or calibrated reconstruction inputs; a mesh file alone
 does not provide those inputs.
 
@@ -109,7 +110,7 @@ Prepared RGB-D data can be reconstructed and encoded in one call:
 ```python
 import open4d as o4d
 
-capture = o4d.RGBDCapture.from_folder("capture/")
+capture = o4d.RGBDCapture.from_folder("capture/", "calibration/")
 o4d.reconstruct(capture, "reconstructed.o4d", method="tsdf", codec="npz")
 with o4d.decode("reconstructed.o4d") as meshes:
     o4d.save(meshes, "reconstructed.usdc")  # needs open4d[usd]
@@ -297,15 +298,15 @@ locations are the codec and reconstruction trees.
 | `OPEN4D_RESEARCH_ROOT` | KLT, N4MC, QNDF, QNDF-int8 | This checkout, if present |
 | `OPEN4D_VDMC_ENCODER`, `OPEN4D_VDMC_DECODER` | `vdmc` (`encoder=`, `decoder=`) | `build/Release/bin/encode` and `decode` under `OPEN4D_VDMC_ROOT` |
 | `OPEN4D_FASTER_VDMC_ENCODER`, `OPEN4D_FASTER_VDMC_DECODER` | `faster_vdmc` | The same under `OPEN4D_FASTER_VDMC_ROOT` |
-| `OPEN4D_VDMC_ROOT`, `OPEN4D_FASTER_VDMC_ROOT` | V-DMC built from source | `open4d/codecs/vdmc`, `open4d/codecs/faster_vdmc` |
+| `OPEN4D_VDMC_ROOT`, `OPEN4D_FASTER_VDMC_ROOT` | V-DMC built from source | `codecs/vdmc`, `codecs/faster_vdmc` |
 | `OPEN4D_VDMC_DECODER_CONFIG`, `OPEN4D_FASTER_VDMC_DECODER_CONFIG` | V-DMC decoding (`decoder_config=`) | The carried `decoder.cfg` |
-| `OPEN4D_TVMC_ROOT`, `OPEN4D_TSMC_ROOT` | TVMC, TSMC (`backend=`) | `open4d/codecs/tvmc`, `open4d/codecs/tsmc` |
+| `OPEN4D_TVMC_ROOT`, `OPEN4D_TSMC_ROOT` | TVMC, TSMC (`backend=`) | `codecs/tvmc`, `codecs/tsmc` |
 | `OPEN4D_TVMC_PYTHON`, `OPEN4D_TSMC_PYTHON` | TVMC, TSMC (`python=`) | The backend's `.venv`, else this interpreter |
 | `DRACO_ENCODER`, `DRACO_DECODER` | TVMC, TSMC | The backend's `draco/build` |
-| `OPEN4D_GS_ROOT` | QUEEN and 3DGStream reconstruction (`runtime=`) | `open4d/reconstruction/gs_tools` |
+| `OPEN4D_GS_ROOT` | QUEEN and 3DGStream reconstruction (`runtime=`) | `codecs/gs_tools` |
 | `OPEN4D_QUEEN_PYTHON`, `OPEN4D_3DGSTREAM_PYTHON`, `OPEN4D_VEGA_PYTHON` | Reconstruction and Vega encoding (`python=`) | This interpreter |
-| `OPEN4D_VEGA_ROOT` | Vega encoding and decoding (`runtime=`) | `open4d/reconstruction/vega` |
-| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`); `OPEN4D_3DGSTREAM_ROOT` also holds 3DGStream's NTC checkpoint (`ntc=`) | `open4d/reconstruction/<codec>` |
+| `OPEN4D_VEGA_ROOT` | Vega encoding and decoding (`runtime=`) | `codecs/vega` |
+| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`); `OPEN4D_3DGSTREAM_ROOT` also holds 3DGStream's NTC checkpoint (`ntc=`) | `codecs/<codec>` |
 | `OPEN4D_<CODEC>_PYTHON` | `NativeSequence.decode` (`python=`) | This interpreter |
 | `OPEN4D_NATIVE_TIMEOUT` | Native mesh encoder and decoder processes | No limit |
 
@@ -516,3 +517,188 @@ Migration covers earlier research-codec exports and packed browser clips. Older
 private benchmark artifacts must be re-encoded from their original geometry.
 `overwrite=False` protects an existing destination, and `fps` supplies timing
 only when the old input did not carry it.
+
+## Tutorials
+
+Start with the NumPy core, then add the dependencies needed for a particular
+workflow. The runnable examples below use synthetic MIT data unless an input
+path or download URL is explicitly supplied. Research runtimes, captured data
+and model weights retain their own licenses. None of these examples installs
+packages, acquires hardware data, or starts GPU training automatically.
+
+The tutorials target this revision's Open4D 0.3 API. For a checkout validation,
+install its core into an isolated environment with `python -m pip install .`
+before running the scripts. An older installed Open4D package may not expose
+these APIs. This local installation is separate from publication approval in
+the [release ledger](../THIRD_PARTY.md).
+
+### 1. Round-trip mesh, point-cloud and Gaussian data
+
+The [core round-trip example](../examples/tutorials/core_roundtrip.py) generates
+eight mesh-wave frames, derives point clouds from their vertices, and generates
+a Gaussian ring. Each becomes a separate `.o4d` file using `codec="npz"`.
+The program reopens every artifact and checks exact positions, geometry fields
+and timestamps. A new output directory protects existing work:
+
+```bash
+python examples/tutorials/core_roundtrip.py --output /tmp/o4d-core
+open4d inspect /tmp/o4d-core/mesh.o4d --json
+open4d inspect /tmp/o4d-core/points.o4d --json
+open4d inspect /tmp/o4d-core/gaussians.o4d --json
+```
+
+This needs only `open4d` and NumPy. Add `--usd` after installing `open4d[usd]`
+to export the mesh as `mesh.usdc`. Ordinary USD writing currently accepts
+meshes; use the NumPy `.o4d` profile for PointCloud and GaussianCloud examples.
+GaussianCloud stores activated scales/opacities, wxyz quaternions and RGB.
+It does not imply a trained neural model or view-dependent appearance.
+
+To build your own sequence, wrap a geometry value in `Frame(index, timestamp,
+geometry)` and pass those frames to `Sequence(MemoryFrameProvider(frames))`.
+Keep sequences in a `with` block to close file-backed providers reliably.
+
+### 2. Cache examples and explicitly download licensed assets
+
+The [data cache example](../examples/tutorials/data_cache.py) first shows the
+synthetic mesh and Gaussian cache without using the network:
+
+```bash
+python examples/tutorials/data_cache.py --cache /tmp/o4d-cache
+```
+
+`sample.path` materializes the sample on first access; later accesses validate
+the cache. `sample.load()` returns a Sequence. The default application cache is
+`~/.open4d/data`; set `OPEN4D_DATA_DIR` or pass `cache_dir=` to choose another
+location. For a real external asset, gather its HTTPS URL, exact SHA-256 digest,
+data license and terms URL before constructing an immutable specification:
+
+```python
+from open4d.data import DatasetSpec, DownloadableDataset
+
+spec = DatasetSpec(
+    name="your-reviewed-mesh-data",
+    url=reviewed_https_url,
+    sha256=verified_sha256,
+    license=asset_license,
+    license_url=asset_license_terms_url,
+    kind="mesh",
+    archive="zip",
+)
+dataset = DownloadableDataset(spec)
+print(dataset.path)  # Explicit first download; returns the extracted directory.
+```
+
+These variables must come from the asset's verified provenance; this snippet
+does not invent a hosted dataset or grant redistribution permission. The CLI
+accepts the same values through `--url`, `--sha256`, `--license`,
+`--license-url` and `--archive`. Use a separate `kind="model"` specification for
+weights with independently reviewed model/training-data rights. Corrupt caches
+raise an error; ZIP/TAR paths, links and byte/file limits are checked before
+publication of a completed download.
+
+### 3. Reconstruct a saved, calibrated RGB-D capture
+
+The [RGB-D capture example](../examples/tutorials/rgbd_capture.py) loads real
+saved two-camera pairs and their measured calibration. Install `open4d[capture]`
+in a supported environment, then provide both required folders:
+
+```bash
+python examples/tutorials/rgbd_capture.py \
+  --capture /path/to/pairs --calibration /path/to/rig-calibration \
+  --frames 1 2 --output /tmp/reconstructed.o4d
+```
+
+`--frames` names increasing saved pair numbers, not zero-based array offsets.
+The pairs use the [capture layout](../open4d/reconstruction/rgbd/README.md);
+the rig folder contains factory calibration and the measured depth-to-depth
+transform. `RGBDCapture.from_folder(pairs, calibration)` rectifies depth and
+aligns color. `reconstruct(capture, output, method="tsdf", codec="npz")` then
+fuses each pair into a temporal mesh Sequence and encodes it. It does not
+calibrate, synchronize or acquire cameras. Add `--usd /tmp/reconstructed.usdc`
+with `open4d[usd]` to export animated meshes. Open3D 0.19 availability depends
+on the interpreter/platform; capture loading and reconstruction are separate
+dependency boundaries.
+
+### 4. Train a caller-owned generic model
+
+The [generic training example](../examples/tutorials/train_generic.py) learns
+`y = 2x + 1` from synthetic tensors on the CPU. It requires `open4d[torch]` and
+does not download a model or checkpoint:
+
+```bash
+python examples/tutorials/train_generic.py --epochs 40
+```
+
+The program prints initial/final losses, step count and learned parameters,
+and verifies that its original evaluation mode was restored. Supply your own
+model, optimizer, loss function and re-iterable `(inputs, targets)` batches to
+`o4d.ml.train`. Tensors must already be on the selected model device. This is a
+shared training utility; neural compression remains an installed codec/backend
+workflow with separate runtime and weight provenance.
+
+### 5. Record decoded meshes over TCP
+
+The [TCP example](../examples/tutorials/tcp_stream.py) runs a sender and receiver
+on an ephemeral loopback port, transfers four synthetic mesh frames, checks
+positions/timestamps and optionally saves a received recording:
+
+```bash
+python examples/tutorials/tcp_stream.py --output /tmp/recording.o4d
+```
+
+It needs the NumPy core. `receive(port=0)` gives the selected endpoint in
+`receiver.address`; `send(sequence, *receiver.address, realtime=False)` transmits
+without pacing. `receiver.record(max_frames=4)` returns an owned Sequence.
+Close the receiver and recording when finished. This protocol sends decoded
+mesh arrays; compressed `.o4d` bytes and native Gaussian/field state use their
+own delivery workflows.
+
+### 6. Export a browser playback bundle
+
+The [browser streaming example](../examples/tutorials/browser_stream.py) uses
+the separately installed `open4d-streamer` distribution. From a checkout, a
+local installation is `pip install ./open4d/streamer`; use its reviewed release
+package when available. Start with PLY delivery to avoid a native Draco build:
+
+```bash
+python examples/tutorials/browser_stream.py --output /tmp/o4d-browser --seconds 3
+python examples/tutorials/browser_stream.py \
+  --source /tmp/o4d-core/mesh.o4d --output /tmp/o4d-browser-real
+```
+
+The first command performs a bounded loopback HTTP check and stops the server.
+The second opens the browser and serves until Ctrl+C. Choose a fresh output
+directory each time. `--rung ply --rung draco@11` defines a delivery ladder;
+Draco needs its native encoder. Gaussian rungs use `ply` or `splat`; native
+Gaussian inputs also require the corresponding explicitly configured decoder.
+Bundle export prepares data before playback: serving it does not prove live
+codec processing or adaptation beyond the selected ladder/policy.
+
+### 7. Compare a baseline and its decoded result
+
+The [comparison example](../examples/tutorials/compare_visualization.py) opens
+two caller-provided sequences in shared-camera panes with `open4d[player]`:
+
+```bash
+python examples/tutorials/compare_visualization.py \
+  --baseline /tmp/o4d-core/mesh.o4d --decoded /tmp/o4d-core/mesh.o4d --seconds 3
+```
+
+Pass `--metrics` with `open4d[metrics]` to also print nearest-vertex RMS and
+Hausdorff distances. Real OBJ inputs retain per-vertex or seam-specific
+per-corner UVs. `--texture /path/to/atlas.png` explicitly supplies an image for
+both textured meshes; no material path is followed automatically. The selected
+decoded codec must preserve UVs to use the same atlas. GaussianCloud panes are
+center previews; actual Gaussian covariance and directional appearance require
+a native splat renderer.
+
+For sequence playback, the shorter equivalent is:
+
+```python
+o4d.visualize("decoded.o4d", baseline="reference.o4d")
+```
+
+A manually managed `Visualizer` is useful for live updates: create the window
+on the main thread, add/update geometries, call `poll_events()` and `render()`,
+and destroy it when finished. It does not take ownership of supplied Sequences
+or stream receivers.

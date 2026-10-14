@@ -1,0 +1,21 @@
+# tsmc uses the repository-wide environment; see ../../environment.yml.
+#
+# This file was a 218-line `conda env export` that pinned python down to an exact
+# conda build hash (3.12.12=hd17a9e1_1), which fails to resolve on any machine
+# that cannot serve that exact build, plus a full Jupyter stack tsmc never
+# imports.
+#
+#   conda env create -f ../../environment.yml
+#   conda activate open4d
+#   pip install -r ../../requirements-gpu.txt   # tsmc needs cupy
+#
+# convert_to_std_obj.py imports bpy, which Blender supplies when it runs the
+# script; it is not installed here.
+name: open4d
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r ../../requirements-codecs.txt

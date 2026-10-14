@@ -16,7 +16,7 @@ Writes, per subject::
     <out>/<subject>/meta.json             cameras, timings, counts
 
 Needs CUDA and the Vega research tree on ``PYTHONPATH``
-(``open4d/reconstruction/vega``)::
+(``codecs/vega``)::
 
     python orbit_splats.py /path/to/ORBIT_datasets_gaussian out/orbit
 """

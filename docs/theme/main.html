@@ -1,45 +1,81 @@
+{% macro navigation(items, depth=0) -%}
+<ul class="nav-list{% if depth %} nav-children{% endif %}">
+{% for item in items %}
+  <li>{% if item.children %}
+    <details class="nav-group"{% if item.active %} open{% endif %}>
+      <summary>{{ item.title }}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg></summary>
+      {{ navigation(item.children, depth + 1) }}
+    </details>
+  {% else %}
+    <a {% if item.active %}aria-current="page"{% endif %} href="{{ item.url | url }}">{{ item.title }}</a>
+  {% endif %}</li>
+{% endfor %}
+</ul>
+{%- endmacro %}
+{% macro contents(items, depth=0) -%}
+<ul class="toc-list{% if depth %} toc-children{% endif %}">
+{% for item in items %}
+  <li><a href="{{ item.url }}">{{ item.title }}</a>{% if item.children %}{{ contents(item.children, depth + 1) }}{% endif %}</li>
+{% endfor %}
+</ul>
+{%- endmacro %}
+{% set home = open4d_home | default(page and page.is_homepage) %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% if page %}{{ page.title }} - {% endif %}Open4D</title>
+  <title>{% block title %}{% if page %}{{ page.title }} · {% endif %}Open4D{% endblock %}</title>
   <meta name="description" content="{{ config.site_description }}">
   {% if page and page.canonical_url %}<link rel="canonical" href="{{ page.canonical_url }}">{% endif %}
+  <meta name="theme-color" content="#f7f7f2">
   <link rel="stylesheet" href="{{ 'wiki.css' | url }}">
   <script src="{{ 'wiki.js' | url }}" defer data-search-url="{{ 'search/search_index.json' | url }}"></script>
+  {% for css in config.extra_css %}<link rel="stylesheet" href="{{ css | url }}">{% endfor %}
 </head>
-<body>
+<body class="{% if home %}home-layout{% else %}reading-layout{% endif %}">
   <a class="skip" href="#article">Skip to content</a>
   <header class="masthead">
-    <a class="brand" href="{{ nav.homepage.url | url }}">Open4D <span>Python library</span></a>
+    <a class="brand" href="{{ nav.homepage.url | url }}" aria-label="Open4D documentation home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 10 16 4l10 6v12l-10 6-10-6Zm0 0 10 6 10-6M16 16v12"/><path d="m11 7 10 6v12"/></svg>
+      <span>Open4D</span>
+    </a>
+    <span class="header-label">Documentation</span>
     <form class="search" role="search">
-      <label for="wiki-search">Search documentation</label>
-      <input id="wiki-search" type="search" placeholder="Search documentation" autocomplete="off" aria-controls="search-results">
+      <label class="visually-hidden" for="wiki-search">Search documentation</label>
+      <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+      <input id="wiki-search" type="search" placeholder="Find a guide, codec or API…" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+      <kbd class="search-shortcut" aria-hidden="true">/</kbd>
       <div id="search-results" hidden aria-live="polite"></div>
     </form>
-    <a class="source" href="{{ config.repo_url }}">GitHub</a>
+    <a class="source" href="{{ config.repo_url }}">GitHub<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 12 12 4M4 4h8v8"/></svg></a>
   </header>
   <div class="layout">
     <aside class="sidebar">
       <details class="navigation" open>
-        <summary>Documentation</summary>
-        <nav aria-label="Documentation">
-        {% for item in nav %}<a {% if item.active %}aria-current="page"{% endif %} href="{{ item.url | url }}">{{ item.title }}</a>{% endfor %}
-        </nav>
+        <summary class="rail-heading">Browse documentation<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></summary>
+        <nav aria-label="Documentation">{{ navigation(nav) }}</nav>
       </details>
-      <div class="version">Version {{ open4d_version | default('development') }}<br>Python 3.10 - 3.13</div>
+      <div class="version"><span class="version-dot" aria-hidden="true"></span>Version {{ open4d_version | default('development') }}<span>Python 3.10–3.13</span></div>
+      <a class="rail-source" href="{{ config.repo_url }}/issues">Report a documentation issue<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 12 12 4M4 4h8v8"/></svg></a>
     </aside>
-    <main id="article" tabindex="-1">
-      <div class="article-tools"><span>Documentation</span>{% if page and page.edit_url %}<a href="{{ page.edit_url }}">View source</a>{% endif %}</div>
-      <article>{% if page %}{{ page.content }}{% else %}<h1>Page not found</h1><p>Use the documentation navigation or search to find a page.</p>{% endif %}</article>
-      <footer>Open4D core is MIT licensed. Research backends, datasets and models have separate terms. <a href="{{ 'licenses/' | url }}">Review the release ledger.</a></footer>
-    </main>
-    {% if page and page.toc %}
-    <aside class="contents" aria-label="On this page"><strong>On this page</strong>
-      {% for top in page.toc %}{% if top.children %}{% for item in top.children %}<a href="{{ item.url }}">{{ item.title }}</a>{% endfor %}{% else %}<a href="{{ top.url }}">{{ top.title }}</a>{% endif %}{% endfor %}
+    {% if page and page.toc and not home %}
+    <aside class="contents">
+      <details class="page-contents" open>
+        <summary class="rail-heading">On this page<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></summary>
+        <nav aria-label="On this page">{% for top in page.toc %}{% if top.children %}{{ contents(top.children) }}{% else %}{{ contents([top]) }}{% endif %}{% endfor %}</nav>
+      </details>
     </aside>
     {% endif %}
+    <main id="article" tabindex="-1">
+      <div class="article-tools"><div class="breadcrumbs"><a href="{{ nav.homepage.url | url }}">Open4D</a>{% if page and not home %}<span aria-hidden="true">/</span>{% if page.parent %}<span>{{ page.parent.title }}</span><span aria-hidden="true">/</span>{% endif %}<span>{{ page.title }}</span>{% endif %}</div>{% if page and page.edit_url %}<a class="edit-link" href="{{ page.edit_url }}">View source<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 12 12 4M4 4h8v8"/></svg></a>{% endif %}</div>
+      <article>{% block content %}{% if page %}{{ page.content }}{% else %}<h1>Page not found</h1><p>This address does not match a documentation page. Find a topic in the navigation or search above.</p><p><a href="{{ nav.homepage.url | url }}">Return to the documentation</a></p>{% endif %}{% endblock %}</article>
+      <footer class="article-footer">
+        {% if page and not home %}<nav class="page-links" aria-label="Adjacent pages">{% if page.previous_page %}<a href="{{ page.previous_page.url | url }}"><span>Previous</span>{{ page.previous_page.title }}</a>{% endif %}{% if page.next_page %}<a href="{{ page.next_page.url | url }}"><span>Next</span>{{ page.next_page.title }}</a>{% endif %}</nav>{% endif %}
+        <div class="footer-bottom"><a class="footer-brand" href="{{ nav.homepage.url | url }}">Open4D</a><p>The core is MIT licensed. Research backends, datasets and models have separate terms. <a href="{{ 'licenses/' | url }}">Licenses and release status</a></p></div>
+      </footer>
+    </main>
   </div>
+  {% for script in config.extra_javascript %}<script src="{{ script | url }}"></script>{% endfor %}
 </body>
 </html>

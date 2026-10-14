@@ -8,6 +8,7 @@ include SECURITY.md
 include THIRD_PARTY.md
 include pyproject.toml
 
+prune codecs
 prune open4d/codecs
 prune open4d/reconstruction
 prune integrations/unity

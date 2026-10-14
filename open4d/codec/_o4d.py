@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 import numpy as np
 
+from open4d._research_paths import default_runtime
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import Open4DError, open_sequence
 from open4d.io._mesh import write_obj
@@ -37,7 +38,7 @@ def _executable(value: str | os.PathLike[str] | None, identifier: str, role: str
     selected = value or os.environ.get(variable)
     if not selected:
         root = Path(os.environ.get(f"{prefix}_ROOT") or
-                    Path(__file__).parents[1] / "codecs" / identifier).expanduser()
+                    default_runtime(identifier)).expanduser()
         name = {"encoder": "encode", "decoder": "decode"}[role] + (".exe" if os.name == "nt" else "")
         built = [path for path in (root / "build/Release/bin" / name, root / "bin" / name)
                  if path.is_file()]

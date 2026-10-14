@@ -34,9 +34,9 @@ O4D framing and hashes validate container integrity; they do not authenticate
 the publisher or make native payloads safe to execute. Inspection, packing,
 and compressed USD round trips do not invoke native models. Decoding can:
 
-- [QUEEN's compressed loader](open4d/reconstruction/queen/scene/gaussian_model.py)
+- [QUEEN's compressed loader](codecs/queen/scene/gaussian_model.py)
   uses `pickle.load`, which can execute code from a malicious residual.
-- [ReRF's player](open4d/reconstruction/rerf/rerf_stream/bitstream.py) loads
+- [ReRF's player](codecs/rerf/rerf_stream/bitstream.py) loads
   checkpoints with `torch.load` without explicitly selecting `weights_only`;
   older Torch runtimes can execute serialized code. Other research entry points
   also load executable checkpoints. A worker subprocess is not a security sandbox.

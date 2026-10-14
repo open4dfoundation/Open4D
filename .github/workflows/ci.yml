@@ -47,7 +47,7 @@ jobs:
       - name: Require the optional dependency
         run: python -c "import torch; print(torch.__version__)"
       - name: Run Torch CPU tests
-        run: python -m pytest -m 'torch and not open3d' open4d/torch_ops/tests open4d/ml/tests
+        run: python -m pytest -m 'torch and not open3d' tests/torch_ops tests/ml
 
   open3d:
     name: Open3D / Python ${{ matrix.python-version }}
@@ -70,8 +70,8 @@ jobs:
       - name: Run every Open3D-backed test
         run: >-
           python -m pytest -m open3d
-          open4d/integrations/open3d/tests open4d/torch_ops/tests open4d/reconstruction/rgbd/tests
-          open4d/codec/tests/test_notebook.py
+          tests/integrations/open3d tests/torch_ops tests/reconstruction/rgbd
+          tests/codec/test_notebook.py
 
   research-codecs:
     name: Research codec contracts / CPU
@@ -90,8 +90,8 @@ jobs:
       - name: Run native N4MC model and loss contracts
         run: >-
           python -m pytest
-          open4d/codecs/n4mc/tests/test_codec.py
-          open4d/codecs/n4mc/tests/test_losses.py
+          codecs/n4mc/tests/test_codec.py
+          codecs/n4mc/tests/test_losses.py
 
   native-numerics:
     name: Native tracker and editor / .NET 10
@@ -115,7 +115,7 @@ jobs:
       - name: Build and execute native numerical contracts
         run: |
           dotnet --info
-          python -m pytest open4d/codec/tests/test_tracker_numerics.py open4d/codec/tests/test_editor_numerics.py --junitxml="${RUNNER_TEMP}/native-numerics.xml"
+          python -m pytest tests/codec/test_tracker_numerics.py tests/codec/test_editor_numerics.py --junitxml="${RUNNER_TEMP}/native-numerics.xml"
           python - <<'PY'
           import os
           from pathlib import Path
@@ -138,7 +138,7 @@ jobs:
       - name: Install optional I/O tier
         run: python -m pip install -e '.[dev,tools,usd,gaussians]' 'DracoPy>=2,<3'
       - name: Exercise built-in and optional I/O formats
-        run: python -m pytest open4d/io/tests open4d/codec/tests/test_draco.py open4d/core/tests/test_gaussians.py
+        run: python -m pytest tests/io tests/codec/test_draco.py tests/core/test_gaussians.py
       - name: Validate benchmark paths
         run: |
           python scripts/benchmark_io.py --side 24 --frames 20 --repeats 2 --json
@@ -166,7 +166,7 @@ jobs:
         run: |
           python -c "import PyQt6, pyqtgraph, OpenGL, PIL, open4d.visualization"
           python -c "from pxr import Usd; print(Usd.GetVersion())"
-          python -m pytest open4d/visualization/tests examples/visualization/tests
+          python -m pytest tests/visualization tests/examples/visualization
       - name: Render and check the synthetic sample GIF
         env:
           OPEN4D_TEST_RENDER: "1"
@@ -175,8 +175,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           render_args=(
-            open4d/visualization/tests/test_real_player.py
-            examples/visualization/tests/test_compare.py
+            tests/visualization/test_real_player.py
+            tests/examples/visualization/test_compare.py
             -k 'synthetic or empty or gif_after_single or live_viewer or sequential'
             --basetemp "$RUNNER_TEMP/open4d-render"
             --junitxml "$RUNNER_TEMP/open4d-render.xml"
@@ -234,7 +234,7 @@ jobs:
       - name: Check installed streamer and run its headless tests
         run: |
           python -I -c "import streamer; print(streamer.__file__)"
-          python -m pytest open4d/streamer/streamer_tests
+          python -m pytest tests/streamer
       - name: Install and build browser clients
         run: |
           npm ci --prefix open4d/streamer/study/system/Server

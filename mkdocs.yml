@@ -9,12 +9,50 @@ theme:
   custom_dir: docs/theme
   static_templates: [404.html]
 nav:
-  - Overview: index.md
-  - Python guide: api.md
-  - Installation and codecs: requirements.md
-  - Datasets and models: artifacts.md
-  - API reference: reference.md
-  - Licenses and release: licenses.md
+  - Home: index.md
+  - Get started:
+      - Installation: requirements.md
+      - Tutorials: tutorials/index.md
+      - First roundtrip: tutorials/core-roundtrip.md
+      - Datasets and models: artifacts.md
+  - Tutorials:
+      - Cache and download data: tutorials/data-cache.md
+      - Calibrated RGB-D: tutorials/rgbd-capture.md
+      - Generic model training: tutorials/generic-training.md
+      - TCP streaming: tutorials/tcp-stream.md
+      - Browser streaming: tutorials/browser-stream.md
+      - Baseline visualization: tutorials/visualization.md
+  - Guides:
+      - Codec setup: codecs/index.md
+      - RGB-D capture: guides/rgbd.md
+      - Browser bundles: guides/browser-streaming.md
+      - Visualizer examples: guides/visualization.md
+      - Open3D integration: guides/open3d.md
+      - Unity integration: guides/unity.md
+  - Codec wiki:
+      - KLT: codecs/klt.md
+      - N4MC: codecs/n4mc.md
+      - QNDF and INT8: codecs/qndf.md
+      - V-DMC: codecs/vdmc.md
+      - Faster V-DMC: codecs/faster_vdmc.md
+      - TVMC: codecs/tvmc.md
+      - TSMC: codecs/tsmc.md
+      - Vega: codecs/vega.md
+      - QUEEN: codecs/queen.md
+      - 3DGStream: codecs/3dgstream.md
+      - ReRF: codecs/rerf.md
+  - Reference:
+      - Python guide: api.md
+      - API signatures: reference.md
+      - Repository layout: layout.md
+      - All documentation: library/index.md
+  - Project:
+      - Overview and existing workflows: overview.md
+      - Contributing: community/contributing.md
+      - Code of conduct: community/code-of-conduct.md
+      - Security: community/security.md
+      - Changelog: community/changelog.md
+      - Licenses and release: licenses.md
 hooks:
   - docs/hooks.py
 plugins:
@@ -22,6 +60,7 @@ plugins:
 markdown_extensions:
   - tables
   - fenced_code
+  - md_in_html
   - toc:
       permalink: true
 exclude_docs: |

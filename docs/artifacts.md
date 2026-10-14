@@ -70,13 +70,13 @@ their own plugins and environments.
 
 Use the existing component-local conventions for runtime data:
 
-- `open4d/codecs/<codec>/datasets/` for downloaded or private datasets
-- `open4d/codecs/<codec>/outputs/` for training and evaluation outputs
-- `open4d/codecs/<codec>/experiments/` for per-run working directories
-- `open4d/codecs/<codec>/checkpoints/` for model weights
+- `codecs/<codec>/datasets/` for downloaded or private datasets
+- `codecs/<codec>/outputs/` for training and evaluation outputs
+- `codecs/<codec>/experiments/` for per-run working directories
+- `codecs/<codec>/checkpoints/` for model weights
 - codec-specific runtime `data/` directories for downloaded sequences; TVMC's
   ARAP input datasets, for example, live under
-  `open4d/codecs/tvmc/arap-volume-tracking/data/`
+  `codecs/tvmc/arap-volume-tracking/data/`
 
 Reconstruction data and output locations:
 
@@ -107,7 +107,7 @@ the ignored local directories:
 ./scripts/fetch_artifact.sh \
   https://artifacts.example.org/open4d/example.tar.zst \
   0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  open4d/codecs/example/datasets/example.tar.zst
+  codecs/example/datasets/example.tar.zst
 ```
 
 Record the real URL, SHA-256 checksum, license, and unpacking instructions in

@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from ._files import publish_directory
+from ._research_paths import default_runtime, runtime_checkout
 
 if TYPE_CHECKING:
     from .native import NativeSequence
@@ -163,10 +164,10 @@ def missing_runtime(name: str, root: Path, variable: str, folder: str) -> str:
 def _runtime(path: str | Path | None) -> Path:
     candidate = path or os.environ.get("OPEN4D_GS_ROOT")
     root = (Path(candidate).expanduser() if candidate else
-            Path(__file__).parent / "reconstruction" / "gs_tools").resolve()
+            default_runtime("gs_tools")).resolve()
     if not (root / "gs_tools" / "cli.py").is_file():
         raise FileNotFoundError(missing_runtime(
-            "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "open4d/reconstruction/gs_tools"))
+            "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "codecs/gs_tools"))
     return root
 
 
@@ -179,8 +180,8 @@ def _run(runtime: Path, python: str, arguments: Sequence[str]) -> None:
     # gs_tools imports open4d and the streamer package. Use the runtime's own
     # checkout for both rather than whatever the CUDA environment has installed.
     path = [runtime]
-    checkout = runtime.parents[2] if len(runtime.parents) > 2 else runtime
-    if (checkout / "open4d" / "__init__.py").is_file():
+    checkout = runtime_checkout(runtime)
+    if checkout is not None:
         path.append(checkout)
         if (checkout / "open4d" / "streamer" / "streamer" / "__init__.py").is_file():
             path.append(checkout / "open4d" / "streamer")
@@ -464,14 +465,14 @@ _VEGA_OPACITY_EPSILON = 2.0 ** -24
 
 def _vega_runtime(path: str | Path | None) -> Path:
     root = Path(path or os.environ.get("OPEN4D_VEGA_ROOT") or
-                Path(__file__).parent / "reconstruction" / "vega").expanduser().resolve()
+                default_runtime("vega")).expanduser().resolve()
     _check_vega_runtime(root)
     return root
 
 
 def _check_vega_runtime(root: Path) -> None:
     if not (root / "vega" / "encoder.py").is_file():
-        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "open4d/reconstruction/vega"))
+        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "codecs/vega"))
 
 
 def _vega_command(runtime: Path, python: str, request: dict, work: Path) -> None:

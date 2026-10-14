@@ -9,16 +9,13 @@ import sys
 from types import ModuleType
 
 from ._protocol import CodecError
+from open4d._research_paths import default_runtime
 
 
 def research_module(name: str):
     component = name.split(".", 1)[0]
     external = os.environ.get(f"OPEN4D_{component.upper()}_ROOT")
-    checkout = os.environ.get("OPEN4D_RESEARCH_ROOT")
-    root = (
-        Path(checkout).expanduser().resolve() / "open4d/codecs"
-        if checkout else Path(__file__).resolve().parents[1] / "codecs"
-    )
+    root = default_runtime(component).parent
     direct_root = None
     if external:
         # Each runtime may live outside the Open4D checkout. The component
