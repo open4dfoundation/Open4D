@@ -436,6 +436,12 @@ jobs:
           name: open4d-mit-adapter-packages
           path: ${{ runner.temp }}/open4d-plugins/*
           if-no-files-found: error
+      - name: Upload the independently installable core archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: open4d-core-packages
+          path: ${{ runner.temp }}/open4d-core/*
+          if-no-files-found: error
       - name: Upload separate streamer archives
         uses: actions/upload-artifact@v4
         with:
