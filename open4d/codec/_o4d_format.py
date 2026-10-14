@@ -18,7 +18,10 @@ from open4d._files import publish_directory, publish_file
 
 from ._metadata import _validate_manifest
 from ._protocol import CodecError
-from ._native_profiles import MAX_FRAMES, NEURAL_CODECS, PROFILES, layout as _layout
+from ._native_profiles import (
+    MAX_FRAMES, NEURAL_CODECS, ARRAY_CODECS, PROFILES, layout as _layout,
+    profile_representation, profile_version,
+)
 
 # These serialized identifiers predate the O4D public rename. Keep them stable
 # so existing files need only an extension change, without payload conversion.
@@ -77,6 +80,10 @@ def _sequence_metadata(data, codec):
         if not 0 < len(value["frames"]) <= MAX_FRAMES:
             raise ValueError("frame count outside limits")
         _layout(codec, len(value["frames"]), value.get("native"))
+        if codec in ARRAY_CODECS and profile_version(codec, value.get("native")) == 2:
+            for frame in value["frames"]:
+                if frame.get("representation") not in ("mesh", "points", "gaussians"):
+                    raise ValueError("invalid array frame representation")
     except (ValueError, TypeError, KeyError) as error:
         raise _error(f"invalid sequence metadata: {error}") from error
     return value
@@ -89,8 +96,9 @@ def _descriptor(data):
     codec, count, files = value.get("codec"), value.get("frame_count"), value.get("files")
     if not isinstance(codec, str) or codec not in PROFILES:
         raise _error(f"unsupported native codec {codec!r}")
-    if (value.get("native_version") != 1 or type(value.get("native_version")) is not int
-            or value.get("representation") != PROFILES[codec][0]
+    if (value.get("native_version") != profile_version(codec, value.get("native"))
+            or type(value.get("native_version")) is not int
+            or value.get("representation") != profile_representation(codec, value.get("native"))
             or value.get("dependency_mode") != PROFILES[codec][1]):
         raise _error("unsupported native representation/dependencies")
     if type(count) is not int or not 1 <= count <= MAX_FRAMES:
@@ -184,9 +192,12 @@ def is_mesh_profile(source: str | Path) -> bool:
     codec = probe_codec(source)
     if codec in NEURAL_CODECS:
         return False
-    if codec == "frames":
+    if codec == "frames" or codec in ARRAY_CODECS:
         with Path(source).open("rb") as stream:
             descriptor, _ = _start(stream)
+        if codec in ARRAY_CODECS:
+            return all(frame.get("representation", "mesh") == "mesh"
+                       for frame in descriptor["sequence"]["frames"])
         return descriptor["native"]["representation"] == "mesh"
     return True
 
@@ -258,8 +269,10 @@ def pack_o4d(source: str | Path, destination: str | Path, *, overwrite: bool = F
     if not isinstance(codec, str) or codec not in PROFILES:
         raise _error(f"unsupported native codec {codec!r}")
     sequence = _sequence_metadata(data, codec)
-    descriptor = dict(schema=_SCHEMA, codec=codec, native_version=1,
-                      representation=PROFILES[codec][0], frame_count=len(sequence["frames"]),
+    descriptor = dict(schema=_SCHEMA, codec=codec,
+                      native_version=profile_version(codec, sequence.get("native")),
+                      representation=profile_representation(codec, sequence.get("native")),
+                      frame_count=len(sequence["frames"]),
                       dependency_mode=PROFILES[codec][1], sequence=sequence, files=[])
     if "native" in sequence:
         descriptor["native"] = sequence["native"]

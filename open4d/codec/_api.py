@@ -8,18 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from open4d.core import Sequence
-from open4d.gaussians import GaussianSplats, NeuralGaussianFrame, VEGA_CODEC
+from open4d.gaussians import GaussianSplats, NeuralGaussianFrame
 from collections.abc import Iterable
 
-from ._klt import KLT_CODEC
-from ._n4mc import N4MC_CODEC
 from ._protocol import Codec, CodecError
 from ._metadata import require_o4d_destination
-from ._qndf import QNDF_CODEC, QNDF_INT8_CODEC
-from ._tracked import TVMC_CODEC, TSMC_CODEC
-from ._o4d import FASTER_VDMC_CODEC, VDMC_CODEC
+from ._npz import REFERENCE_CODECS
 from ._o4d_format import probe_codec
-from ._native_temporal import QUEEN_CODEC, GSTREAM_CODEC, RERF_CODEC
+from open4d._plugins import entry_points
 
 if TYPE_CHECKING:
     from open4d.native import NativeSequence
@@ -35,13 +31,74 @@ class CodecInfo:
     representation: str = "triangle_mesh"
 
 
-_CODECS: dict[str, Codec] = {
-    codec.id: codec for codec in (
-        KLT_CODEC, N4MC_CODEC, QNDF_CODEC, QNDF_INT8_CODEC,
-        VDMC_CODEC, FASTER_VDMC_CODEC, TVMC_CODEC, TSMC_CODEC, VEGA_CODEC,
-        QUEEN_CODEC, GSTREAM_CODEC, RERF_CODEC,
-    )
-}
+_CODECS: dict[str, Codec] = {codec.id: codec for codec in REFERENCE_CODECS}
+_PLUGIN_CODECS: dict[str, Codec] = {}
+_RESEARCH_IDS = frozenset((
+    "klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc",
+    "tvmc", "tsmc", "vega", "queen", "3dgstream", "rerf",
+))
+
+
+class _PluginCodec:
+    """A codec descriptor whose provider is imported only when selected."""
+
+    suffixes = (".o4d",)
+    backend = "entry-point"
+    representation = "plugin"
+    preserves = ()  # Capabilities are unknown until this provider is selected.
+
+    def __init__(self, entry):
+        self.id = entry.name
+        self.entry = entry
+        self.implementation = None
+
+    def resolve(self):
+        if self.implementation is None:
+            try:
+                candidate = self.entry.load()
+                if isinstance(candidate, type) or not isinstance(candidate, Codec):
+                    candidate = candidate()
+                if not isinstance(candidate, Codec) or candidate.id != self.id:
+                    raise TypeError(f"provider must return a Codec with id={self.id!r}")
+                self.implementation = candidate
+            except Exception as error:
+                raise CodecError(
+                    f"Cannot load installed codec plugin {self.id!r}: {error}. "
+                    "Check its package dependencies and configured backend root."
+                ) from error
+        return self.implementation
+
+    def encode(self, sequence, destination, **options):
+        return self.resolve().encode(sequence, destination, **options)
+
+    def decode(self, source, **options):
+        return self.resolve().decode(source, **options)
+
+    def can_decode(self, source):
+        return probe_codec(source) == self.id
+
+
+def _entry_identity(entry):
+    # Standard-library and vendored EntryPoint implementations can coexist
+    # after loading optional dependencies. Their equality methods may rely on
+    # incompatible private APIs; compare only public registration metadata.
+    value = getattr(entry, "value", None)
+    return (entry.name, entry.group, value, id(entry) if value is None else None)
+
+
+def _all_codecs():
+    installed = entry_points("open4d.codecs")
+    plugins = {}
+    for identifier, entry in installed.items():
+        if identifier in _CODECS:
+            continue
+        previous = _PLUGIN_CODECS.get(identifier)
+        plugins[identifier] = (previous if previous is not None
+                               and _entry_identity(previous.entry) == _entry_identity(entry)
+                               else _PluginCodec(entry))
+    _PLUGIN_CODECS.clear()
+    _PLUGIN_CODECS.update(plugins)
+    return {**_CODECS, **plugins}
 
 
 def register_codec(codec: Codec, *, replace: bool = False) -> None:
@@ -55,19 +112,47 @@ def register_codec(codec: Codec, *, replace: bool = False) -> None:
     _CODECS[codec.id] = codec
 
 
-def available_codecs() -> tuple[CodecInfo, ...]:
-    """List research codec adapters; their optional backends are loaded on use."""
-    return tuple(
-        CodecInfo(
-            codec.id,
-            tuple(codec.suffixes),
-            getattr(codec, "backend", "custom"),
-            getattr(codec, "lossless", None),
-            tuple(getattr(codec, "preserves", ("positions", "triangles"))),
-            getattr(codec, "representation", "triangle_mesh"),
-        )
-        for codec in sorted(_CODECS.values(), key=lambda item: item.id)
+def _describe(codec: Codec) -> CodecInfo:
+    return CodecInfo(
+        codec.id,
+        tuple(codec.suffixes),
+        getattr(codec, "backend", "custom"),
+        getattr(codec, "lossless", None),
+        tuple(getattr(codec, "preserves", ("positions", "triangles"))),
+        getattr(codec, "representation", "triangle_mesh"),
     )
+
+
+def available_codecs() -> tuple[CodecInfo, ...]:
+    """List NumPy codecs and installed entry points without importing plugins.
+
+    An installed adapter can still require an external licensed runtime.
+    """
+    return tuple(
+        _describe(codec)
+        for codec in sorted(_all_codecs().values(), key=lambda item: item.id)
+    )
+
+
+def codec_info(identifier: str, *, resolve: bool = False) -> CodecInfo:
+    """Describe one installed codec, optionally loading its selected provider.
+
+    Discovery stays metadata-only by default. A lazy entry point has unknown
+    representation (``"plugin"``); ``resolve=True`` obtains truthful capabilities
+    from only that provider. This can import that plugin's optional dependencies
+    and raise CodecError if they are missing. Unrelated providers are not loaded.
+    """
+    if not isinstance(identifier, str) or not identifier:
+        raise ValueError("identifier must be a nonempty codec id")
+    if not isinstance(resolve, bool):
+        raise TypeError("resolve must be bool")
+    implementation = _all_codecs().get(identifier)
+    if implementation is None:
+        # Share the selection API's actionable missing-adapter error.
+        implementation = _codec(identifier, Path("."))
+    if resolve and isinstance(implementation, _PluginCodec):
+        implementation = implementation.resolve()
+    return _describe(implementation)
 
 
 def _codec(value: str | Codec | None, path: Path) -> Codec:
@@ -75,12 +160,22 @@ def _codec(value: str | Codec | None, path: Path) -> Codec:
         if not isinstance(value, Codec):
             raise TypeError("codec must be a codec id or Codec implementation")
         return value
+    codecs = _all_codecs()
     if isinstance(value, str):
         try:
-            return _CODECS[value]
+            implementation = codecs[value]
         except KeyError:
-            raise ValueError(f"unknown codec {value!r}") from None
-    matches = [codec for codec in _CODECS.values() if path.suffix.lower() in codec.suffixes]
+            if value in _RESEARCH_IDS:
+                raise CodecError(
+                    f"Codec {value!r} requires a separately installed adapter. "
+                    "From an Open4D checkout run 'pip install ./plugins/research'; "
+                    "then acquire its backend under its own license and configure "
+                    "the documented OPEN4D_*_ROOT variable. Research source, "
+                    "weights and datasets are not included in the adapter package."
+                ) from None
+            raise ValueError(f"unknown codec {value!r}; inspect available_codecs()") from None
+        return implementation.resolve() if isinstance(implementation, _PluginCodec) else implementation
+    matches = [codec for codec in codecs.values() if path.suffix.lower() in codec.suffixes]
     if len(matches) > 1 and path.is_file():
         detected = [
             codec for codec in matches
@@ -94,7 +189,8 @@ def _codec(value: str | Codec | None, path: Path) -> Codec:
         matches = detected
     if len(matches) != 1:
         raise ValueError(f"cannot infer a codec for {path}; pass codec=")
-    return matches[0]
+    implementation = matches[0]
+    return implementation.resolve() if isinstance(implementation, _PluginCodec) else implementation
 
 
 def encode_sequence(
@@ -111,7 +207,7 @@ def encode_sequence(
         raise TypeError("overwrite must be bool")
     path = require_o4d_destination(destination)
     implementation = _codec(codec, path)
-    if getattr(implementation, "representation", "triangle_mesh") != "triangle_mesh":
+    if getattr(implementation, "representation", "triangle_mesh") not in ("triangle_mesh", "geometry_sequence"):
         if input_format is not None:
             raise TypeError("input_format applies only to mesh path inputs")
         if fps is not None:
@@ -149,7 +245,7 @@ def decode_sequence(
                 _require()
                 from streamer.sequence import open_frames
                 return open_frames(path)
-            if detected not in _CODECS and (codec is None or codec == detected):
+            if detected not in _all_codecs() and (codec is None or codec == detected):
                 from ._npz import REFERENCE_CODECS
                 from ._draco import DRACO_CODEC
                 from ._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC

@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "Streaming and playback for 4D reconstructions"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT AND Apache-2.0"
+license-files = [
+    "LICENSE",
+    "streamer/client/vendor/draco/LICENSE",
+    "streamer/client/vendor/draco/NOTICE",
+    "streamer/client/vendor/draco/AUTHORS",
+]
 # `open4d` for `open4d.core.Representation` and `open4d.core.Dependency`: a
 # bundle names representations with core's vocabulary rather than its own, and
 # the dependency model belongs to core because codecs outside this module have
@@ -11,16 +18,22 @@ requires-python = ">=3.10"
 dependencies = ["open4d"]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["streamer*"]
+[tool.setuptools]
+include-package-data = false
+packages = ["streamer", "streamer.client", "streamer.server"]
 
 [tool.setuptools.package-data]
 # The page alone is not the client. It starts `client/worker.js`, which is
 # where every codec lives, and the worker `importScripts` the vendored Draco
 # pair beside it. The server reads all three off disk next to `viewer.html`,
 # so a wheel carrying only the page 404s the worker and decodes nothing.
-"streamer.client" = ["*.html", "*.js", "vendor/draco/*"]
+"streamer.client" = [
+    "*.html", "*.js",
+    "vendor/draco/draco_wasm_wrapper.js",
+    "vendor/draco/draco_decoder.wasm",
+    "vendor/draco/LICENSE", "vendor/draco/NOTICE", "vendor/draco/AUTHORS",
+    "vendor/draco/README.md",
+]

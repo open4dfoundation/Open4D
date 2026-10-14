@@ -19,11 +19,10 @@ Open3D ships no 3.13 wheels, capping `.[open3d]` and the codecs at 3.12.
 
 ## Installation
 
-Clone with submodules to obtain the pinned Draco, libigl, SAM3, and MPEG V-DMC
-source:
+Clone the core without downloading research backends:
 
 ```bash
-git clone --recurse-submodules https://github.com/open4dfoundation/Open4D.git
+git clone https://github.com/open4dfoundation/Open4D.git
 cd Open4D
 ```
 
@@ -43,14 +42,60 @@ python -m pip install -e ".[player]"   # the viewer and GIF export (PyQt6 + pyqt
 python -m pip install -e ".[usd]"      # OpenUSD containers
 python -m pip install -e ".[tools]"    # trimesh, for extra mesh formats
 python -m pip install -e ".[open3d]"   # Open3D adapter; Python 3.12 or older
-python -m pip install -e ".[qndf]"     # QNDF/QNDF-INT8 in-process adapters
+python -m pip install -e ".[qndf]"     # Python dependencies, not the QNDF plugin/runtime
 python -m pip install -e ".[all]"
 ```
 
-These extras do not install the heavyweight codec environments. Use the setup
-instructions inside the selected codec before running it. Research codec
-implementations remain source-checkout-only and are excluded from the
-lightweight wheel until their provenance review is complete.
+### Downloadable adapter packages
+
+The core ships usable NumPy array codecs. Research codec registrations are
+separately installable packages; build a wheel with `python -m build
+plugins/vdmc --outdir /tmp/open4d-plugins` or install directly:
+
+```bash
+python -m pip install ./plugins/vdmc        # one adapter
+python -m pip install ./plugins/queen       # codec and reconstruction registration
+# Alternatively install the aggregate instead of the individual packages:
+python -m pip install ./plugins/research
+python -c "import open4d as o4d; print(o4d.available_codecs()); print(o4d.available_methods())"
+```
+
+These packages are not yet published to PyPI. They contain MIT registration
+metadata, a license and a dependency on the core. They contain no research
+implementations, native binaries, datasets or weights. Avoid installing an
+aggregate and an individual provider for the same name; duplicate entry points
+are reported and ignored instead of choosing an arbitrary provider.
+
+Acquire and build a backend separately under its own terms. Initialize only
+the submodules needed by that method, not the full set. KLT, N4MC and QNDF can
+use `OPEN4D_KLT_ROOT`, `OPEN4D_N4MC_ROOT` and `OPEN4D_QNDF_ROOT`, respectively;
+`OPEN4D_RESEARCH_ROOT` still supports a whole source checkout. V-DMC supports
+`OPEN4D_VDMC_ROOT` or configured encoder/decoder executables. QUEEN, 3DGStream,
+Vega and ReRF retain their separate environments and runtime-root variables.
+Backend-specific code may require the project's recorded patches; downloading
+an unmodified upstream is not a claim of runtime compatibility.
+
+An adapter package does not resolve missing licenses, the TVMC redistribution
+prohibition, QUEEN's non-commercial restrictions, or ReRF's conflicting terms.
+Their source and model weights remain excluded. The existing release ledger
+and maintainer approval still gate publication of the core and plugins.
+
+### Documentation site
+
+The wiki builds from the existing guides and generates its API reference from
+public signatures and docstrings. No separate hand-maintained API copy is
+needed. Preview it outside the source tree:
+
+```bash
+python -m pip install -e '.[docs]'
+python -m mkdocs build --strict --site-dir /tmp/open4d-site
+python -m http.server 8000 --directory /tmp/open4d-site
+```
+
+The documentation workflow uploads a preview artifact for every PR. Reviewed
+main-branch sources can be deployed to GitHub Pages through its manual deploy
+option once the release approval gate passes. Unreviewed media in `docs/assets`
+is excluded from the generated site.
 
 If an existing clone is missing Draco, initialize and build all three copies —
 the Draco baseline codec's own, plus TSMC's and TVMC's — with:
@@ -112,7 +157,7 @@ build. Those are optional and separate, with install commands in
 | `codecs/draco` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
 | `codecs/vdmc`, `codecs/faster_vdmc` | The MPEG reference and optimized test models' own build requirements |
 | `reconstruction/rgbd` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
-| `reconstruction/gs_tools`, `queen`, `3dgstream`, `vega` | The separate `open4d-gs` conda environment and five CUDA extensions built with `--no-build-isolation`, per [`gs_tools`](../open4d/reconstruction/gs_tools/README.md). Build on ext4; on an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter` |
+| `reconstruction/gs_tools`, `queen`, `3dgstream`, `vega` | The separate `open4d-gs` conda environment and five CUDA extensions built with `--no-build-isolation`, per [`gs_tools`](../codecs/gs_tools/README.md). Build on ext4; on an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter` |
 | `reconstruction/rerf` | Python 3.8, because `ac_dc/ncvv_ac_dc.cpython-38-*.so` ships without sources and cannot be rebuilt for a newer interpreter. Plus torch with CUDA, mmcv, bitarray, Pillow, NumPy — a separate environment from every other module here |
 | `integrations/unity` | Unity, plus a C++ toolchain to rebuild the backend for anything other than the prebuilt macOS and Android/Quest 3 plugins |
 
@@ -123,15 +168,16 @@ build script. It needs the Xcode Command Line Tools, CMake 3.17 or newer, and
 network access on the first run, when CMake downloads the dependencies.
 
 ```bash
-git submodule update --init open4d/codecs/vdmc   # or open4d/codecs/faster_vdmc
+git submodule update --init codecs/vdmc   # or codecs/faster_vdmc
 ./scripts/build_vdmc_macos.sh vdmc               # or faster_vdmc
 ```
 
 The script patches the x86-only compiler flags and a few macOS build errors,
 keeping a `.open4d-orig` copy of each edited file (`--revert` restores them).
-It builds `encode` and `decode` into `<submodule>/build/Release/bin` and prints
-the `OPEN4D_VDMC_ENCODER`/`OPEN4D_VDMC_DECODER` (or `OPEN4D_FASTER_VDMC_*`)
-lines to export. `--source` and `--build-dir` select other locations.
+It builds `encode` and `decode` into `<submodule>/build/Release/bin`, where a
+source checkout finds them without configuration, and prints the
+`OPEN4D_VDMC_ENCODER`/`OPEN4D_VDMC_DECODER` (or `OPEN4D_FASTER_VDMC_*`) lines to
+export. An installed wheel can instead set `OPEN4D_VDMC_ROOT` to the source tree. `--source` and `--build-dir` select other locations.
 
 ## RGB-D capture on Windows
 

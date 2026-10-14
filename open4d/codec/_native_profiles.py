@@ -37,6 +37,17 @@ MAX_FILES = 65536
 MAX_FRAMES = 65536
 
 NEURAL_CODECS = frozenset(("vega", "queen", "3dgstream", "rerf"))
+ARRAY_CODECS = frozenset(("npz", "raw", "deflate", "bzip2", "lzma", "rle"))
+
+
+def profile_representation(codec, native):
+    if codec in ARRAY_CODECS and isinstance(native, dict) and native.get("profile") == f"{codec}/2":
+        return "geometry_sequence"
+    return PROFILES[codec][0]
+
+
+def profile_version(codec, native):
+    return 2 if profile_representation(codec, native) == "geometry_sequence" else 1
 
 
 def _require(condition, message):
@@ -72,7 +83,8 @@ def layout(codec, count, native=None):
                       ("delta_trajectories_encoded.npy", "entropy-coded-trajectories"),
                       ("entropy_model.npz", "entropy-model")]
         return files
-    _require(isinstance(native, dict) and native.get("profile") == f"{codec}/1", "unsupported profile version")
+    allowed_profiles = (f"{codec}/1", f"{codec}/2") if codec in ARRAY_CODECS else (f"{codec}/1",)
+    _require(isinstance(native, dict) and native.get("profile") in allowed_profiles, "unsupported profile version")
     if codec in NEURAL_CODECS:
         _require(count >= 2, "native sequence profiles require at least two frames")
     if codec == "n4mc":
@@ -91,7 +103,8 @@ def layout(codec, count, native=None):
     elif codec in ("npz", "raw", "deflate", "bzip2", "lzma", "rle"):
         _require(set(native) == {"profile", "rle"} and type(native["rle"]) is bool,
                  "unexpected array configuration")
-        files += [(f"frame_{i:06d}.npz", "mesh-arrays") for i in range(count)]
+        role = "geometry-arrays" if native["profile"] == f"{codec}/2" else "mesh-arrays"
+        files += [(f"frame_{i:06d}.npz", role) for i in range(count)]
     elif codec == "draco":
         _require(set(native) == {"profile"}, "unexpected Draco configuration")
         files += [(f"frame_{i:06d}.drc", "frame-mesh") for i in range(count)]

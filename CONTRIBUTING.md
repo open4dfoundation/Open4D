@@ -21,8 +21,8 @@ For research and reconstruction tests on Python 3.12:
 
 ```bash
 python -m pip install -e '.[dev,klt,n4mc,qndf,open3d,gaussians]'
-python -m pytest open4d/codec/tests/test_research_cpu.py -m 'not gpu'
-python -m pytest open4d/reconstruction/rgbd/tests open4d/integrations/open3d/tests
+python -m pytest tests/codec/test_research_cpu.py -m 'not gpu'
+python -m pytest tests/reconstruction/rgbd tests/integrations/open3d
 ```
 
 ## Code
@@ -31,8 +31,9 @@ python -m pytest open4d/reconstruction/rgbd/tests open4d/integrations/open3d/tes
 - Put public mesh codec adapters in `open4d/codec`, Gaussian APIs in
   `open4d/gaussians.py`, RGB-D reconstruction in `open4d/reconstruction/rgbd`,
   and TCP frame transport in `open4d/transport`.
-- Preserve the research implementations under `open4d/codecs` and the rest of
-  `open4d/reconstruction`. Connect them through small adapters.
+- Preserve research implementations and their notices under `codecs/`.
+  Keep built-in reconstruction and its registry in `open4d/reconstruction`;
+  connect external methods through separately installable adapters.
 - A decoded artifact must work without the original input or hidden encoder
   files. Keep native backends separate from the installed Python package.
 - Keep splats separate from `TriangleMesh`, and live iterators separate from
@@ -52,6 +53,14 @@ python scripts/check_wheel_contents.py dist/open4d-*.whl
 python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
 python -m twine check --strict dist/*
 ```
+
+Build the wiki and generated API reference with `python -m pip install -e
+'.[docs]'`, then `python -m
+mkdocs build --strict --site-dir /tmp/open4d-site`. Update existing docs and
+public docstrings with code changes. Research plugin registrations use
+`open4d.codecs` and `open4d.reconstruction` entry points; their packages may not
+include upstream research code, weights, datasets or binaries without a
+separate reviewed distribution basis.
 
 The package checks enforce an explicit file list for wheels and source archives.
 The compile check matches CI's supported Python paths; vendored tools such as

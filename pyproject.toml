@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open4d"
-version = "0.2.0"
+version = "0.3.0"
 description = "Encode, decode, reconstruct and stream 4D mesh and Gaussian sequences"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -34,7 +34,7 @@ dependencies = ["numpy>=1.24"]
 
 [project.urls]
 Homepage = "https://github.com/open4dfoundation/Open4D"
-Documentation = "https://github.com/open4dfoundation/Open4D/blob/main/docs/api.md"
+Documentation = "https://open4dfoundation.github.io/Open4D/"
 Changelog = "https://github.com/open4dfoundation/Open4D/blob/main/CHANGELOG.md"
 Issues = "https://github.com/open4dfoundation/Open4D/issues"
 
@@ -46,7 +46,7 @@ tools  = ["trimesh"]
 # SciPy 1.15.x macOS arm64 wheels fail to load on macOS 26+ ("__thread_bss has
 # a zero-fill section type"); it is the newest SciPy for Python 3.10.
 metrics = ["scipy", "scipy!=1.15.*; sys_platform == 'darwin'"]
-player = ["PyQt6", "pyqtgraph", "PyOpenGL", "pillow>=9", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'"]
+player = ["PyQt6", "pyqtgraph>=0.14", "PyOpenGL", "pillow>=9", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'"]
 # 0.20 applies depth_scale to float depth, but its legacy TSDF integrator
 # still passes 1000 for images already in metres and silently extracts no mesh.
 open3d = ["open3d>=0.19,<0.20", "pillow>=9"]
@@ -59,14 +59,17 @@ gaussians = ["plyfile", "pillow>=9"]
 # Open3D 0.19 has no Python 3.13 or Linux aarch64 wheels, and usd-core none for
 # Linux aarch64. Capture loading works without Open3D; reconstruction does not.
 capture = ["opencv-python", "zstandard", "open3d>=0.19,<0.20; python_version < '3.13' and platform_machine != 'aarch64'", "pillow>=9"]
+docs = ["mkdocs>=1.6,<2", "tomli>=2; python_version < '3.11'"]
 dev    = ["build>=1.2", "twine>=6", "pytest>=8", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'", "tomli>=2; python_version < '3.11'"]
-all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph", "PyOpenGL", "open3d>=0.19,<0.20; python_version < '3.13' and platform_machine != 'aarch64'", "pillow>=9", "usd-core>=24.3; platform_machine != 'aarch64'", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image", "opencv-python", "zstandard"]
+all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph>=0.14", "PyOpenGL", "open3d>=0.19,<0.20; python_version < '3.13' and platform_machine != 'aarch64'", "pillow>=9", "usd-core>=24.3; platform_machine != 'aarch64'", "scipy", "scipy!=1.15.*; sys_platform == 'darwin'", "torch", "zstd", "tqdm", "point-cloud-utils", "scikit-image", "opencv-python", "zstandard"]
 
 [tool.setuptools]
 include-package-data = false
 packages = [
     "open4d",
     "open4d.codec",
+    "open4d.data",
+    "open4d.ml",
     "open4d.core",
     "open4d.io",
     "open4d.reconstruction",
@@ -81,15 +84,18 @@ packages = [
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = [
-    "open4d/core/tests",
-    "open4d/codec/tests",
-    "open4d/io/tests",
-    "open4d/reconstruction/rgbd/tests",
-    "open4d/transport/tests",
-    "open4d/torch_ops/tests",
-    "open4d/visualization/tests",
-    "examples/visualization/tests",
-    "scripts/tests",
+    "tests/core",
+    "tests/data",
+    "tests/ml",
+    "tests/codec",
+    "tests/io",
+    "tests/reconstruction/rgbd",
+    "tests/transport",
+    "tests/torch_ops",
+    "tests/visualization",
+    "tests/examples/visualization",
+    "tests/examples/tutorials",
+    "tests/scripts",
 ]
 markers = [
     "cpu: deterministic tests that need no optional hardware",

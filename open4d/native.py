@@ -19,6 +19,7 @@ from types import MappingProxyType
 
 import numpy as np
 
+from ._research_paths import default_runtime
 from .codec._native import run
 from .codec._native_profiles import NEURAL_CODECS, layout
 from .codec._metadata import _json_value
@@ -235,7 +236,7 @@ class NativeSequence:
     def _settings(self, runtime, python):
         variable = "OPEN4D_" + self.codec.upper()
         root = Path(runtime or self._runtime or os.environ.get(variable + "_ROOT") or
-                    Path(__file__).parent / "reconstruction" / self.codec).absolute()
+                    default_runtime(self.codec)).absolute()
         executable = str(python or self._python or os.environ.get(variable + "_PYTHON") or sys.executable)
         return root, executable
 
@@ -284,7 +285,7 @@ class NativeSequence:
             from .gaussians import missing_runtime
             variable = "OPEN4D_" + self.codec.upper()
             raise FileNotFoundError(
-                missing_runtime(self.codec, root, variable + "_ROOT", f"open4d/reconstruction/{self.codec}")
+                missing_runtime(self.codec, root, variable + "_ROOT", f"codecs/{self.codec}")
                 + f" python= or {variable}_PYTHON selects the interpreter with its CUDA dependencies.")
         request = dict(operation=operation, codec=self.codec, source=str(source), output=str(work), runtime=str(root), **options)
         path = work / "request.json"

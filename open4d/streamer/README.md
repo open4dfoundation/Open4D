@@ -15,6 +15,22 @@ pip install -e open4d/streamer
 `open4d.stream()` uses this package. Without it, `open4d.stream` raises
 `StreamerDependencyError`.
 
+This is a separate package candidate; creating its distribution artifacts does
+not publish it or clear Open4D's release approval. Project code is MIT-licensed.
+The browser's unmodified Draco decoder is Apache-2.0 at immutable upstream
+revision `47238930f698250f474163e1a29d77858aa5c158`. Its exact license and author
+list are shipped beside the decoder and in wheel license metadata. Upstream
+has no root NOTICE at that revision; the bundled NOTICE explicitly identifies
+itself as Open4D's attribution notice. See the
+[vendored decoder provenance](streamer/client/vendor/draco/README.md).
+
+Build outside the checkout, then check both archives with
+`python scripts/check_streamer_package.py /path/to/open4d_streamer-*.whl /path/to/open4d_streamer-*.tar.gz`
+from the Open4D repository root. The checker rejects research-study files,
+checks the client assets and notices, and verifies the recorded upstream
+Draco SHA-256 digests. The study, its npm dependencies, benchmarks and tests
+are excluded from both wheel and sdist.
+
 ## Quick start
 
 ```python

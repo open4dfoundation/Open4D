@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 import numpy as np
 
+from open4d._research_paths import default_runtime
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
 from open4d.io import Open4DError, open_sequence
 from open4d.io._mesh import write_obj
@@ -25,10 +26,29 @@ _POSITION_BIT_DEPTH = 12
 _DEFAULT_RAW_FPS = 30.0
 
 
-def _executable(value: str | os.PathLike[str] | None, variable: str) -> Path:
+def _executable(value: str | os.PathLike[str] | None, identifier: str, role: str) -> Path:
+    """Find a V-DMC encoder or decoder that the user built separately.
+
+    The order is the keyword argument, OPEN4D_<ID>_ENCODER or _DECODER, then a
+    build inside OPEN4D_<ID>_ROOT (or this checkout's submodule) at
+    build/Release/bin, the layout of upstream build.sh and build_vdmc_macos.sh.
+    """
+    prefix = f"OPEN4D_{identifier.upper()}"
+    variable = f"{prefix}_{role.upper()}"
     selected = value or os.environ.get(variable)
     if not selected:
-        raise CodecError(f"native codec executable is required; set {variable}")
+        root = Path(os.environ.get(f"{prefix}_ROOT") or
+                    default_runtime(identifier)).expanduser()
+        name = {"encoder": "encode", "decoder": "decode"}[role] + (".exe" if os.name == "nt" else "")
+        built = [path for path in (root / "build/Release/bin" / name, root / "bin" / name)
+                 if path.is_file()]
+        if not built:
+            raise CodecError(
+                f"{identifier} {role} not found; pass {role}=, set {variable}, or set "
+                f"{prefix}_ROOT to a V-DMC source tree built with upstream build.sh or "
+                "scripts/build_vdmc_macos.sh"
+            )
+        selected = built[0]
     path = Path(selected).absolute()
     if not path.is_file() or not os.access(path, os.X_OK):
         raise CodecError(f"native codec executable is not runnable: {path}")
@@ -184,7 +204,7 @@ class O4DCodec:
         overwrite: bool = False,
     ) -> Path:
         destination = require_o4d_destination(destination)
-        executable = _executable(encoder, f"OPEN4D_{self._environment}_ENCODER")
+        executable = _executable(encoder, self.id, "encoder")
         configs = [Path(value).absolute() for value in (encoder_config, decoder_config) if value]
         for config in configs:
             if not config.is_file():
@@ -272,7 +292,7 @@ class O4DCodec:
         if not raw and fps is not None:
             raise TypeError("fps applies only to manifest-free .o4d bitstreams")
         raw_rate = _raw_fps(fps) if raw else None
-        executable = _executable(decoder, f"OPEN4D_{self._environment}_DECODER")
+        executable = _executable(decoder, self.id, "decoder")
         config_variable = f"OPEN4D_{self._environment}_DECODER_CONFIG"
         configured = (
             _configuration(decoder_config, config_variable)

@@ -8,9 +8,9 @@ repo_root="$(git rev-parse --show-toplevel)"
 # plus one each for TSMC and TVMC. Each codec's scripts look for the binaries
 # under its own checkout, so each one is built in place.
 submodules=(
-  open4d/codecs/draco/draco
-  open4d/codecs/tsmc/draco
-  open4d/codecs/tvmc/draco
+  codecs/draco/draco
+  codecs/tsmc/draco
+  codecs/tvmc/draco
 )
 
 git -C "$repo_root" submodule update --init "${submodules[@]}"

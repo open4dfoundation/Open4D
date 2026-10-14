@@ -28,7 +28,7 @@ What it cannot do yet, stated rather than silently skipped:
 SSIM is implemented here rather than imported. `streamer` depends on `open4d`
 and nothing else, and a metric is a poor reason to add scikit-image to a
 package whose job is transport. It is the Wang et al. (2004) formulation with a
-Gaussian window, and ``streamer_tests/test_metrics.py`` holds it to
+Gaussian window, and ``tests/streamer/test_metrics.py`` holds it to
 scikit-image's implementation to 1e-4 wherever that library happens to be
 installed -- so the shortcut is checked rather than trusted.
 """

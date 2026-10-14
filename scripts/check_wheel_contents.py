@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIRS = {
     "open4d": ROOT / "open4d",
     "open4d.codec": ROOT / "open4d/codec",
+    "open4d.data": ROOT / "open4d/data",
+    "open4d.ml": ROOT / "open4d/ml",
     "open4d.core": ROOT / "open4d/core",
     "open4d.io": ROOT / "open4d/io",
     "open4d.reconstruction": ROOT / "open4d/reconstruction",

@@ -15,7 +15,7 @@ After publication:
 python -m pip install open4d
 ```
 
-The base package needs NumPy and supports Python 3.10 through 3.13. Install only
+The MIT core needs NumPy and supports Python 3.10 through 3.13. Install only
 the extras you use:
 
 ```bash
@@ -28,9 +28,20 @@ python -m pip install 'open4d[gaussians]' # read Gaussian PLY files
 
 For development, install a checkout with `python -m pip install -e '.[dev]'`.
 
-Research methods have additional setup below. Their source, native programs
-and model weights are not bundled in the Python wheel. Hardware, environments
+Research adapters are separate installable packages. Their source backends,
+native programs and model weights are not bundled in either package. From a
+checkout, install only the adapter you need, for example
+`python -m pip install ./plugins/vdmc`; `./plugins/research` installs all adapter
+registrations. These packages are not yet published to PyPI. Each backend,
+dataset and checkpoint keeps its own license; a plugin does not clear a missing
+license or permit redistribution. Hardware, environments
 and per-module requirements are in [docs/requirements.md](https://github.com/open4dfoundation/Open4D/blob/main/docs/requirements.md).
+The versioned documentation site includes a searchable wiki, codec setup guides,
+and [seven runnable tutorials](examples/tutorials/). Build a local preview with
+`python -m pip install -e '.[docs]'` and `python -m mkdocs serve`.
+All source guides and upstream manuals are linked in the site's documentation
+library; project policies, licenses and useful component documentation remain
+versioned in this repository.
 
 RGB-D reconstruction requires Open3D 0.19.x. The legacy TSDF integrator in
 Open3D 0.20 rescales already-metric float depth and can return empty meshes;
@@ -62,10 +73,10 @@ texture coordinates and custom attributes.
 
 ## Encode and decode
 
-Choose a research codec explicitly. For example, after setting up V-DMC:
+The installed core can encode and decode without any research runtime:
 
 ```python
-encoded = open4d.encode(sequence, "wave.o4d", codec="vdmc")
+encoded = open4d.encode(sequence, "wave.o4d", codec="npz")
 decoded = open4d.decode(encoded)
 open4d.visualize(decoded)
 decoded.close()
@@ -78,6 +89,41 @@ artifact. Close a decoded mesh sequence when finished, or use `with`:
 with open4d.decode("wave.o4d") as decoded:
     print(len(decoded), "frames")
 ```
+
+`npz` losslessly preserves mesh, point-cloud and GaussianCloud frame arrays.
+Research plugins declare their own supported input representation; they do not
+automatically convert every representation into every codec. Use
+`open4d.available_codecs()` and `open4d.available_methods()` to inspect the core
+and installed extensions. Plugin discovery reads package entry points and loads
+a backend only when selected.
+
+## Data and live visualization
+
+Examples are created in a cache on first use, outside the package download:
+
+```python
+sample = open4d.data.SyntheticMeshSequence()
+with open4d.load(sample.path) as sequence:
+    open4d.visualize(sequence)
+```
+
+`SyntheticGaussianSequence().load()` provides GaussianCloud frames. Both
+examples are synthetic and MIT licensed. External datasets and model weights
+use separate `DatasetSpec` records with an HTTPS URL, SHA-256 and their own
+license; cached files are reverified on access. No restricted basketball capture
+or unverified neural checkpoint is hosted or bundled.
+
+For a live TCP receiver, the stateful viewer keeps its event loop responsive:
+
+```python
+with open4d.receive(port=47004) as receiver:
+    with open4d.Visualizer(title="Live capture") as viewer:
+        viewer.stream(receiver)
+```
+
+The viewer supports meshes, points, explicit UV textures and a baseline pane.
+GaussianCloud frames are previews of colored centers; full covariance and
+view-dependent splat rendering require a native renderer.
 
 The [notebook](https://github.com/open4dfoundation/Open4D/blob/main/examples/open4d_sequence_codec.ipynb) walks through these calls,
 reconstruction and streaming in separate short cells.
@@ -92,12 +138,12 @@ Short `.o4d` examples:
 | --- | --- | --- | --- |
 | `vdmc` | Mesh sequence | `.o4d` | Build the V-DMC submodule and configure its encoder and decoder |
 | `faster_vdmc` | Mesh sequence | `.o4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
-| `tvmc` | Mesh sequence | `.o4d` | [TVMC setup](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/tvmc/README.md) |
-| `tsmc` | Mesh sequence | `.o4d` | [TSMC setup](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/tsmc/README.md) |
+| `tvmc` | Mesh sequence | `.o4d` | [TVMC setup](https://github.com/open4dfoundation/Open4D/blob/main/codecs/tvmc/README.md) |
+| `tsmc` | Mesh sequence | `.o4d` | [TSMC setup](https://github.com/open4dfoundation/Open4D/blob/main/codecs/tsmc/README.md) |
 | `klt` | Mesh sequence converted to TSDF volumes | `.o4d` | Research source and `.[klt]` |
 | `n4mc` | Mesh sequence converted to TSDF volumes | `.o4d` | Research source and `.[n4mc]` |
 | `qndf`, `qndf-int8` | Mesh frames | `.o4d` | Research source and `.[qndf]` |
-| `vega` | Gaussian splat frames or native run | `.o4d` | [Vega CUDA environment](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/vega/README.md) |
+| `vega` | Gaussian splat frames or native run | `.o4d` | [Vega CUDA environment](https://github.com/open4dfoundation/Open4D/blob/main/codecs/vega/README.md) |
 | `queen`, `3dgstream`, `rerf` | Native temporal research output | `.o4d`, with native USDC interchange | Method-specific CUDA runtime for evaluation |
 
 All twelve public codecs write standalone `.o4d` files whose profile identifies
@@ -134,14 +180,16 @@ For an installed wheel, point KLT, N4MC and QNDF at a source checkout:
 export OPEN4D_RESEARCH_ROOT=/path/to/Open4D
 ```
 
-V-DMC needs the paths to its built programs:
+V-DMC is not part of the package; build it separately and point Open4D at it.
+The source tree is enough when it was built with upstream `build.sh` or
+`scripts/build_vdmc_macos.sh`, which put the programs in `build/Release/bin`:
 
 ```bash
-export OPEN4D_VDMC_ENCODER=/path/to/o4dEncoder
-export OPEN4D_VDMC_DECODER=/path/to/o4dDecoder
+export OPEN4D_VDMC_ROOT=/path/to/mpeg-vdmc-tm
 ```
 
-Use `OPEN4D_FASTER_VDMC_ENCODER` and `OPEN4D_FASTER_VDMC_DECODER` for the faster
+`OPEN4D_VDMC_ENCODER` and `OPEN4D_VDMC_DECODER` select the programs directly.
+Use `OPEN4D_FASTER_VDMC_ROOT` (or `_ENCODER` and `_DECODER`) for the faster
 fork. Encoder and decoder configurations can be supplied with
 `encoder_config=` and `decoder_config=`. TVMC and TSMC accept `backend=` for
 the method's source directory and `python=` for its environment. Codec options
@@ -258,7 +306,7 @@ native group per run and rejects output requiring several color models.
 It does not replace the learned colors with invented SH coefficients.
 
 QUEEN and 3DGStream reconstruct splats from calibrated camera images. After
-[setting up their runtime](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/gs_tools/README.md):
+[setting up their runtime](https://github.com/open4dfoundation/Open4D/blob/main/codecs/gs_tools/README.md):
 
 ```python
 run = open4d.reconstruct("my_scene", "queen_output", method="queen")

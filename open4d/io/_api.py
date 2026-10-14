@@ -272,6 +272,10 @@ def _read_manifest(
 def _read_geometry(path: Path, suffix: str | None = None) -> TriangleMesh:
     suffix = suffix or path.suffix.lower()
     try:
+        if suffix == ".obj":
+            positions, triangles, colors, uv = _mesh.read_obj_with_uv(path)
+            return TriangleMesh(positions=positions, triangles=triangles, colors=colors,
+                                texture_coordinates=uv)
         try:
             positions, triangles, colors = _FRAME_READERS[suffix](path)
         except _mesh.UnsupportedPlyVariant:

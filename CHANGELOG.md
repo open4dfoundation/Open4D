@@ -3,6 +3,53 @@
 Open4D follows [Semantic Versioning](https://semver.org/). Before 1.0, minor
 versions may change the public API.
 
+## [0.3.0] - Unreleased
+
+### Added
+
+- Separately installable MIT research adapter packages discovered lazily through
+  `open4d.codecs` and `open4d.reconstruction` entry points. Downloadable adapter
+  archives contain registration metadata and licenses, never research source,
+  native binaries, datasets or model weights.
+- Public lossless NumPy codecs for mesh, PointCloud and GaussianCloud sequences;
+  version 2 array profiles preserve frame representation and read version 1
+  mesh artifacts. The O4D envelope version remains 1.
+- `open4d.data` with licensed, checksum-verified HTTPS downloads, bounded archive
+  extraction and deterministic MIT synthetic mesh/Gaussian examples.
+- `RGBDCapture.from_folder`, calibrated `MultiviewCapture.from_colmap`,
+  `available_methods`, the `tsdf` alias, and reconstruction directly to `.o4d`
+  or optional OpenUSD mesh exports.
+- Stateful `Visualizer` with live TCP display, linked comparison panes and UV
+  textures. GaussianCloud visualization previews centers, not native splats.
+- Lazy shared Torch training utilities in `open4d.ml`; no research models or
+  pretrained checkpoints are included.
+- A searchable MkDocs wiki built from existing documentation and public
+  docstrings, PR preview artifacts, and an approval-gated Pages workflow.
+
+### Changed
+
+- `available_codecs()` lists core codecs and installed adapters. Research
+  registrations now require installing the selected adapter package.
+- Native source roots can be configured separately for KLT, N4MC and QNDF.
+- Viewer dependencies require pyqtgraph 0.14 or newer for the texture shader.
+- Publication remains blocked until the provenance ledger and actual
+  maintainer approval are complete; plugins do not grant backend rights.
+
+### Fixed
+
+- Browser codec rungs resolve the selected adapter's capabilities without
+  importing unrelated providers. Plugin caches compare public entry-point
+  metadata across standard-library and vendored metadata implementations.
+- OBJ sequence loading retains vertex and corner UVs without changing position
+  topology or following material/image paths.
+- Repeated Qt exports retain the application between viewers; texture shaders
+  declare float precision for OpenGL ES contexts. Comparison panes initialize
+  their shared contexts before geometry uploads and reuse them when revealed.
+- Export viewers break item/view reference cycles and release GPU buffers while
+  their owning context is current; empty frames do not submit zero-length draws.
+- Qt/PyOpenGL context backend mismatches produce actionable errors through
+  Python callers without raising through native Qt callbacks.
+
 ## [0.2.0] - Unreleased
 
 ### Added

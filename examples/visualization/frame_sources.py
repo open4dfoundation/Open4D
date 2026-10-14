@@ -14,8 +14,13 @@ _USD_SUFFIXES = {".usd", ".usda", ".usdc", ".usdz"}
 
 
 def _codec_suffixes():
-    return {suffix for info in available_codecs() if info.representation == "triangle_mesh"
-            for suffix in info.suffixes}
+    # The core O4D container remains a sequence even when its encoded codec is
+    # not installed. NumPy's reference codec also carries point/Gaussian frames.
+    return {".o4d"} | {
+        suffix for info in available_codecs()
+        if info.representation in {"triangle_mesh", "geometry_sequence"}
+        for suffix in info.suffixes
+    }
 
 
 def supported_formats() -> str:
@@ -30,8 +35,8 @@ def supported_formats() -> str:
         )
         target = sequence_lines if info.id == "usd" else frame_lines
         target.append(f"  {'/'.join(info.suffixes):<24}{extra}".rstrip())
-    sequence_lines.append("  research codec files: " + ", ".join(sorted(_codec_suffixes()))
-                          + " (needs the selected codec runtime)")
+    sequence_lines.append("  encoded sequence files: " + ", ".join(sorted(_codec_suffixes()))
+                          + " (research payloads need the selected codec plugin/runtime)")
     return "\n".join((*sequence_lines, *frame_lines))
 
 

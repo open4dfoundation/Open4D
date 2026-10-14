@@ -930,7 +930,7 @@ function decodeFrame(representation) {
  */
 /* A frame's suffix, by the same rule `worker.js` uses to choose its codec.
  * Transcribed rather than shared because the worker is a separate script, and
- * held to the original by `streamer_tests/test_client_parsers.py`. */
+ * held to the original by `tests/streamer/test_client_parsers.py`. */
 function suffixOf(url) {
   const path = String(url).split("?", 1)[0];
   const dot = path.lastIndexOf(".");
@@ -1239,7 +1239,7 @@ function affordable(rungs, share) {
  * Dependency.chain, and being a transcription is a liability: two
  * implementations of one rule in two languages drift. So it is held to the
  * Python one by a test that runs both over the same cases
- * (streamer_tests/test_scheduler.py). Change one, and that test tells you about
+ * (tests/streamer/test_scheduler.py). Change one, and that test tells you about
  * the other.
  *
  * Every clip this repository writes today is independent, because every
@@ -1295,7 +1295,7 @@ class Scheduler {
     this.decode = decode;
     // Passed in rather than reached for as a page global. A scheduler that
     // read one could not be exercised outside a page -- and this one is, by
-    // `streamer_tests/test_scheduler.py`, which runs it as shipped under Node.
+    // `tests/streamer/test_scheduler.py`, which runs it as shipped under Node.
     this.meter = meter;
     this.dependency = dependencyOf(clip);
     this.cacheSize = Math.max(1, cacheSize);

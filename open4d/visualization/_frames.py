@@ -42,6 +42,9 @@ class RenderFrame(NamedTuple):
     colors: np.ndarray | None        # (N, 3) float in [0, 1], or None
     frame_index: int                 # as the source numbered it
     timestamp: float                 # seconds, as the source recorded it
+    texture_coordinates: np.ndarray | None = None
+    opacities: np.ndarray | None = None
+    representation: str = "mesh"
 
     @property
     def is_mesh(self) -> bool:
@@ -72,12 +75,15 @@ def to_render_frame(frame, order: list[int]) -> RenderFrame:
         positions = np.ascontiguousarray(positions[:, order])
     return RenderFrame(
         positions=positions,
-        triangles=mesh.triangles,
-        colors=rgb_colors(mesh.colors),
+        triangles=getattr(mesh, "triangles", np.empty((0, 3), dtype=np.uint32)),
+        colors=rgb_colors(getattr(mesh, "colors", None)),
         # Carried through so the viewer can report the source's own numbering
         # and timing rather than its position in the strided list.
         frame_index=int(frame.frame_index),
         timestamp=float(frame.timestamp),
+        texture_coordinates=getattr(mesh, "texture_coordinates", None),
+        opacities=getattr(mesh, "opacities", None),
+        representation=mesh.representation.value,
     )
 
 
@@ -213,7 +219,10 @@ def vertex_colors(
 ) -> np.ndarray:
     """RGBA per vertex: the frame's own colors if it has them, else shading."""
     if frame.colors is not None:
-        return np.column_stack(
-            [frame.colors, np.ones(len(frame.colors), dtype=np.float32)]
-        )
-    return shade(frame.positions, frame.triangles, base=base, ambient=ambient)
+        alpha = (frame.opacities if frame.opacities is not None
+                 else np.ones(len(frame.colors), dtype=np.float32))
+        return np.column_stack([frame.colors, alpha])
+    colors = shade(frame.positions, frame.triangles, base=base, ambient=ambient)
+    if frame.opacities is not None:
+        colors[:, 3] = frame.opacities
+    return colors

@@ -16,7 +16,7 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDITED_DIRECTORY_ROOTS = (
-    "open4d/codecs",
+    "codecs",
     "open4d/reconstruction",
 )
 EXPLICIT_REQUIRED_LEDGER_PATHS = (
@@ -24,11 +24,14 @@ EXPLICIT_REQUIRED_LEDGER_PATHS = (
     "integrations/unity",
     "open4d/streamer",
     "open4d/streamer/study",
+    "plugins",
 )
 ALLOWED_PACKAGES = {
     "open4d",
     "open4d.codec",
     "open4d.core",
+    "open4d.data",
+    "open4d.ml",
     "open4d.io",
     "open4d.reconstruction",
     "open4d.reconstruction.rgbd",
@@ -175,7 +178,7 @@ def main() -> int:
 
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     for path in (
-        "open4d/codecs", "open4d/reconstruction", "integrations/unity",
+        "codecs", "open4d/reconstruction", "integrations/unity",
         "open4d/reconstruction/rgbd/app", "open4d/reconstruction/rgbd/src",
         "open4d/reconstruction/rgbd/include", "open4d/reconstruction/rgbd/python",
         "open4d/reconstruction/rgbd/tools",

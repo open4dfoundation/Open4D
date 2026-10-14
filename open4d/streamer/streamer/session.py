@@ -71,14 +71,23 @@ class Rung:
     keep: float = 1.0
 
 
-def _mesh_codecs() -> tuple[str, ...]:
-    """Open4D codecs whose decoded output is a mesh `Sequence`."""
+def _sequence_codecs() -> tuple[str, ...]:
+    """Known Sequence codecs and unresolved installed providers, without imports."""
     import open4d
 
     return tuple(
         info.id for info in open4d.available_codecs()
-        if info.representation == "triangle_mesh"
+        if info.representation in {"triangle_mesh", "geometry_sequence", "plugin"}
     )
+
+
+def _sequence_codec(identifier: str) -> bool:
+    """Resolve capabilities only for a codec the caller explicitly selected."""
+    from open4d.codec import codec_info
+
+    return codec_info(identifier, resolve=True).representation in {
+        "triangle_mesh", "geometry_sequence",
+    }
 
 
 def parse_rung(
@@ -124,11 +133,11 @@ def parse_rung(
         codec, delivery = name, (tail if slash else export.FRAME_FORMAT)
         if RUNG_SEPARATOR in head:
             raise ValueError(f"rung {spec!r} quantises the codec, not the frame format")
-        known = _mesh_codecs()
-        if codec not in known:
+        known = _sequence_codecs()
+        if codec not in known or not _sequence_codec(codec):
             raise ValueError(
                 f"unknown frame format or codec {codec!r} in rung {spec!r}; "
-                f"expected one of {', '.join(export.FORMATS)}, or an Open4D mesh "
+                f"expected one of {', '.join(export.FORMATS)}, or an installed Open4D sequence "
                 f"codec ({', '.join(known)}) optionally followed by "
                 f"'{CODEC_SEPARATOR}<frame format>'"
             )

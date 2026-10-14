@@ -1,7 +1,8 @@
 """Readers and writers for per-frame mesh files: `.obj`, `.ply`, and the rest.
 
-Each reader returns `(positions, triangles, colors)` for a single frame. A
-frame with no faces comes back with zero triangles.
+The legacy readers return `(positions, triangles, colors)` for a single frame.
+`read_obj_with_uv` additionally preserves texture coordinates. A frame with no
+faces comes back with zero triangles.
 
 `.obj` and `.ply` are parsed here with NumPy, so they need nothing beyond the
 base install. Other formats (`.stl`, `.off`, `.glb`, `.gltf`) are delegated to
@@ -33,13 +34,39 @@ class UnsupportedPlyVariant(ValueError):
 def read_obj(path: Path, *, dtype=np.float32) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Read positions, triangles, and colors from a Wavefront `.obj` file.
 
-    Handles `v` and `f` lines, `v/vt/vn` corner references, negative
-    (relative) indices, and polygons, which are fan-triangulated. Materials,
-    normals, groups, and texture coordinates are ignored. `.obj` has no
-    standard vertex color, so colors are always None.
+    Compatibility reader returning three values. For UV-preserving loading,
+    use `read_obj_with_uv` or the public `open4d.load` API. Materials, normals,
+    groups and texture images are not loaded. Colors are always None.
     """
+    positions, triangles, colors, _ = _read_obj_arrays(path, dtype=dtype, preserve_uv=False)
+    return positions, triangles, colors
+
+
+def read_obj_with_uv(path: Path, *, dtype=np.float32):
+    """Read OBJ arrays plus 2D UVs without following material/image paths.
+
+    Vertex and UV indices are independent, including negative relative indices.
+    Polygon fans retain each corner's UV. A one-to-one vertex/UV mapping uses
+    per-vertex UV storage; seams use per-triangle-corner storage. Faces that mix
+    assigned and missing UVs are rejected rather than silently losing texture.
+    """
+    return _read_obj_arrays(path, dtype=dtype, preserve_uv=True)
+
+
+def _read_obj_arrays(path: Path, *, dtype, preserve_uv):
     positions: list[tuple[str, str, str]] = []
     corners: list[tuple[int, int, int]] = []
+    coordinates: list[tuple[float, float]] = []
+    uv_corners: list[tuple[int | None, int | None, int | None]] = []
+
+    def index(value, count, label):
+        try:
+            result = int(value)
+        except ValueError as error:
+            raise ValueError(f"{path} contains invalid OBJ {label} index {value!r}") from error
+        if result == 0 or result < -count:
+            raise ValueError(f"{path} contains invalid OBJ {label} index {result}")
+        return result - 1 if result > 0 else count + result
 
     with open(path, "r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
@@ -50,25 +77,34 @@ def read_obj(path: Path, *, dtype=np.float32) -> tuple[np.ndarray, np.ndarray, n
                 if len(fields) < 4:
                     raise ValueError(f"{path} contains an incomplete vertex")
                 positions.append((fields[1], fields[2], fields[3]))
+            elif fields[0] == "vt" and preserve_uv:
+                if not 2 <= len(fields) <= 4:
+                    raise ValueError(f"{path} contains an invalid OBJ texture coordinate")
+                try:
+                    values = tuple(map(float, fields[1:]))
+                except ValueError as error:
+                    raise ValueError(f"{path} contains invalid OBJ texture coordinates") from error
+                if not all(np.isfinite(value) for value in values):
+                    raise ValueError(f"{path} contains nonfinite OBJ texture coordinates")
+                if len(values) == 3 and values[2] != 0:
+                    raise ValueError(f"{path} uses 3D OBJ texture coordinates; convert them to 2D UVs")
+                coordinates.append((values[0], values[1] if len(values) > 1 else 0.0))
             elif fields[0] == "f":
-                # "f 1/2/3 4//5 6" -> the vertex index is the first field.
-                indices = [
-                    int(field.partition("/")[0]) for field in fields[1:]
-                ]
-                # Negative indices count back from the vertices seen so far.
-                count = len(positions)
-                if len(indices) < 3:
+                if len(fields) < 4:
                     raise ValueError(f"{path} contains a face with fewer than three vertices")
-                for index in indices:
-                    if index == 0 or index < -count:
-                        raise ValueError(f"{path} contains invalid OBJ vertex index {index}")
-                resolved = [
-                    index - 1 if index > 0 else count + index for index in indices
-                ]
+                resolved, uv_indices = [], []
+                for field in fields[1:]:
+                    components = field.split("/")
+                    if (preserve_uv and len(components) > 3) or not components[0]:
+                        raise ValueError(f"{path} contains invalid OBJ corner reference {field!r}")
+                    resolved.append(index(components[0], len(positions), "vertex"))
+                    uv_indices.append(index(components[1], len(coordinates), "texture")
+                                      if preserve_uv and len(components) > 1 and components[1] else None)
                 for corner in range(1, len(resolved) - 1):
                     corners.append(
                         (resolved[0], resolved[corner], resolved[corner + 1])
                     )
+                    uv_corners.append((uv_indices[0], uv_indices[corner], uv_indices[corner+1]))
 
     if not positions:
         raise ValueError(f"{path} contains no vertices")
@@ -78,11 +114,27 @@ def read_obj(path: Path, *, dtype=np.float32) -> tuple[np.ndarray, np.ndarray, n
     vertices = np.array(positions, dtype=dtype)
     if not np.isfinite(vertices).all():
         raise ValueError(f"{path} contains nonfinite vertex coordinates")
-    return (
-        vertices,
-        np.array(corners, dtype=np.uint32).reshape(-1, 3),
-        None,
-    )
+    triangles = np.array(corners, dtype=np.uint32).reshape(-1, 3)
+    texture_coordinates = None
+    if any(uv is not None for face in uv_corners for uv in face):
+        if any(uv is None for face in uv_corners for uv in face):
+            raise ValueError(f"{path} mixes assigned and missing OBJ texture coordinates; "
+                             "assign UVs to every face corner before loading")
+        references = np.array(uv_corners, dtype=np.int64)
+        if references.max() >= len(coordinates):
+            raise ValueError(f"{path} references texture coordinate {references.max()+1} "
+                             f"but declares {len(coordinates)}")
+        with np.errstate(over="ignore"):
+            uv_values = np.array(coordinates, dtype=dtype)
+        if not np.isfinite(uv_values).all():
+            raise ValueError(f"{path} contains OBJ texture coordinates outside the requested dtype")
+        if len(coordinates) == len(vertices) and np.array_equal(references, triangles):
+            texture_coordinates = uv_values
+        else:
+            # Preserve position topology: separate UV references need not split
+            # vertices, and a shared position may carry different seam UVs.
+            texture_coordinates = uv_values[references]
+    return vertices, triangles, None, texture_coordinates
 
 
 def write_obj(path: Path, positions: np.ndarray, triangles: np.ndarray) -> Path:

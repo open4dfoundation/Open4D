@@ -29,6 +29,18 @@ from ._deps import require
 from . import _frames as render_frames
 
 
+# Qt's application owns process-wide platform/OpenGL state. Keep it alive
+# between standalone GIF calls and explicit-lifetime viewers instead of
+# repeatedly destroying/recreating it as a temporary Scene goes out of scope.
+_APPLICATION = None
+
+
+def _application(QtWidgets):
+    global _APPLICATION
+    _APPLICATION = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    return _APPLICATION
+
+
 def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
     """The few numbers worth showing while a sequence plays.
 
@@ -42,6 +54,8 @@ def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
     ]
     if frame.is_mesh:
         lines.append(f"{len(frame.triangles):,} tris")
+    elif getattr(frame, "representation", None) == "gaussians":
+        lines.append("Gaussian centers (point preview; not splat rendering)")
     else:
         lines.append("point cloud")
     return lines
@@ -72,6 +86,49 @@ def _mesh_shader():
     return shader
 
 
+def _check_current_context() -> None:
+    """Reject Qt/PyOpenGL platform mismatches while Qt's context is current."""
+    from OpenGL import contextdata, error
+
+    try:
+        contextdata.getContext()
+    except error.Error as cause:
+        raise RuntimeError(
+            "Qt's current OpenGL context is unavailable to PyOpenGL. "
+            "For EGL, set QT_XCB_GL_INTEGRATION=xcb_egl and "
+            "PYOPENGL_PLATFORM=egl before importing OpenGL. For X11 GLX, "
+            "use QT_XCB_GL_INTEGRATION=xcb_glx with its matching PyOpenGL platform."
+        ) from cause
+
+
+def _guarded_view(gl):
+    class GuardedView(gl.GLViewWidget):
+        def __init__(self, *args, **options):
+            self._context_error = None
+            super().__init__(*args, **options)
+
+        def initializeGL(self):
+            # Qt guarantees a current context here, including hidden GIF views.
+            # Do not raise through a Qt virtual callback: record the error and
+            # stop uploads/painting, then surface it through the Python caller.
+            try:
+                _check_current_context()
+                super().initializeGL()
+            except RuntimeError as error:
+                # Keep text, not a traceback retaining the callback's view.
+                self._context_error = str(error)
+
+        def paintGL(self):
+            if self._context_error is None:
+                super().paintGL()
+
+        def check_context(self):
+            if self._context_error is not None:
+                raise RuntimeError(self._context_error)
+
+    return GuardedView
+
+
 class Scene:
     """A GL view holding one sequence, with the frame it shows swappable."""
 
@@ -80,15 +137,13 @@ class Scene:
         from pyqtgraph import Vector
 
         # Qt refuses to build widgets before an application exists.
-        self.application = (
-            QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        )
+        self.application = _application(QtWidgets)
         self.frames = frames
         self.args = args
         self.index = 0
         self.gl = gl
 
-        self.view = gl.GLViewWidget()
+        self.view = _guarded_view(gl)()
         self.view.setBackgroundColor(
             tuple(int(255 * channel) for channel in args.background)
         )
@@ -148,6 +203,7 @@ class Scene:
 
     def show_frame(self, index: int):
         """Display a frame, wrapping the index, and return it."""
+        self.view.check_context()
         self.index = index % len(self.frames)
         frame = self.frames[self.index]
         if frame.is_mesh:
@@ -156,9 +212,33 @@ class Scene:
             self.point_item.setData(
                 pos=frame.positions, color=self._colors(frame)
             )
-        self.mesh_item.setVisible(frame.is_mesh)
-        self.point_item.setVisible(not frame.is_mesh)
+        visible = bool(len(frame.positions))
+        # A blank frame has no GPU draw. In particular, do not send zero-byte
+        # scatter buffers through driver attribute setup merely to draw zero
+        # vertices; the next populated frame switches the items back on.
+        self.mesh_item.setVisible(visible and frame.is_mesh)
+        self.point_item.setVisible(visible and not frame.is_mesh)
         return frame
+
+    def close(self) -> None:
+        """Release item/view cycles and buffers while this view's context is current."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        valid = self.view.isValid()
+        if valid:
+            self.view.makeCurrent()
+        try:
+            # pyqtgraph holds view -> items -> view references. Closing only
+            # the widget leaves its native context awaiting arbitrary cyclic
+            # GC, potentially while another viewer creates/renders a context.
+            self.view.clear()
+            self.mesh_item = None
+            self.point_item = None
+        finally:
+            if valid:
+                self.view.doneCurrent()
+        self.view.close()
 
     def grab(self, image_module):
         """Render the current frame and return it as a PIL image.
@@ -169,6 +249,7 @@ class Scene:
         self.view.update()
         self.application.processEvents()
         image = self.view.grabFramebuffer()
+        self.view.check_context()
         if image.isNull():
             raise RuntimeError(
                 "Qt could not create an OpenGL framebuffer. Use a desktop "
@@ -352,10 +433,11 @@ def play(frames, args) -> None:
     try:
         if not window.closed:
             window.show()
+            scene.view.check_context()
             event_loop.exec()
     finally:
         window.close()
-        scene.view.close()
+        scene.close()
     if errors:
         raise errors[0]
 
@@ -409,5 +491,5 @@ def record(frames, args, output: Path) -> None:
 
         _save_gif(captured, output, durations)
     finally:
-        scene.view.close()
+        scene.close()
     print(f"wrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
