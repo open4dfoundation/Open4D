@@ -67,6 +67,8 @@ exclude_docs: |
   /assets/
   /theme/
   *.py
+  **/__pycache__/**
+  *.pyc
 validation:
   nav:
     omitted_files: warn

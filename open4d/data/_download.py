@@ -16,11 +16,14 @@ import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
+from ._catalog import https_url
+
 
 def _https(url):
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("asset and license URLs must be HTTPS without credentials")
+    https_url(url)  # Hugging Face file URLs must also pin a full commit
 
 
 @dataclass(frozen=True)

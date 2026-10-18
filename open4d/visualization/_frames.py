@@ -45,6 +45,17 @@ class RenderFrame(NamedTuple):
     texture_coordinates: np.ndarray | None = None
     opacities: np.ndarray | None = None
     representation: str = "mesh"
+    # Gaussians only. Covariances are plot-space (N, 6) upper triangles
+    # (xx, xy, xz, yy, yz, zz), built once here so the renderer only projects.
+    covariances: np.ndarray | None = None
+    # (N, K, 3) Graphdeco SH, kept only when K > 1 (degree 0 is `colors`).
+    spherical_harmonics: np.ndarray | None = None
+    # A view-dependent color model with `colors(directions)`, e.g. Vega's.
+    appearance: object | None = None
+    # (3, 3) rotation taking source axes to plot axes. SH and neural colors are
+    # defined in source axes, so view directions are rotated back before use.
+    source_axes: np.ndarray | None = None
+    texture: object | None = None
 
     @property
     def is_mesh(self) -> bool:
@@ -63,13 +74,149 @@ def rgb_colors(colors) -> np.ndarray | None:
     return colors[:, :3]
 
 
+# Graphdeco's degree-0 SH constant: RGB = 0.5 + SH_C0 * DC.
+SH_C0 = 0.28209479177387814
+
+
+class GaussianFrame(NamedTuple):
+    """Frame identity for `GaussianSplats` or `NeuralGaussianFrame` values.
+
+    Those types are not core `Geometry`, so a core `Frame` cannot hold them;
+    this carries the same three fields `to_render_frame` reads.
+    """
+
+    frame_index: int
+    timestamp: float
+    geometry: object
+
+
+def gaussian_geometry(value) -> bool:
+    """Whether ``value`` is a `GaussianSplats` or `NeuralGaussianFrame`."""
+    from open4d.gaussians import GaussianSplats, NeuralGaussianFrame
+
+    return isinstance(value, (GaussianSplats, NeuralGaussianFrame))
+
+
+class GaussianFrames:
+    """Sequence-like view of Gaussian frames for playback and comparison.
+
+    Wraps a nonempty list or tuple of `GaussianSplats` or `NeuralGaussianFrame`,
+    or a `GaussianRun`, whose dense PLY frames are read one at a time. These
+    carry no timing of their own, so frame ``i`` is stamped ``i / fps``; two
+    sources played as a comparison at the same rate therefore line up.
+    """
+
+    def __init__(self, source, fps: float) -> None:
+        from open4d.gaussians import GaussianRun
+
+        if isinstance(source, GaussianRun):
+            self._count = len(source.frame_paths)
+            self._load = source.load_frame
+        else:
+            self._count = len(source)
+            self._load = source.__getitem__
+        self.metadata: dict = {}
+        self.fps = float(fps)
+
+    @staticmethod
+    def accepts(source) -> bool:
+        from open4d.gaussians import GaussianRun
+
+        if isinstance(source, GaussianRun):
+            return True
+        return (isinstance(source, (list, tuple)) and bool(source)
+                and all(gaussian_geometry(frame) for frame in source))
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __getitem__(self, index: int) -> GaussianFrame:
+        index = range(self._count)[index]
+        return GaussianFrame(index, index / self.fps, self._load(index))
+
+
+def axis_matrix(order: list[int]) -> np.ndarray:
+    """The (3, 3) rotation A with ``positions[:, order] == positions @ A.T``."""
+    matrix = np.zeros((3, 3), dtype=np.float32)
+    matrix[np.arange(3), order] = 1.0
+    return matrix
+
+
+def gaussian_covariances(scales, rotations, axes=None) -> np.ndarray:
+    """Σ = R diag(s²) Rᵀ per Gaussian, optionally rotated to A Σ Aᵀ.
+
+    ``scales`` are activated standard deviations and ``rotations`` unit
+    ``(w, x, y, z)`` quaternions, as both Open4D Gaussian types store them.
+    Returns the (N, 6) upper triangle (xx, xy, xz, yy, yz, zz) as float32.
+    Rotating M = R diag(s) rather than Σ itself is the same A Σ Aᵀ, since
+    (A M)(A M)ᵀ = A M Mᵀ Aᵀ, and needs one product instead of two.
+    """
+    s = np.asarray(scales, dtype=np.float32)
+    w, x, y, z = np.asarray(rotations, dtype=np.float32).T
+    rotation = np.empty((len(s), 3, 3), dtype=np.float32)
+    rotation[:, 0, 0] = 1 - 2 * (y * y + z * z)
+    rotation[:, 0, 1] = 2 * (x * y - w * z)
+    rotation[:, 0, 2] = 2 * (x * z + w * y)
+    rotation[:, 1, 0] = 2 * (x * y + w * z)
+    rotation[:, 1, 1] = 1 - 2 * (x * x + z * z)
+    rotation[:, 1, 2] = 2 * (y * z - w * x)
+    rotation[:, 2, 0] = 2 * (x * z - w * y)
+    rotation[:, 2, 1] = 2 * (y * z + w * x)
+    rotation[:, 2, 2] = 1 - 2 * (x * x + y * y)
+    factor = rotation * s[:, None, :]
+    if axes is not None:
+        factor = np.einsum("ij,njk->nik", np.asarray(axes, dtype=np.float32), factor)
+    rows, columns = np.triu_indices(3)
+    return np.ascontiguousarray(
+        np.einsum("nik,njk->nij", factor, factor)[:, rows, columns], dtype=np.float32
+    )
+
+
+def _gaussian_render_frame(frame, order: list[int]) -> RenderFrame:
+    gaussians = frame.geometry
+    axes = axis_matrix(order)
+    positions = np.asarray(gaussians.positions, dtype=np.float32)
+    if order != [0, 1, 2]:
+        positions = np.ascontiguousarray(positions[:, order])
+    colors = getattr(gaussians, "colors", None)
+    sh = getattr(gaussians, "spherical_harmonics", None)
+    if sh is None:
+        sh = getattr(gaussians, "attributes", {}).get("spherical_harmonics")
+    if sh is not None:
+        sh = np.asarray(sh, dtype=np.float32)
+        if (sh.ndim != 3 or sh.shape[0] != len(positions) or sh.shape[2] != 3
+                or sh.shape[1] not in (1, 4, 9, 16) or not np.isfinite(sh).all()):
+            raise ValueError("Gaussian spherical_harmonics must have shape (N, 1|4|9|16, 3)")
+    if sh is not None:
+        # The DC term is the color a point fallback and degree-0 data show.
+        colors = np.clip(0.5 + SH_C0 * sh[:, 0, :], 0.0, 1.0).astype(np.float32)
+        sh = sh if sh.shape[1] > 1 else None
+    return RenderFrame(
+        positions=positions,
+        triangles=np.empty((0, 3), dtype=np.uint32),
+        colors=rgb_colors(colors),
+        frame_index=int(frame.frame_index),
+        timestamp=float(frame.timestamp),
+        opacities=np.asarray(gaussians.opacities, dtype=np.float32),
+        representation="gaussians",
+        covariances=gaussian_covariances(gaussians.scales, gaussians.rotations, axes),
+        spherical_harmonics=sh,
+        appearance=getattr(gaussians, "appearance", None),
+        source_axes=axes,
+    )
+
+
 def to_render_frame(frame, order: list[int]) -> RenderFrame:
     """Convert one core `Frame`, reordering axes for the target viewer.
 
     Positions and triangles arrive in the canonical float32/uint32 storage the
-    GL buffers want, so the axis rotation is the only conversion left.
+    GL buffers want, so the axis rotation is the only conversion left. Gaussian
+    frames (a `GaussianCloud`, or a `GaussianFrame` holding `GaussianSplats` or
+    a `NeuralGaussianFrame`) also get their covariances, rotated the same way.
     """
     mesh = frame.geometry
+    if hasattr(mesh, "scales") and hasattr(mesh, "rotations"):
+        return _gaussian_render_frame(frame, order)
     positions = mesh.positions
     if order != [0, 1, 2]:
         positions = np.ascontiguousarray(positions[:, order])
@@ -84,7 +231,34 @@ def to_render_frame(frame, order: list[int]) -> RenderFrame:
         texture_coordinates=getattr(mesh, "texture_coordinates", None),
         opacities=getattr(mesh, "opacities", None),
         representation=mesh.representation.value,
+        texture=getattr(mesh, "texture", None),
     )
+
+
+def texture_pixels(frame):
+    """Display an owned base-color map; refuse unimplemented material atlases."""
+    texture = frame.texture
+    if texture is None:
+        return None
+    if len(texture.images) != 1:
+        raise ValueError("Qt texture rendering currently requires one material image")
+    image = texture.images[0]
+    pixels = image.pixels
+    if pixels.dtype == np.uint8 and image.color_space != "linear":
+        result = pixels
+    else:
+        scale = np.iinfo(pixels.dtype).max if pixels.dtype.kind == "u" else 1.
+        values = np.clip(pixels.astype(np.float32) / scale, 0, 1)
+        if image.color_space == "linear":
+            color = values[:, :, :3]
+            values = values.copy()
+            values[:, :, :3] = np.where(color <= .0031308, 12.92 * color,
+                                       1.055 * color ** (1 / 2.4) - .055)
+        result = np.rint(values * 255).astype(np.uint8)
+    if result.shape[2] <= 2:
+        rgb = np.repeat(result[:, :, :1], 3, axis=2)
+        result = np.concatenate((rgb, result[:, :, 1:2]), axis=2) if result.shape[2] == 2 else rgb
+    return result
 
 
 class LazyRenderSequence:

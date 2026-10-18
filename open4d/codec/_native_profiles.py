@@ -41,12 +41,19 @@ ARRAY_CODECS = frozenset(("npz", "raw", "deflate", "bzip2", "lzma", "rle"))
 
 
 def profile_representation(codec, native):
-    if codec in ARRAY_CODECS and isinstance(native, dict) and native.get("profile") == f"{codec}/2":
+    if codec in ARRAY_CODECS and isinstance(native, dict) and native.get("profile") in (f"{codec}/2", f"{codec}/3"):
         return "geometry_sequence"
     return PROFILES[codec][0]
 
 
 def profile_version(codec, native):
+    if codec in ("draco", "vdmc", "faster_vdmc") and isinstance(native, dict) and native.get("profile") == f"{codec}/2":
+        return 2
+    if codec in ARRAY_CODECS and isinstance(native, dict) and native.get("profile") == f"{codec}/3":
+        return 3
+    if codec in ("qndf", "qndf-int8"):
+        # Version 2 carries base meshes plus a deterministic subdivision recipe.
+        return 2 if isinstance(native, dict) and native.get("profile") == f"{codec}/2" else 1
     return 2 if profile_representation(codec, native) == "geometry_sequence" else 1
 
 
@@ -83,7 +90,10 @@ def layout(codec, count, native=None):
                       ("delta_trajectories_encoded.npy", "entropy-coded-trajectories"),
                       ("entropy_model.npz", "entropy-model")]
         return files
-    allowed_profiles = (f"{codec}/1", f"{codec}/2") if codec in ARRAY_CODECS else (f"{codec}/1",)
+    allowed_profiles = ((f"{codec}/1", f"{codec}/2", f"{codec}/3") if codec in ARRAY_CODECS else
+                        (f"{codec}/1", f"{codec}/2") if codec in ("draco", "vdmc", "faster_vdmc") else
+                        (f"{codec}/1", f"{codec}/2") if codec in ("qndf", "qndf-int8")
+                        else (f"{codec}/1",))
     _require(isinstance(native, dict) and native.get("profile") in allowed_profiles, "unsupported profile version")
     if codec in NEURAL_CODECS:
         _require(count >= 2, "native sequence profiles require at least two frames")
@@ -99,15 +109,20 @@ def layout(codec, count, native=None):
                                        ("metadata.npz", "tsdf-quantizer"))]
     elif codec in ("qndf", "qndf-int8"):
         _require(set(native) == {"profile"}, "unexpected QNDF configuration")
-        files += [(f"frame_{i:06d}.pt", "neural-displacement-context") for i in range(count)]
+        role = ("neural-displacement-base-context" if native["profile"].endswith("/2")
+                else "neural-displacement-context")
+        files += [(f"frame_{i:06d}.pt", role) for i in range(count)]
     elif codec in ("npz", "raw", "deflate", "bzip2", "lzma", "rle"):
         _require(set(native) == {"profile", "rle"} and type(native["rle"]) is bool,
                  "unexpected array configuration")
-        role = "geometry-arrays" if native["profile"] == f"{codec}/2" else "mesh-arrays"
+        role = "mesh-arrays" if native["profile"] == f"{codec}/1" else "geometry-arrays"
         files += [(f"frame_{i:06d}.npz", role) for i in range(count)]
     elif codec == "draco":
         _require(set(native) == {"profile"}, "unexpected Draco configuration")
         files += [(f"frame_{i:06d}.drc", "frame-mesh") for i in range(count)]
+        if native["profile"] == "draco/2":
+            _require(1 + 2 * count <= MAX_FILES, "payload file count outside limits")
+            files += [(f"frame_{i:06d}.npz", "auxiliary-texture-arrays") for i in range(count)]
     elif codec in ("temporal-delta", "temporal-pca"):
         _require(set(native) == {"profile"}, "unexpected temporal configuration")
         files.append(("sequence.npz", "quantized-trajectories"))

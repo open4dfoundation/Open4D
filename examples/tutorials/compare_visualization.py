@@ -6,8 +6,7 @@ Run ``python examples/tutorials/compare_visualization.py --baseline mesh.o4d
 preserved but arbitrary material paths are never followed. ``--seconds 3``
 automatically closes the window for a bounded runtime check. For numerical
 mesh error, install ``open4d[metrics]`` and pass ``--metrics``. GaussianCloud
-display is a center preview; native splat covariance/appearance rendering is
-backend-specific and is not claimed by this viewer.
+frames are drawn as covariance splats with depth-sorted alpha blending.
 """
 
 import argparse

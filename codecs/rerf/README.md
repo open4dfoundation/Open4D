@@ -67,6 +67,37 @@ Python **3.8**, because `ac_dc/ncvv_ac_dc.cpython-38-*.so` has no sources and
 cannot be rebuilt for a newer interpreter. Plus torch with CUDA, mmcv, bitarray,
 Pillow and NumPy.
 
+`rerf_stream.env.preflight()` checks the interpreter, torch CUDA version, GPU
+architecture, toolkit and host compiler before compiling. `activate()` selects
+a cache directory specific to that combination and loads the entropy coder's
+shared libraries. Explicit `CUDA_HOME`, `CC`, `CXX` and
+`TORCH_CUDA_ARCH_LIST` override discovery. `environment-cu118.yml` is a pinned
+candidate environment; host compatibility must still be tested.
+
+## Train and cold-decode an ORBIT capture
+
+Prepare calibrated views with Open4D's Python, then train in ReRF's Python 3.8:
+
+```bash
+python scripts/prepare_rerf_orbit.py /path/to/ORBIT /tmp/rerf-capture \
+  --scene basketball --frames 3 --width 320 --holdout-view 0
+PYTHONPATH=codecs/rerf python3.8 -m rerf_stream.train \
+  /tmp/rerf-capture /tmp/rerf-run --iterations 8000 \
+  --residual-iterations 4000 --grid-size 64 --compress
+```
+
+The wrapper uses upstream's individual-frame deformation/residual training
+recipe, supplies its deformation learning rate, and matches the prepared image
+aspect ratio. It records input/checkpoint hashes, configuration and runtime.
+The compressed directory carries its own RGB network and resolved decoder
+configuration, with no training-data path. Import it with
+`open4d.import_native("/tmp/rerf-run/model/compressed", codec="rerf")`, save the
+result, then evaluate through `NativeSequence.decode` or `render` in the
+configured runtime. Strict validation requires contiguous frames, the starting
+keyframe, every entropy channel, PCA basis and motion payload. A successful
+decode establishes functionality; held-out reconstruction quality needs its
+own image metrics.
+
 ## Reading a bitstream
 
 ```python

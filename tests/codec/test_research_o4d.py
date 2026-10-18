@@ -11,6 +11,27 @@ from open4d.codec import _klt, _qndf
 from open4d.codec._research import research_module
 
 
+def test_qndf_resident_batches_match_dataloader_without_per_vertex_fetches():
+    torch = pytest.importorskip("torch")
+    from open4d.codec._qndf import _training_batches
+    fields = tuple(torch.arange(51).reshape(17, 3) + offset for offset in range(4))
+    dataset = torch.utils.data.TensorDataset(*fields)
+    expected = list(torch.utils.data.DataLoader(dataset, batch_size=6, shuffle=False))
+    calls = []
+    class Resident:
+        def __len__(self):
+            return len(dataset)
+        def __getitem__(self, key):
+            calls.append(key)
+            return dataset[key]
+    actual = list(_training_batches(Resident(), 6))
+    assert len(calls) == len(expected) == 3
+    assert all(isinstance(key, slice) for key in calls)
+    for old, new in zip(expected, actual, strict=True):
+        for left, right in zip(old, new, strict=True):
+            assert torch.equal(left, right)
+
+
 def klt_backend():
     pytest.importorskip("torch")
     pytest.importorskip("zstd")

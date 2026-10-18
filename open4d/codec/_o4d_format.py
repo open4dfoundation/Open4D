@@ -80,7 +80,7 @@ def _sequence_metadata(data, codec):
         if not 0 < len(value["frames"]) <= MAX_FRAMES:
             raise ValueError("frame count outside limits")
         _layout(codec, len(value["frames"]), value.get("native"))
-        if codec in ARRAY_CODECS and profile_version(codec, value.get("native")) == 2:
+        if codec in ARRAY_CODECS and profile_version(codec, value.get("native")) >= 2:
             for frame in value["frames"]:
                 if frame.get("representation") not in ("mesh", "points", "gaussians"):
                     raise ValueError("invalid array frame representation")

@@ -12,6 +12,7 @@ from open4d.gaussians import GaussianSplats, NeuralGaussianFrame
 from collections.abc import Iterable
 
 from ._protocol import Codec, CodecError
+from ._attributes import AttributeSupport, attribute_support
 from ._metadata import require_o4d_destination
 from ._npz import REFERENCE_CODECS
 from ._o4d_format import probe_codec
@@ -29,6 +30,7 @@ class CodecInfo:
     lossless: bool | None
     preserves: tuple[str, ...]
     representation: str = "triangle_mesh"
+    attribute_support: tuple[AttributeSupport, ...] = ()
 
 
 _CODECS: dict[str, Codec] = {codec.id: codec for codec in REFERENCE_CODECS}
@@ -120,6 +122,7 @@ def _describe(codec: Codec) -> CodecInfo:
         getattr(codec, "lossless", None),
         tuple(getattr(codec, "preserves", ("positions", "triangles"))),
         getattr(codec, "representation", "triangle_mesh"),
+        attribute_support(codec),
     )
 
 

@@ -11,6 +11,10 @@ Shading is baked into vertex colors by `render_frames.shade` rather than left to
 pyqtgraph's `shaded` shader, which lights from the camera and so flattens the
 surface as the view moves.
 
+Gaussian frames are drawn as splats by `_splats` -- projected covariance,
+Gaussian falloff, back-to-front blending -- or as their centers where the
+OpenGL context lacks instancing.
+
 The scene and the window are built separately. `--save` wants a GL widget of an
 exact size and no chrome; a widget that has never been shown reports its default
 640x480 and renders at that aspect, so sizing it explicitly matters.
@@ -27,6 +31,7 @@ from open4d._files import publish_file
 
 from ._deps import require
 from . import _frames as render_frames
+from ._splats import splat_item
 
 
 # Qt's application owns process-wide platform/OpenGL state. Keep it alive
@@ -41,11 +46,13 @@ def _application(QtWidgets):
     return _APPLICATION
 
 
-def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
+def metrics_lines(frame, position: int, total: int, fps: float,
+                  gaussians: str = "Gaussian splats") -> list[str]:
     """The few numbers worth showing while a sequence plays.
 
     `frame.frame_index` is the source's own numbering, which differs from the
-    position in the list whenever --stride drops frames.
+    position in the list whenever --stride drops frames. ``gaussians`` says how
+    a Gaussian frame was drawn, since a context may force the point fallback.
     """
     lines = [
         f"frame {position + 1}/{total}   (source #{frame.frame_index})",
@@ -55,7 +62,7 @@ def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
     if frame.is_mesh:
         lines.append(f"{len(frame.triangles):,} tris")
     elif getattr(frame, "representation", None) == "gaussians":
-        lines.append("Gaussian centers (point preview; not splat rendering)")
+        lines.append(gaussians)
     else:
         lines.append("point cloud")
     return lines
@@ -184,8 +191,11 @@ class Scene:
         # to white and the points vanish entirely — correct-looking code drawing
         # nothing. Normal alpha blending works against any background.
         self.point_item.setGLOptions("translucent")
+        self.splat_item = splat_item(gl)(point_size=args.point_size)
         self.view.addItem(self.mesh_item)
         self.view.addItem(self.point_item)
+        self.view.addItem(self.splat_item)
+        self.texture_item = None
         self.show_frame(0)
 
     def _colors(self, frame) -> np.ndarray:
@@ -206,8 +216,19 @@ class Scene:
         self.view.check_context()
         self.index = index % len(self.frames)
         frame = self.frames[self.index]
-        if frame.is_mesh:
+        splats = frame.covariances is not None
+        pixels = render_frames.texture_pixels(frame)
+        if pixels is not None:
+            if self.texture_item is None:
+                from ._live_qt import _textured_item
+                self.texture_item = _textured_item(self.gl)(frame, pixels, self.args)
+                self.view.addItem(self.texture_item)
+            else:
+                self.texture_item.set_texture_data(frame, pixels)
+        elif frame.is_mesh:
             self.mesh_item.setMeshData(meshdata=self._mesh_data(frame))
+        elif splats:
+            self.splat_item.set_frame(frame, base_color=tuple(self.args.color))
         else:
             self.point_item.setData(
                 pos=frame.positions, color=self._colors(frame)
@@ -216,9 +237,16 @@ class Scene:
         # A blank frame has no GPU draw. In particular, do not send zero-byte
         # scatter buffers through driver attribute setup merely to draw zero
         # vertices; the next populated frame switches the items back on.
-        self.mesh_item.setVisible(visible and frame.is_mesh)
-        self.point_item.setVisible(visible and not frame.is_mesh)
+        self.mesh_item.setVisible(visible and frame.is_mesh and pixels is None)
+        if self.texture_item is not None:
+            self.texture_item.setVisible(visible and pixels is not None)
+        self.point_item.setVisible(visible and not frame.is_mesh and not splats)
+        self.splat_item.setVisible(visible and splats)
         return frame
+
+    def metrics(self) -> list[str]:
+        return metrics_lines(self.frames[self.index], self.index, len(self.frames),
+                             self.args.fps, self.splat_item.status)
 
     def close(self) -> None:
         """Release item/view cycles and buffers while this view's context is current."""
@@ -232,9 +260,14 @@ class Scene:
             # pyqtgraph holds view -> items -> view references. Closing only
             # the widget leaves its native context awaiting arbitrary cyclic
             # GC, potentially while another viewer creates/renders a context.
+            self.splat_item.dispose()
+            if self.texture_item is not None:
+                self.texture_item.dispose()
+                self.texture_item = None
             self.view.clear()
             self.mesh_item = None
             self.point_item = None
+            self.splat_item = None
         finally:
             if valid:
                 self.view.doneCurrent()
@@ -280,9 +313,7 @@ class Scene:
         """
         from PIL import ImageDraw, ImageFont
 
-        lines = metrics_lines(
-            self.frames[self.index], self.index, len(self.frames), self.args.fps
-        )
+        lines = self.metrics()
         draw = ImageDraw.Draw(picture)
         try:
             font = ImageFont.truetype("Helvetica", 13)
@@ -363,17 +394,13 @@ def play(frames, args) -> None:
             if self.closed:
                 return
             try:
-                frame = scene.show_frame(index)
+                scene.show_frame(index)
             except Exception as error:
                 errors.append(error)
                 self.close()
                 return
             self.readout.setText(f"{scene.index + 1}/{len(frames)}")
-            self.metrics.setText(
-                "\n".join(
-                    metrics_lines(frame, scene.index, len(frames), args.fps)
-                )
-            )
+            self.metrics.setText("\n".join(scene.metrics()))
             self.metrics.adjustSize()
             if self.slider.value() != scene.index:
                 self.slider.blockSignals(True)

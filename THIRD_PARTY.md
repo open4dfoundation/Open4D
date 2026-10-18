@@ -60,7 +60,13 @@ also requires changing the release decision to `approved`, removing every
 `BLOCK` entry, and adding `Maintainer approval: NAME (YYYY-MM-DD)` with the
 maintainer's actual name and approval date. CI validates either release state;
 the publishing workflow requires the approved state. The current decision
-remains blocked.
+remains blocked. `scripts/check_release_gate.py --draft-approval --artifacts
+/path/to/candidate-dist` prints measured artifact digests for a maintainer to
+review. Publication additionally requires `.github/release-approval.toml` to
+identify the actual approver's GitHub login, role, date, approved revision,
+scope and producing build. These fields must be supplied by the approver;
+generated placeholders are rejected. Exclusions require independently checked
+artifact evidence through `scripts/check_release_exclusions.py`.
 
 | Path / component | Immutable source evidence | License evidence | Decision and required action | Reviewer |
 | --- | --- | --- | --- | --- |

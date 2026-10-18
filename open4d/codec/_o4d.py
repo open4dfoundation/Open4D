@@ -12,8 +12,8 @@ from types import MappingProxyType
 
 import numpy as np
 
-from open4d._research_paths import default_runtime
-from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
+from open4d._research_paths import default_runtime, managed_tool
+from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh, MeshTexture, TextureImage
 from open4d.io import Open4DError, open_sequence
 from open4d.io._mesh import write_obj
 
@@ -36,6 +36,8 @@ def _executable(value: str | os.PathLike[str] | None, identifier: str, role: str
     prefix = f"OPEN4D_{identifier.upper()}"
     variable = f"{prefix}_{role.upper()}"
     selected = value or os.environ.get(variable)
+    if not selected and not (os.environ.get(f"{prefix}_ROOT") or os.environ.get("OPEN4D_RESEARCH_ROOT")):
+        selected = managed_tool(identifier, role)
     if not selected:
         root = Path(os.environ.get(f"{prefix}_ROOT") or
                     default_runtime(identifier)).expanduser()
@@ -119,10 +121,18 @@ class _DecodedProvider:
         record = self.frames[index]
         decoded = self.decoded[index]
         geometry = decoded.geometry
+        if self.manifest["native"]["profile"].endswith("/2"):
+            from dataclasses import replace
+            from open4d.io._mesh import _read_texture_image
+            texture = Path(self.temporary.name) / "decoded" / f"texture_{index:06d}.png"
+            if geometry.texture_coordinates is None or not texture.is_file():
+                raise CodecError("native textured V-DMC decode omitted UVs or its texture image")
+            geometry = replace(geometry, texture=MeshTexture((TextureImage(_read_texture_image(texture)),)))
         if self.normalization is not None:
             (lower, upper), limit = self.normalization
             positions = lower + geometry.positions / limit * (upper - lower)
-            geometry = TriangleMesh(positions, geometry.triangles)
+            from dataclasses import replace
+            geometry = replace(geometry, positions=positions)
         return Frame(
             record["frame_index"], record["timestamp"], geometry,
             record.get("metadata", {}),
@@ -201,11 +211,28 @@ class O4DCodec:
         encoder: str | os.PathLike[str] | None = None,
         encoder_config: str | os.PathLike[str] | None = None,
         decoder_config: str | os.PathLike[str] | None = None,
+        attributes: str = "geometry",
+        texture_encoder_config: str | os.PathLike[str] | None = None,
+        texture_qp: int = 24,
         overwrite: bool = False,
     ) -> Path:
+        """Encode geometry, or one native RGB texture per frame.
+
+        ``attributes="texture"`` uses the runtime's UV and texture-video
+        encoder, and requires its HM/VTM texture configuration explicitly.
+        This profile is lossy and can remesh/reparameterize UVs. Other custom
+        attributes, vertex colors, normals and multiple materials are rejected.
+        """
+        if attributes not in ("geometry", "texture"):
+            raise ValueError("attributes must be 'geometry' or 'texture'")
+        textured = attributes == "texture"
+        if type(texture_qp) is not int or not 0 <= texture_qp <= 51:
+            raise ValueError("texture_qp must be an integer from 0 to 51")
+        if textured and texture_encoder_config is None:
+            raise CodecError("native texture coding requires texture_encoder_config")
         destination = require_o4d_destination(destination)
         executable = _executable(encoder, self.id, "encoder")
-        configs = [Path(value).absolute() for value in (encoder_config, decoder_config) if value]
+        configs = [Path(value).absolute() for value in (encoder_config, decoder_config, texture_encoder_config) if value]
         for config in configs:
             if not config.is_file():
                 raise CodecError(f"native codec configuration is missing: {config}")
@@ -237,15 +264,35 @@ class O4DCodec:
             limit = (1 << _POSITION_BIT_DEPTH) - 1
             for index, frame in enumerate(sequence):
                 mesh = frame.geometry
-                if any((mesh.colors is not None, mesh.normals is not None,
-                        mesh.texture_coordinates is not None, bool(mesh.attributes))):
+                if any((mesh.colors is not None, mesh.normals is not None, bool(mesh.attributes))):
+                    raise CodecError(f"{self.id} cannot preserve colors, normals or custom attributes")
+                if not textured and (mesh.texture_coordinates is not None or mesh.texture is not None):
                     raise CodecError(f"{self.id} geometry-only profile cannot preserve attributes")
+                if textured:
+                    if mesh.texture is None or len(mesh.texture.images) != 1:
+                        raise CodecError("native V-DMC texture coding requires one RGB texture per frame")
+                    image = mesh.texture.images[0]
+                    if (image.pixels.dtype != np.uint8 or image.channels != 3 or image.color_space != "srgb"
+                            or image.wrap != "repeat" or image.filter != "linear"):
+                        raise CodecError("native V-DMC texture coding requires uint8 sRGB images with three channels")
+                    if np.any(mesh.texture_coordinates < 0) or np.any(mesh.texture_coordinates > 1):
+                        raise CodecError("native V-DMC UV coordinates must be in [0, 1]")
+                    if index and image.pixels.shape != sequence[0].geometry.texture.images[0].pixels.shape:
+                        raise CodecError("native V-DMC texture dimensions must be constant")
                 normalized = np.divide(
                     mesh.positions - lower, extent,
                     out=np.zeros_like(mesh.positions), where=extent != 0,
                 )
                 positions = np.rint(normalized * limit).clip(0, limit)
-                write_obj(work / f"frame_{index:06d}.obj", positions, mesh.triangles)
+                # The reference runtime consumes prequantized OBJ coordinates,
+                # including UVs. Fractional UVs would be divided by 4095 a
+                # second time by its color-transfer stage and sample one pixel.
+                uv = np.rint(mesh.texture_coordinates * limit) if textured else None
+                write_obj(work / f"frame_{index:06d}.obj", positions, mesh.triangles,
+                          texture_coordinates=uv, uv_format="%d" if textured else None)
+                if textured:
+                    from open4d.io._png import write_png
+                    write_png(work / f"texture_{index:06d}.png", image.pixels)
                 manifest["frames"].append({
                     "frame_index": frame.frame_index, "timestamp": frame.timestamp,
                     "metadata": _json_value(frame.metadata, f"frame {index}"),
@@ -255,19 +302,28 @@ class O4DCodec:
             if encoder_config:
                 command.append(f"--config={Path(encoder_config).absolute()}")
             command.extend([
-                f"--srcMesh={work / 'frame_%06d.obj'}", "--srcTex=",
-                "--videoAttributeCount=0", "--textureMapCount=0",
-                "--textureParameterizationType=-1", "--encodeTextureVideo=0",
+                f"--srcMesh={work / 'frame_%06d.obj'}",
                 "--encodeDisplacements=1", f"--positionBitDepth={_POSITION_BIT_DEPTH}",
                 "--startFrameIndex=0", f"--frameCount={len(sequence)}",
                 f"--minPosition={','.join(map(str, lower))}",
                 f"--maxPosition={','.join(map(str, upper))}",
                 f"--compressed={stream}",
             ])
+            if textured:
+                command.extend([f"--srcAttrs={work / 'texture_%06d.png'}",
+                    "--videoAttributeCount=1", "--textureMapCount=1", "--encodeTextureVideo=1",
+                    "--textureParameterizationType=0", "--useRawUV=0",
+                    f"--texCoordBitDepth={_POSITION_BIT_DEPTH}",
+                    f"--textureVideoEncoderConfig={Path(texture_encoder_config).absolute()}",
+                    f"--textureVideoWidth={image.width}", f"--textureVideoHeight={image.height}",
+                    f"--textureVideoQP={texture_qp}"])
+            else:
+                command.extend(["--srcTex=", "--videoAttributeCount=0", "--textureMapCount=0",
+                                "--textureParameterizationType=-1", "--encodeTextureVideo=0"])
             _run(command, f"{self.id} encoder")
             if not stream.is_file() or not stream.stat().st_size:
                 raise CodecError(f"{self.id} encoder produced no bitstream")
-            manifest["native"] = {"profile": f"{self.id}/1", "decoder_config": bool(decoder_config)}
+            manifest["native"] = {"profile": f"{self.id}/{2 if textured else 1}", "decoder_config": bool(decoder_config)}
             (work / "metadata.json").write_text(json.dumps(manifest), encoding="utf-8")
             if decoder_config:
                 import shutil

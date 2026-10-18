@@ -134,7 +134,9 @@ def run(
         source, output, codec=selected, overwrite=True, **(encode_options or {})
     )
     artifact, encode_s = timed(encode)
-    encode_peak = peak_bytes(encode)
+    # Re-running an encoder repeats training for neural codecs. Resource-aware
+    # experiments use codec_rd's separate processes; this timer does one encode.
+    encode_peak = None
     decoded, open_s = timed(
         lambda: decode_sequence(artifact, codec=selected, **(decode_options or {}))
     )
@@ -222,6 +224,7 @@ def run(
         "encode_frames_per_s": len(source) / encode_s,
         "decode_frames_per_s": len(source) / decode_s,
         "encode_peak_bytes": encode_peak,
+        "encode_peak_measurement": "not measured; use codec_rd for process-tree RSS and GPU peaks",
         "decode_open_peak_bytes": open_peak,
         "decode_all_peak_bytes": decode_peak,
         "exact": exact,
@@ -229,6 +232,7 @@ def run(
         "position_max_error": maximum_error,
         "surface_rms_error": surface_rms_error,
         "surface_max_error": surface_max_error,
+        "surface_max_error_method": "maximum over sampled surface points; not exact Hausdorff",
     }
 
 

@@ -1,0 +1,32 @@
+name: open4d-rerf-cu118
+channels:
+  - nvidia/label/cuda-11.8.0
+  - conda-forge
+dependencies:
+  - python=3.8.18
+  - pip=23.3.1
+  - cuda-toolkit=11.8.0
+  - gxx_linux-64=11.4.0
+  - ninja=1.11.1
+  - tk=8.6.13
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu118
+      - --find-links https://data.pyg.org/whl/torch-2.0.1+cu118.html
+      - torch==2.0.1+cu118
+      - torchvision==0.15.2+cu118
+      - torch-scatter==2.1.1+pt20cu118
+      - numpy==1.23.4
+      - scipy==1.10.1
+      - mmcv==1.6.2
+      - yapf==0.32.0
+      - bitarray==2.8.3
+      - opencv-python-headless==4.8.1.78
+      - imageio==2.31.6
+      - imageio-ffmpeg==0.4.9
+      - lpips==0.1.4
+      - pytorch-msssim==1.0.0
+      - matplotlib==3.7.3
+      - ipdb==0.13.13
+      - einops==0.6.1
+      - tqdm==4.66.1
+      - Pillow==10.1.0

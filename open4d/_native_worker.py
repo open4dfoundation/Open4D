@@ -91,9 +91,12 @@ def _rerf(request, source, output, metadata):
 
     config = json.loads((source / "decoder_config.json").read_text())
     profile = metadata["native"]
+    # Strict: the packaged stream must start at a key frame, be contiguous, carry
+    # every residual's motion and its own rgb_net.tar. Nothing is read from the
+    # training run or corpus; bounds and cameras travel in the configuration.
     player = BitstreamPlayer(config, source, pca=profile["pca"],
                              pca_channels=profile["pca_channels"], group_size=profile["group_size"],
-                             render_bounds=config["render"])
+                             render_bounds=config["render"], strict=True)
     if player.frames != [f["id"] for f in profile["frames"]]:
         raise ValueError("ReRF decoded frame index disagrees with profile")
     camera = None

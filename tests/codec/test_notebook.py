@@ -45,7 +45,7 @@ def test_notebook_depth_example_reconstructs_real_geometry(tmp_path, monkeypatch
 
 
 @pytest.mark.slow
-def test_notebook_native_vdmc_round_trip(tmp_path, monkeypatch):
+def test_notebook_native_vdmc_round_trip(tmp_path, monkeypatch, registered_research_codecs):
     if not all(os.environ.get(name) for name in
                ("OPEN4D_VDMC_ENCODER", "OPEN4D_VDMC_DECODER")):
         pytest.skip("configure the native V-DMC encoder and decoder")

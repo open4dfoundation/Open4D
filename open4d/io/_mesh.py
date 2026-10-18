@@ -1,8 +1,9 @@
 """Readers and writers for per-frame mesh files: `.obj`, `.ply`, and the rest.
 
 The legacy readers return `(positions, triangles, colors)` for a single frame.
-`read_obj_with_uv` additionally preserves texture coordinates. A frame with no
-faces comes back with zero triangles.
+`read_obj_with_uv` additionally preserves texture coordinates, and
+`read_obj_with_texture` also loads the `map_Kd` images its materials name. A
+frame with no faces comes back with zero triangles.
 
 `.obj` and `.ply` are parsed here with NumPy, so they need nothing beyond the
 base install. Other formats (`.stl`, `.off`, `.glb`, `.gltf`) are delegated to
@@ -53,11 +54,100 @@ def read_obj_with_uv(path: Path, *, dtype=np.float32):
     return _read_obj_arrays(path, dtype=dtype, preserve_uv=True)
 
 
-def _read_obj_arrays(path: Path, *, dtype, preserve_uv):
+def read_obj_with_texture(path: Path, *, dtype=np.float32):
+    """Read OBJ arrays, UVs and the texture images its materials reference.
+
+    Returns ``(positions, triangles, colors, texture_coordinates, texture)``.
+    ``mtllib`` and ``map_Kd`` paths are resolved relative to the file that
+    names them and must stay inside that file's directory; absolute or escaping
+    paths are rejected rather than followed. Faces take the material of the
+    preceding ``usemtl``. A mesh with no materials returns ``texture=None``.
+    """
+    from open4d.core import MeshTexture, TextureImage
+
+    positions, triangles, colors, uv, materials, libraries = _read_obj_arrays(
+        path, dtype=dtype, preserve_uv=True, materials=True
+    )
+    if not libraries and not any(materials):
+        return positions, triangles, colors, uv, None
+    maps: dict[str, Path] = {}
+    for library in libraries:
+        maps.update(_read_mtl(_contained(path.parent, library, path)))
+    used = list(dict.fromkeys(name for name in materials if name is not None))
+    if not used:
+        if not maps:
+            return positions, triangles, colors, uv, None
+        if len(maps) != 1:
+            raise ValueError(f"{path} defines several textured materials but assigns none with usemtl")
+        used = list(maps)
+        materials = [used[0]] * len(materials)
+    if any(name is None for name in materials):
+        raise ValueError(f"{path} mixes faces with and without usemtl materials")
+    missing = [name for name in used if name not in maps]
+    if missing:
+        raise ValueError(f"{path} uses materials without a map_Kd texture: {', '.join(missing)}")
+    if uv is None:
+        raise ValueError(f"{path} assigns texture materials but has no texture coordinates")
+    images = tuple(
+        TextureImage(_read_texture_image(maps[name]), name=maps[name].name) for name in used
+    )
+    index = {name: number for number, name in enumerate(used)}
+    ids = np.array([index[name] for name in materials], dtype=np.int32)
+    texture = MeshTexture(images, None if len(used) == 1 else ids,
+                          tuple(_material_name(name) for name in used))
+    return positions, triangles, colors, uv, texture
+
+
+def _material_name(name: str) -> str:
+    return "".join("_" if character.isspace() else character for character in name)
+
+
+def _contained(directory: Path, reference: str, owner: Path) -> Path:
+    relative = Path(reference.replace(chr(92), "/"))
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise ValueError(f"{owner} references {reference!r} outside its directory; "
+                         "copy the file next to it and use a relative name")
+    resolved = (directory / relative).resolve()
+    if directory.resolve() not in resolved.parents:
+        raise ValueError(f"{owner} references {reference!r} outside its directory")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"{owner} references missing file {reference!r}")
+    return resolved
+
+
+def _read_mtl(path: Path) -> dict[str, Path]:
+    maps: dict[str, Path] = {}
+    current = None
+    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            fields = line.partition("#")[0].split()
+            if not fields:
+                continue
+            if fields[0] == "newmtl" and len(fields) >= 2:
+                current = " ".join(fields[1:])
+            elif fields[0] == "map_Kd" and current is not None and len(fields) >= 2:
+                # Options such as -s or -o would transform the lookup; refuse
+                # them rather than carry the image without its transform.
+                if any(field.startswith("-") for field in fields[1:-1]):
+                    raise ValueError(f"{path} uses map_Kd options, which are not supported")
+                maps[current] = _contained(path.parent, fields[-1], path)
+    return maps
+
+
+def _read_texture_image(path: Path) -> np.ndarray:
+    from ._png import read_image
+
+    return read_image(path)
+
+
+def _read_obj_arrays(path: Path, *, dtype, preserve_uv, materials=False):
     positions: list[tuple[str, str, str]] = []
     corners: list[tuple[int, int, int]] = []
     coordinates: list[tuple[float, float]] = []
     uv_corners: list[tuple[int | None, int | None, int | None]] = []
+    face_materials: list[str | None] = []
+    libraries: list[str] = []
+    material = None
 
     def index(value, count, label):
         try:
@@ -77,6 +167,10 @@ def _read_obj_arrays(path: Path, *, dtype, preserve_uv):
                 if len(fields) < 4:
                     raise ValueError(f"{path} contains an incomplete vertex")
                 positions.append((fields[1], fields[2], fields[3]))
+            elif fields[0] == "mtllib" and materials and len(fields) >= 2:
+                libraries.extend(fields[1:])
+            elif fields[0] == "usemtl" and materials:
+                material = " ".join(fields[1:]) or None
             elif fields[0] == "vt" and preserve_uv:
                 if not 2 <= len(fields) <= 4:
                     raise ValueError(f"{path} contains an invalid OBJ texture coordinate")
@@ -105,6 +199,7 @@ def _read_obj_arrays(path: Path, *, dtype, preserve_uv):
                         (resolved[0], resolved[corner], resolved[corner + 1])
                     )
                     uv_corners.append((uv_indices[0], uv_indices[corner], uv_indices[corner+1]))
+                    face_materials.append(material)
 
     if not positions:
         raise ValueError(f"{path} contains no vertices")
@@ -134,20 +229,86 @@ def _read_obj_arrays(path: Path, *, dtype, preserve_uv):
             # Preserve position topology: separate UV references need not split
             # vertices, and a shared position may carry different seam UVs.
             texture_coordinates = uv_values[references]
+    if materials:
+        return vertices, triangles, None, texture_coordinates, face_materials, libraries
     return vertices, triangles, None, texture_coordinates
 
 
-def write_obj(path: Path, positions: np.ndarray, triangles: np.ndarray) -> Path:
-    """Write one mesh frame as a Wavefront `.obj` file."""
+def write_obj(
+    path: Path,
+    positions: np.ndarray,
+    triangles: np.ndarray,
+    texture_coordinates: np.ndarray | None = None,
+    *,
+    texture=None,
+    uv_format: str | None = None,
+) -> Path:
+    """Write one mesh frame as a Wavefront `.obj` file.
+
+    Per-vertex ``(N, 2)`` or per-corner ``(M, 3, 2)`` texture coordinates are
+    written as ``vt`` records with independent UV indices, so seams keep their
+    corner UVs. A `MeshTexture` additionally writes ``<stem>.mtl`` and one PNG
+    per material next to the OBJ (``<stem>_<material>.png``) and assigns faces
+    with ``usemtl``. ``uv_format`` overrides the ``vt`` number format, for
+    example ``"%d"`` for tools that read integer texture coordinates.
+    """
+    path = Path(path)
     positions = np.asarray(positions)
+    triangles = np.asarray(triangles).reshape(-1, 3)
     path.parent.mkdir(parents=True, exist_ok=True)
+    uv_rows = uv_indices = None
+    if texture_coordinates is not None:
+        texture_coordinates = np.asarray(texture_coordinates)
+        if texture_coordinates.ndim == 2:
+            uv_rows, uv_indices = texture_coordinates, triangles
+        else:
+            uv_rows, inverse = np.unique(
+                texture_coordinates.reshape(-1, 2), axis=0, return_inverse=True
+            )
+            uv_indices = inverse.reshape(-1, 3)
+    if texture is not None and uv_rows is None:
+        raise ValueError("an OBJ texture needs texture coordinates")
     with open(path, "w", encoding="utf-8") as stream:
         stream.write(f"# {len(positions)} vertices, {len(triangles)} triangles\n")
+        if texture is not None:
+            stream.write(f"mtllib {path.stem}.mtl\n")
         precision = 17 if positions.dtype.itemsize > 4 else 9
         np.savetxt(stream, positions, fmt="v " + " ".join([f"%.{precision}g"] * 3))
-        # OBJ indices are 1-based.
-        np.savetxt(stream, np.asarray(triangles) + 1, fmt="f %d %d %d")
+        if uv_rows is None:
+            # OBJ indices are 1-based.
+            np.savetxt(stream, triangles + 1, fmt="f %d %d %d")
+            return path
+        number = uv_format or ("%.17g" if uv_rows.dtype.itemsize > 4 else "%.9g")
+        np.savetxt(stream, uv_rows, fmt=f"vt {number} {number}")
+        corners = np.stack(
+            (triangles.astype(np.int64) + 1, np.asarray(uv_indices, dtype=np.int64) + 1), axis=-1
+        ).reshape(len(triangles), 6)
+        if texture is None:
+            np.savetxt(stream, corners, fmt="f %d/%d %d/%d %d/%d")
+            return path
+        materials = texture.face_materials(len(triangles))
+        bounds = [*np.flatnonzero(np.r_[True, materials[1:] != materials[:-1]]), len(triangles)]
+        for begin, end in zip(bounds[:-1], bounds[1:]):
+            if begin == end:
+                continue
+            stream.write(f"usemtl {texture.material_names[materials[begin]]}\n")
+            np.savetxt(stream, corners[begin:end], fmt="f %d/%d %d/%d %d/%d")
+    _write_materials(path, texture)
     return path
+
+
+def _write_materials(path: Path, texture) -> None:
+    from ._png import write_png
+
+    lines = []
+    for name, image in zip(texture.material_names, texture.images):
+        if image.pixels.dtype not in (np.uint8, np.uint16):
+            raise ValueError("OBJ/MTL texture export needs uint8 or uint16 pixels; "
+                             "float32 textures are carried by the npz codec only")
+        filename = f"{path.stem}_{name}.png"
+        write_png(path.parent / filename, image.pixels)
+        lines += [f"newmtl {name}", "Ka 1 1 1", "Kd 1 1 1", "Ks 0 0 0", f"map_Kd {filename}", ""]
+    (path.parent / f"{path.stem}.mtl").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ----------------------------

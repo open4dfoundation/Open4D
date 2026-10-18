@@ -11,7 +11,7 @@ import tempfile
 from types import MappingProxyType
 
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh
-from open4d._research_paths import default_runtime
+from open4d._research_paths import default_runtime, managed_python, managed_tool
 from open4d.io import open_sequence
 from open4d.io._mesh import write_obj
 
@@ -111,7 +111,8 @@ class TrackedMeshCodec:
                 "to its source directory, then run its setup.sh"
             )
         private = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        interpreter = python or os.environ.get(f"OPEN4D_{self.id.upper()}_PYTHON")
+        interpreter = (python or os.environ.get(f"OPEN4D_{self.id.upper()}_PYTHON")
+                       or managed_python(self.id))
         interpreter = interpreter or (private if private.is_file() else sys.executable)
         settings = {"codec": self.id, "backend": str(root),
                     "python": _executable(interpreter, "Python")}
@@ -167,7 +168,8 @@ class TrackedMeshCodec:
             raise ValueError("TSMC requires a key_frame with a preceding frame")
         settings = self._settings(backend, python, encoder, decoder, encoding=True)
         settings.update(
-            dotnet=_executable(dotnet or os.environ.get("DOTNET", "dotnet"), ".NET; run the codec setup.sh"),
+            dotnet=_executable(dotnet or os.environ.get("DOTNET") or managed_tool(self.id, "dotnet") or "dotnet",
+                               ".NET; run the codec setup.sh"),
             num_centers=num_centers, grid_resolution=grid_resolution,
             key_frame=key_frame, components=components, quantization=quantization,
         )

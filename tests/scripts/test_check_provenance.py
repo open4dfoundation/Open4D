@@ -129,7 +129,7 @@ def test_publication_rejects_missing_or_inconsistent_clearance(ledger):
 def test_a_reviewed_ledger_can_pass_the_publication_gate():
     from check_release_gate import blockers
 
-    ledger = "## Release decision: approved\nMaintainer approval: Maintainer (2026-10-07)"
+    ledger = "## Release decision: approved\nMaintainer approval: @reviewer-account (2026-10-07)"
     assert not release_decision_errors(ledger)
     assert not blockers(ledger)
 

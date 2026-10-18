@@ -14,6 +14,17 @@ from open4d import TriangleMesh
 pytestmark = pytest.mark.cpu
 
 
+def test_training_is_not_repeated_for_memory_measurement(tmp_path, monkeypatch):
+    calls = []
+    original = benchmark_codec.encode_sequence
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(benchmark_codec, "encode_sequence", counted)
+    benchmark_codec.run(benchmark_codec.synthetic(3, 2), tmp_path / "once.o4d")
+    assert len(calls) == 1
+
+
 def test_exactness_detects_custom_attribute_value_shape_and_dtype_changes():
     reference = TriangleMesh(
         [[0.0, 0, 0], [1.0, 0, 0], [0, 1.0, 0]], [[0, 1, 2]],

@@ -21,7 +21,8 @@ def test_rgbd_from_folder_forwards_explicit_calibration(monkeypatch):
         return sentinel
     monkeypatch.setattr(_capture, "load_capture", loader)
     assert RGBDCapture.from_folder("pairs", "rig", frames=[1, 2]) is sentinel
-    assert calls == [(("pairs", "rig"), {"frames": [1, 2], "metadata": None, "serials": None})]
+    assert calls == [(("pairs", "rig"), {"frames": [1, 2], "metadata": None, "serials": None,
+                                         "camera_mode": None})]
 
 
 def write_model(folder, *, camera="PINHOLE", name="frame with spaces.png"):

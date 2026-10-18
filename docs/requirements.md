@@ -92,10 +92,13 @@ python -m mkdocs build --strict --site-dir /tmp/open4d-site
 python -m http.server 8000 --directory /tmp/open4d-site
 ```
 
-The documentation workflow uploads a preview artifact for every PR. Reviewed
-main-branch sources can be deployed to GitHub Pages through its manual deploy
-option once the release approval gate passes. Unreviewed media in `docs/assets`
-is excluded from the generated site.
+The documentation workflow uploads a preview artifact for every PR. Public
+website work belongs in the existing
+[website repository](https://github.com/open4dfoundation/open4dfoundation.github.io),
+at [open4dfoundation.github.io](https://open4dfoundation.github.io/), preserving
+its existing pages and content. This workflow does not create
+or deploy a GitHub Pages site. Unreviewed media in `docs/assets` is excluded from
+the generated documentation.
 
 If an existing clone is missing Draco, initialize and build all three copies —
 the Draco baseline codec's own, plus TSMC's and TVMC's — with:

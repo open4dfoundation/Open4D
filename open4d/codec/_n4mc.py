@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from importlib import import_module
 import json
-from numbers import Integral
+import math
+from numbers import Integral, Real
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -20,6 +23,8 @@ from ._klt import _KLTProvider, _normalization
 from ._metadata import _json_value, _validate_manifest, require_o4d_destination
 from ._protocol import CodecError
 from ._research import research_module
+from ._stages import Stages, checkpoint_destinations as _checkpoint_destinations
+from ._stages import validate_stage_hook
 from ._torch import torch_device
 from ._tsdf import write_tsdf_sequence
 from ._o4d_format import _json, contains_codec, pack_o4d, probe_codec, unpack_o4d
@@ -132,6 +137,61 @@ def _reconstruct_mesh(volume, metrics):
     return mesh
 
 
+def _fingerprint(volumes, model_config, loss_config, learning_rate, seed) -> str:
+    """Identify training inputs so resumed state never mixes runs."""
+    digest = sha256(json.dumps({
+        "model": model_config, "loss": loss_config,
+        "learning_rate": float(learning_rate), "seed": seed,
+    }, sort_keys=True).encode())
+    for path in volumes:
+        with np.load(path, allow_pickle=False) as archive:
+            values = np.ascontiguousarray(archive["sdf"])
+        digest.update(str(values.shape).encode())
+        digest.update(values.tobytes())
+    return digest.hexdigest()
+
+
+class _TrainingState:
+    """Resumable optimizer, model and RNG state kept outside the artifact."""
+
+    def __init__(self, torch, directory, fingerprint, model, optimizer) -> None:
+        self.torch, self.fingerprint = torch, fingerprint
+        self.directory = None if directory is None else Path(directory).absolute()
+        self.model, self.optimizer = model, optimizer
+
+    def save(self, epoch: int) -> None:
+        torch = self.torch
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self.directory / f"epoch_{epoch:06d}.pt"
+        staged = path.with_suffix(".partial")
+        torch.save({
+            "fingerprint": self.fingerprint, "epoch": epoch,
+            "model": self.model.state_dict(), "optimizer": self.optimizer.state_dict(),
+            "rng": torch.get_rng_state(),
+            "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+        }, staged)
+        os.replace(staged, path)
+
+    def restore(self, epochs: int) -> int:
+        """Load the newest compatible state at or before ``epochs``."""
+        torch = self.torch
+        saved = sorted((int(path.stem[6:]), path) for path in self.directory.glob("epoch_*.pt")
+                       if path.stem[6:].isdigit()) if self.directory.is_dir() else []
+        for epoch, path in reversed(saved):
+            if epoch > epochs:
+                continue
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            if state.get("fingerprint") != self.fingerprint or state.get("epoch") != epoch:
+                raise CodecError(f"N4MC checkpoint {path} belongs to other data or settings")
+            self.model.load_state_dict(state["model"])
+            self.optimizer.load_state_dict(state["optimizer"])
+            torch.set_rng_state(state["rng"])
+            if torch.cuda.is_available() and state["cuda_rng"]:
+                torch.cuda.set_rng_state_all(state["cuda_rng"])
+            return epoch
+        return 0
+
+
 class N4MCCodec:
     id = "n4mc"
     suffixes = (".o4d",)
@@ -146,18 +206,46 @@ class N4MCCodec:
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
         resolution: int = 63, epochs: int = 100, hidden_channels=(24, 48, 96),
         latent_channels: int = 64, learning_rate: float = 1e-4,
-        device: str | None = None, seed: int = 7,
+        lambda_rate: float = 1e-4, device: str | None = None, seed: int = 7,
+        checkpoint_dir: Path | None = None, checkpoint_every: int | None = None,
+        resume: bool = False, checkpoint_artifacts=None, stage_hook=None,
     ) -> Path:
+        """Train the shared TSDF autoencoder and write its quantized latents.
+
+        ``lambda_rate`` weights the learned entropy-model rate term in the loss.
+        ``checkpoint_dir`` keeps resumable training state at each
+        ``checkpoint_every`` epochs (and at the final and exported epochs);
+        ``resume=True`` continues from the newest compatible state not beyond
+        ``epochs``. A saved state at exactly ``epochs`` is exported without more
+        training, which selects any saved checkpoint. ``checkpoint_artifacts``
+        maps intermediate epochs to extra ``.o4d`` destinations from the same run.
+        ``stage_hook`` receives instrumentation events (see ``_stages``),
+        including each frame's learned entropy estimate in bits.
+        """
         destination = require_o4d_destination(destination)
         if destination.exists() and not overwrite:
             raise FileExistsError(f"artifact already exists: {destination}")
+        if type(epochs) is not int or epochs < 1:
+            raise ValueError("epochs must be a positive integer")
+        if (isinstance(lambda_rate, bool) or not isinstance(lambda_rate, Real)
+                or not math.isfinite(lambda_rate) or lambda_rate < 0):
+            raise ValueError("lambda_rate must be a finite nonnegative number")
+        if checkpoint_every is not None and (type(checkpoint_every) is not int or checkpoint_every < 1):
+            raise ValueError("checkpoint_every must be a positive integer or None")
+        if not isinstance(resume, bool):
+            raise TypeError("resume must be bool")
+        if (resume or checkpoint_every is not None) and checkpoint_dir is None:
+            raise ValueError("resume and checkpoint_every need checkpoint_dir")
+        validate_stage_hook(stage_hook)
+        checkpoints = _checkpoint_destinations(checkpoint_artifacts, epochs, destination, overwrite)
         for frame in sequence:
             mesh = frame.geometry
             if any((mesh.colors is not None, mesh.normals is not None,
                     mesh.texture_coordinates is not None, bool(mesh.attributes))):
                 raise CodecError("N4MC's TSDF profile cannot preserve mesh attributes")
-        torch, models, losses, _ = _backend()
+        torch, models, losses, metrics = _backend()
         target_device = _device(torch, device)
+        stages = Stages(stage_hook, torch, target_device)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -171,7 +259,7 @@ class N4MCCodec:
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
         loss_config = {
             "reconstruction": "l1", "narrow_band_threshold": .1,
-            "lambda_rate": 1e-4, "lambda_rec": 1.,
+            "lambda_rate": float(lambda_rate), "lambda_rec": 1.,
             "lambda_band": 2., "lambda_sign": .2,
         }
         manifest = {
@@ -186,37 +274,77 @@ class N4MCCodec:
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="open4d-n4mc-") as directory:
             work = Path(directory)
-            manifest["normalization"] = write_tsdf_sequence(
-                sequence, work / "tsdf", resolution=resolution
-            )
-            volumes = sorted((work / "tsdf").glob("*.npz"))
-            model.train()
-            for _ in range(epochs):
-                for path in volumes:
-                    target = _volume(torch, path, target_device).unsqueeze(0)
-                    optimizer.zero_grad(set_to_none=True)
-                    outputs = model(target)
-                    loss, _ = losses.compute_rd_loss(outputs, target, loss_config)
-                    loss.backward()
-                    optimizer.step()
-            model.eval()
-            checkpoint = work / "checkpoint.pt"
-            torch.save({
-                "model": model.state_dict(),
-                "model_config": model_config,
-            }, checkpoint)
-            with torch.inference_mode():
+            with stages.phase("preprocessing"):
+                manifest["normalization"] = write_tsdf_sequence(
+                    sequence, work / "tsdf", resolution=resolution
+                )
+                volumes = sorted((work / "tsdf").glob("*.npz"))
+            center, scale = _normalization(manifest)
+            if stages.enabled:
                 for ordinal, path in enumerate(volumes):
-                    encoded = model.encode(_volume(torch, path, target_device).unsqueeze(0))
-                    pack = work / f"frame_{ordinal:06d}.npz"
-                    np.savez_compressed(
-                        pack,
-                        quantized_latent=encoded["quantized_latent"][0].cpu().numpy(),
-                        original_shape=encoded["original_shape"].cpu().numpy(),
-                        bottleneck_shape=encoded["bottleneck_shape"].cpu().numpy(),
-                    )
-            _write_native_metadata(manifest, work)
-            return pack_o4d(work, destination, overwrite=overwrite)
+                    mesh = _reconstruct_mesh(_volume(torch, path, "cpu"), metrics)
+                    if mesh is not None:
+                        stages.mesh("target", ordinal, mesh.vertices / scale + center, mesh.faces)
+            fingerprint = _fingerprint(volumes, model_config, loss_config, learning_rate, seed)
+            state = _TrainingState(torch, checkpoint_dir, fingerprint, model, optimizer)
+            start = state.restore(epochs) if resume else 0
+            exports = {epoch: path for epoch, path in checkpoints.items() if epoch > start}
+            exports[epochs] = destination
+
+            def export(epoch, artifact):
+                model.eval()
+                native = work / f"native-{epoch}"
+                native.mkdir()
+                with stages.phase("export"):
+                    torch.save({
+                        "model": model.state_dict(),
+                        "model_config": model_config,
+                    }, native / "checkpoint.pt")
+                    with torch.inference_mode():
+                        estimates = []
+                        for ordinal, path in enumerate(volumes):
+                            encoded = model.encode(_volume(torch, path, target_device).unsqueeze(0))
+                            quantized = encoded["quantized_latent"]
+                            estimates.append(float(model.entropy_model(quantized).sum()))
+                            np.savez_compressed(
+                                native / f"frame_{ordinal:06d}.npz",
+                                quantized_latent=quantized[0].cpu().numpy(),
+                                original_shape=encoded["original_shape"].cpu().numpy(),
+                                bottleneck_shape=encoded["bottleneck_shape"].cpu().numpy(),
+                            )
+                label = "trained" if epoch == epochs else f"trained@{epoch}"
+                for ordinal, bits in enumerate(estimates):
+                    stages.rate(ordinal, {"stage": label, "learned_entropy_bits": bits})
+                if stages.enabled:
+                    with torch.inference_mode():
+                        for ordinal, path in enumerate(volumes):
+                            volume = model(_volume(torch, path, target_device).unsqueeze(0))
+                            mesh = _reconstruct_mesh(volume["reconstruction"][0], metrics)
+                            if mesh is not None:
+                                stages.mesh(label, ordinal, mesh.vertices / scale + center, mesh.faces)
+                with stages.phase("packing"):
+                    _write_native_metadata(manifest, native)
+                    pack_o4d(native, artifact, overwrite=overwrite)
+                    shutil.rmtree(native)
+                model.train()
+
+            model.train()
+            for epoch in range(start + 1, epochs + 1):
+                with stages.phase("training"):
+                    for path in volumes:
+                        target = _volume(torch, path, target_device).unsqueeze(0)
+                        optimizer.zero_grad(set_to_none=True)
+                        outputs = model(target)
+                        loss, _ = losses.compute_rd_loss(outputs, target, loss_config)
+                        loss.backward()
+                        optimizer.step()
+                if checkpoint_dir is not None and (
+                        epoch in exports or (checkpoint_every and epoch % checkpoint_every == 0)):
+                    state.save(epoch)
+                if epoch in exports and epoch != epochs:
+                    export(epoch, exports[epoch])
+            export(epochs, destination)
+            return destination
 
     def decode(
         self, source: Path, *, device: str | None = None,

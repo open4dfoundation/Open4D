@@ -119,8 +119,15 @@ def simplify_component(original: o3d.geometry.TriangleMesh, budget: int):
     return o3d.geometry.TriangleMesh(original), original_faces
 
 
-def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
-    """Create QNDF's coarse/subdivided input and projected training target."""
+def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int, *, return_base: bool = False):
+    """Create QNDF's coarse/subdivided input and projected training target.
+
+    With ``return_base=True`` a fifth value describes the simplified mesh before
+    subdivision: ``(vertices, faces, component_vertex_counts,
+    component_face_counts)``. Components are concatenated in output order and
+    each is subdivided independently, so the subdivided input can be rebuilt
+    from this base mesh with the same midpoint rule.
+    """
     source = o3d.geometry.TriangleMesh()
     source.vertices = o3d.utility.Vector3dVector(np.asarray(vertices))
     source.triangles = o3d.utility.Vector3iVector(np.asarray(triangles))
@@ -137,9 +144,10 @@ def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
     components = split_components(source)
     face_counts = np.asarray([len(component.triangles) for component in components])
     budgets = allocate_face_budget(face_counts, coarse_size)
-    inputs, targets, details = [], [], []
+    inputs, targets, details, bases = [], [], [], []
     for index, (original, budget) in enumerate(zip(components, budgets)):
         coarse, simplification_target = simplify_component(original, int(budget))
+        bases.append(coarse)
         subdivided = o3d.geometry.TriangleMesh(coarse)
         for _ in range(num_subdiv):
             subdivided = subdivided.subdivide_midpoint(number_of_iterations=1)
@@ -168,10 +176,18 @@ def build_pair(vertices, triangles, coarse_size: int, num_subdiv: int):
         "coarse_face_budget_overshoot": max(0, actual_coarse_faces - coarse_size),
         "num_subdiv": num_subdiv, "components": details,
     }
-    return (
+    result = (
         np.asarray(low.vertices), np.asarray(low.triangles),
         np.asarray(target.vertices), metadata,
     )
+    if not return_base:
+        return result
+    base = combine(bases)
+    return (*result, (
+        np.asarray(base.vertices), np.asarray(base.triangles),
+        np.asarray([len(mesh.vertices) for mesh in bases], dtype=np.int64),
+        np.asarray([len(mesh.triangles) for mesh in bases], dtype=np.int64),
+    ))
 
 
 def build(mesh_name: str, coarse_size: int, num_subdiv: int, root: Path) -> dict:

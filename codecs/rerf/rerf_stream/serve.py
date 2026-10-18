@@ -153,6 +153,7 @@ def run(args) -> int:
         pca=not args.no_pca,
         pca_channels=tuple(int(c) for c in args.pca_chs.split(",")),
         group_size=args.group_size or None,
+        strict=not args.legacy_decode,
     )
 
     if args.report_ladder:
@@ -278,6 +279,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="must match the encode, per upstream's README")
     parser.add_argument("--group-size", type=int, default=0,
                         help="key frame every N frames; 0 reads it as one group")
+    parser.add_argument("--legacy-decode", action="store_true",
+                        help="skip strict bitstream validation and allow the training "
+                             "run's rgb_net.tar (the pre-validation behaviour)")
     return parser.parse_args(argv)
 
 

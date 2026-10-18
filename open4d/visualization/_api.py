@@ -10,7 +10,7 @@ from pathlib import Path
 
 from open4d.core import Sequence
 
-from ._frames import LazyRenderSequence, UP_AXES, UP_TO_Z
+from ._frames import GaussianFrames, LazyRenderSequence, UP_AXES, UP_TO_Z
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,11 @@ def _prepare(
     up: str | None,
     cache_size: int,
 ):
-    if not isinstance(sequence, Sequence):
-        raise TypeError("sequence must be an open4d.Sequence")
+    if GaussianFrames.accepts(sequence):
+        sequence = GaussianFrames(sequence, fps if fps is not None else 30.0)
+    elif not isinstance(sequence, Sequence):
+        raise TypeError("sequence must be an open4d.Sequence, a list of "
+                        "GaussianSplats or NeuralGaussianFrame, or a GaussianRun")
     if not len(sequence):
         raise ValueError("cannot visualize an empty sequence")
     if not isinstance(stride, int) or isinstance(stride, bool) or stride < 1:
@@ -71,7 +74,7 @@ def _prepare(
 
 
 def _open_source(source: Sequence | str | os.PathLike[str]) -> tuple[Sequence, bool]:
-    if isinstance(source, Sequence):
+    if isinstance(source, Sequence) or GaussianFrames.accepts(source):
         return source, False
     if isinstance(source, (str, os.PathLike)):
         from open4d import _api as public_api
@@ -137,8 +140,14 @@ def visualize(
     Stride skips frames while keeping the source speed; fps overrides playback.
     Baseline sequences must have equal frame counts and matching timestamps;
     comparison panes share camera controls. Texture and baseline_texture are
-    explicit RGB(A) image arrays applied using each mesh's UVs. GaussianCloud
-    frames display point previews, not splats.
+    explicit RGB(A) image arrays applied using each mesh's UVs.
+
+    Gaussian sequences -- GaussianCloud frames, a list of GaussianSplats or
+    NeuralGaussianFrame, or a GaussianRun -- are drawn as splats: projected
+    covariance, Gaussian falloff and depth-sorted alpha blending, with SH
+    evaluated for the current view. Frames without their own timing are
+    stamped at ``fps`` (default 30). Contexts without instanced OpenGL show
+    Gaussian centers instead and say so in the overlay.
     """
     from . import _qt
 
@@ -165,7 +174,7 @@ def visualize(
                 reference, reference_owned = _open_source(baseline)
             values = dict(viewer_options)
             # _prepare has already resolved metadata and stride-adjusted FPS.
-            recorded = str(sequence.metadata.get("up_axis", "")).lower()
+            recorded = str(getattr(sequence, "metadata", {}).get("up_axis", "")).lower()
             selected_up = up or (recorded if recorded in UP_AXES else "z")
             with Visualizer(up=selected_up, **values) as viewer:
                 viewer.play(sequence, baseline=reference, stride=stride, fps=fps,

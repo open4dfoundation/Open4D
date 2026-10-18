@@ -15,6 +15,8 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
+from check_wheel_contents import unsafe_zip_member_errors
+
 
 def check_archive(path: Path, project: Path) -> list[str]:
     with (project / "pyproject.toml").open("rb") as stream:
@@ -24,6 +26,9 @@ def check_archive(path: Path, project: Path) -> list[str]:
     errors = []
     if path.suffix == ".whl":
         with zipfile.ZipFile(path) as archive:
+            unsafe = [error for info in archive.infolist() for error in unsafe_zip_member_errors(info)]
+            if unsafe:
+                return unsafe
             members = archive.namelist()
             roots = {name.split("/", 1)[0] for name in members}
             if len(roots) != 1 or not next(iter(roots)).endswith(".dist-info"):

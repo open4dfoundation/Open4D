@@ -310,8 +310,14 @@ locations are the codec and reconstruction trees.
 | `OPEN4D_<CODEC>_PYTHON` | `NativeSequence.decode` (`python=`) | This interpreter |
 | `OPEN4D_NATIVE_TIMEOUT` | Native mesh encoder and decoder processes | No limit |
 
-An installed core or adapter wheel contains none of these trees, so every research codec needs
-its variable or keyword argument there.
+An installed core or adapter wheel contains none of these trees. `open4d backend
+plan NAME` describes a pinned build recipe or reports that a backend is
+attach-only. `backend install NAME --accept-license` builds supported profiles
+outside the checkout and runs a native roundtrip; `backend doctor NAME` checks
+the registered paths and binary hashes. `backend attach NAME SOURCE --python
+/path/to/python` registers an independently acquired runtime. Explicit keyword
+arguments and environment paths take precedence. `OPEN4D_BACKEND_HOME` selects
+the backend store.
 
 ### Device selection
 
@@ -332,11 +338,13 @@ an additional CUDA acceptance test gated by `OPEN4D_TEST_RESEARCH_CODECS=1` and
 For visual comparison, `open4d.visualize(decoded, baseline=source)` opens two
 panes with linked cameras and frame playback. Explicit RGB(A) texture arrays
 use the mesh's vertex or corner UVs; pass `texture=` and `baseline_texture=`.
-The caller supplies textures and does not lose them through hidden file lookup.
-OBJ loading preserves vertex or per-corner `vt` coordinates, including seams
-and negative indices. Material files and texture images are not fetched;
-load the image explicitly and pass its array to the viewer. Geometry-only OBJ
-readers retain their existing three-array return value.
+Owned `MeshTexture` maps render automatically; an explicit array overrides the
+map. The Qt texture renderer currently supports one material image. OBJ loading
+preserves vertex or per-corner `vt` coordinates, including seams and negative
+indices. Pass `open_sequence(path, options={"textures": True})` to load local
+MTL/images into owned pixels. References must remain inside their file's
+directory. Open4D-exported sequence manifests enable their owned textures on
+reload. Geometry-only OBJ readers retain their three-array return value.
 
 For an explicit Linux X11 EGL setup, start a fresh Python process with
 `QT_QPA_PLATFORM=xcb`, `QT_XCB_GL_INTEGRATION=xcb_egl` and
@@ -359,8 +367,37 @@ with open4d.Visualizer(title="Comparison") as viewer:
 
 `viewer.stream(receiver)` uses a bounded background reader while the Qt event
 loop stays on the main thread. Close the caller-owned receiver to interrupt a
-blocked network read. PointClouds render as points. GaussianClouds are colored,
-opacity-weighted center previews, not a full Gaussian covariance renderer.
+blocked network read. PointClouds render as points.
+
+Gaussian frames render as splats in the player, comparison panes, live updates
+and GIF export. `visualize`, `render_gif` and `Visualizer.play` take a
+GaussianCloud `Sequence`, a list of `GaussianSplats` or `NeuralGaussianFrame`,
+or a `GaussianRun` (dense PLY frames, read lazily); frames without their own
+timing are stamped at `fps` (default 30), so two such lists compare frame by
+frame. `add_geometry`, `update_geometry` and `stream` also take single
+`GaussianSplats` and `NeuralGaussianFrame` values.
+
+```python
+frames = [open4d.load_gaussians(path) for path in sorted(Path("plys").glob("*.ply"))]
+open4d.visualize(frames, up="y", fps=30)
+open4d.visualize(run, baseline=frames)   # run from open4d.reconstruct_gaussians
+```
+
+Rendering follows 3DGS: each covariance R diag(s²) Rᵀ is built once per frame
+(and rotated with the positions by `up`), projected through the perspective
+Jacobian to a screen ellipse widened by the 0.3 px low-pass filter, and drawn
+as an instanced quad with Gaussian falloff out to 3 sigma. Quads are sorted
+back to front on the CPU whenever the camera moves and blended with
+premultiplied alpha; they test against mesh depth but do not write it.
+GaussianCloud uses its stored RGB. `GaussianSplats` SH up to degree 3 is
+evaluated for the current view direction whenever the camera moves. A
+`NeuralGaussianFrame` is colored by its appearance model once per displayed
+frame, for the camera at that moment, and keeps those colors while the camera
+moves, because every evaluation runs the Vega worker. Each camera move costs a
+NumPy sort (and SH pass) over every Gaussian, so very large frames orbit at a
+reduced rate. Instancing needs OpenGL 3.3, OpenGL ES 3.0 or the ARB instanced
+arrays and draw-instanced extensions (as on macOS's 2.1 context); without them
+the viewer draws Gaussian centers and its overlay names the fallback.
 
 `open4d.compare_sequences` measures a decoded sequence against its source,
 frame by frame. It needs SciPy (`open4d[metrics]`). Either argument can be a
@@ -649,9 +686,15 @@ python examples/tutorials/tcp_stream.py --output /tmp/recording.o4d
 It needs the NumPy core. `receive(port=0)` gives the selected endpoint in
 `receiver.address`; `send(sequence, *receiver.address, realtime=False)` transmits
 without pacing. `receiver.record(max_frames=4)` returns an owned Sequence.
-Close the receiver and recording when finished. This protocol sends decoded
-mesh arrays; compressed `.o4d` bytes and native Gaussian/field state use their
-own delivery workflows.
+Close the receiver and recording when finished. Without a profile, this protocol
+sends decoded mesh arrays. `send(..., profile="zlib")` selects the incremental
+O4S2 codec protocol for meshes, point clouds and Gaussians. `StreamEncoder` and
+`StreamDecoder` also work without sockets and accept fragmented packets. A
+`LiveSender` encodes and sends on separate workers with bounded queues, capture
+drop counts, deadlines and per-stage timings. Gaussian SH travels as a named
+attribute. The profiles do not encode research neural models or texture images.
+Transport latency across machines requires synchronized clocks; local pipeline
+durations use the monotonic clock.
 
 ### 6. Export a browser playback bundle
 
@@ -688,9 +731,8 @@ Pass `--metrics` with `open4d[metrics]` to also print nearest-vertex RMS and
 Hausdorff distances. Real OBJ inputs retain per-vertex or seam-specific
 per-corner UVs. `--texture /path/to/atlas.png` explicitly supplies an image for
 both textured meshes; no material path is followed automatically. The selected
-decoded codec must preserve UVs to use the same atlas. GaussianCloud panes are
-center previews; actual Gaussian covariance and directional appearance require
-a native splat renderer.
+decoded codec must preserve UVs to use the same atlas. Gaussian panes are
+rendered as splats with linked cameras; see "Comparing sequences".
 
 For sequence playback, the shorter equivalent is:
 

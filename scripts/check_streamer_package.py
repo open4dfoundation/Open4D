@@ -10,6 +10,8 @@ from pathlib import Path, PurePosixPath
 import tarfile
 import zipfile
 
+from check_wheel_contents import unsafe_zip_member_errors
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "open4d" / "streamer"
@@ -27,6 +29,9 @@ FORBIDDEN = {"study", "streamer_tests", "tests", "benchmarks", "node_modules", "
 def _members(archive):
     if archive.suffix == ".whl":
         with zipfile.ZipFile(archive) as package:
+            for item in package.infolist():
+                if unsafe := unsafe_zip_member_errors(item):
+                    raise ValueError(unsafe[0])
             return [(item.filename, package.read(item)) for item in package.infolist()
                     if not item.is_dir()]
     with tarfile.open(archive, "r:gz") as package:

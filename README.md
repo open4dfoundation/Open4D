@@ -121,9 +121,10 @@ with open4d.receive(port=47004) as receiver:
         viewer.stream(receiver)
 ```
 
-The viewer supports meshes, points, explicit UV textures and a baseline pane.
-GaussianCloud frames are previews of colored centers; full covariance and
-view-dependent splat rendering require a native renderer.
+The viewer supports meshes, points, explicit UV textures, Gaussian splats and a
+baseline pane. Gaussians are drawn from their covariance with depth-sorted alpha
+blending and view-dependent SH color; `visualize` also takes a list of
+`GaussianSplats` or a `GaussianRun`.
 
 The [notebook](https://github.com/open4dfoundation/Open4D/blob/main/examples/open4d_sequence_codec.ipynb) walks through these calls,
 reconstruction and streaming in separate short cells.
@@ -162,9 +163,13 @@ including V-DMC encoder bitstreams; the container itself is not MPEG V-DMC
 interchange. Convert older artifacts with `open4d.migrate_legacy`.
 
 KLT, N4MC and QNDF run in Python. TVMC, TSMC, V-DMC and Gaussian methods use
-separate research runtimes. N4MC and QNDF currently process frames independently;
-they remain available as research methods. Mesh codecs currently encode geometry
-only and reject attributes they cannot preserve.
+separate research runtimes. N4MC shares a model across independently coded frame
+latents; QNDF fits an independent displacement model per frame. Research geometry
+profiles reject attributes they cannot preserve. V-DMC and Faster V-DMC also
+offer native lossy UV/texture coding with `attributes="texture"` and an explicit
+`texture_encoder_config=`. This requires one uint8 sRGB map per frame. Draco's
+native named attributes preserve vertex, face and corner data; its texture
+pixels use an explicitly identified lossless auxiliary payload.
 
 N4MC's automatic device selection uses CPU when the installed Apple Metal/MPS
 runtime lacks `ConvTranspose3D`. An explicit unsupported `device="mps"` request
@@ -195,6 +200,23 @@ fork. Encoder and decoder configurations can be supplied with
 the method's source directory and `python=` for its environment. Codec options
 are ordinary keyword arguments to `encode` or `decode`.
 
+Backend installation is separate from adapter installation:
+
+```bash
+open4d backend list
+open4d backend plan vdmc
+open4d backend install vdmc --jobs 4 --accept-license
+open4d backend doctor vdmc
+```
+
+Draco has Linux and macOS build recipes. V-DMC and Faster V-DMC have Linux
+x86-64 recipes, with every source dependency pinned to a full commit. Builds
+run outside the checkout, register only after a native encode/decode smoke
+test, and retain output hashes for `doctor`. Other backends currently support
+`backend attach NAME SOURCE --python /path/to/python`; their automatic
+acquisition/build workflows remain incomplete. Runtime license decisions and
+redistribution rights remain separate from successful installation.
+
 ## Reconstruct from depth images
 
 ```python
@@ -221,7 +243,7 @@ Saved two-camera captures load with `capture = open4d.load_rgbd_capture(pairs,
 calibration)`, then `open4d.reconstruct(capture, refine_poses=True, device="cuda")`;
 see [open4d/reconstruction/rgbd](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/rgbd/README.md).
 
-## Stream mesh frames
+## Stream mesh, point and Gaussian frames
 
 Run the receiver first in one Python process:
 
@@ -241,6 +263,29 @@ from open4d.demo import mesh_sequence
 
 send(mesh_sequence(frames=30))
 ```
+
+`send(..., profile="zlib")` selects O4S2 compression for mesh, point and Gaussian
+frames. `raw`, `zlib`, `zstd`, `quantized` and `draco` profiles have different
+dependencies and attribute contracts; Draco accepts meshes and points. Without
+a profile, `send` retains the original uncompressed mesh protocol. Both are
+accepted by `receive`.
+
+For capture-time encoding with bounded queues:
+
+```python
+from open4d.transport import LiveSender
+
+with LiveSender(profile="quantized", latest=True, send_deadline=.2) as sender:
+    for frame in capture_frames:
+        sender.submit(frame)
+print(sender.stats.encode.mean, sender.stats.sent, sender.stats.dropped)
+```
+
+`latest=False` applies backpressure and delivers every frame. `latest=True`
+replaces stale capture frames and repairs dependent packet chains with a new
+keyframe after a drop. Texture images are rejected by these live profiles.
+`python -m scripts.validate_live --help` provides separate sender/receiver
+processes, exact hashes for lossless arrays, stage timings and Qt playback.
 
 To keep what arrives, record it and save it like any other sequence:
 
@@ -319,7 +364,8 @@ layout and CUDA environment. `runtime=` selects the `gs_tools` directory and
 `runtime=` or `OPEN4D_VEGA_ROOT`. `run.load_frame(0)` reads a saved dense PLY;
 it does not decode a compressed temporal residual. A 3DGStream frame includes the
 Gaussians its second stage added. 3DGStream rendering still requires its native
-viewer. The Qt viewer and TCP stream currently take meshes.
+CUDA runtime. Decoded splats also render in the Qt viewer and travel through
+the O4S2 TCP profiles with their SH coefficients.
 
 Without `config=`, QUEEN uses upstream's `dynerf.yaml`, saved as
 `queen_config.yaml`, with MiDaS depth priors disabled. Enable them with

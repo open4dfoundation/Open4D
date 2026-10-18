@@ -71,6 +71,25 @@ including RGB-D capture loading, reconstruction, OpenUSD, and GIF rendering.
 A pull request should describe the behavior changed, relevant tests, and known
 limitations.
 
+## Codec experiments
+
+`python -m scripts.codec_rd --source /path/to/frames --config /tmp/experiments.json
+--output /tmp/new-run --frames 300 --samples 10000 --geometry-only` trains each
+experiment once, then decodes in a fresh process. The JSON configuration is a
+list of objects with `id`, `codec`, `seed`, `encode` and `decode` options. Encode
+options can include `checkpoint_artifacts`, for example
+`{"100": "epoch-100.o4d"}`. Output includes actual artifact bytes, frame timing,
+phase durations, sampled process-tree RSS, Torch memory peaks and geometry
+metrics. `--resume` reuses matching encoder outputs after verifying logical
+inputs and options; it still cold-decodes again.
+
+`python -m scripts.codec_rd.evaluate /tmp/new-run --samples 10000` recomputes
+quality and cold-decodes intermediate checkpoints without retraining. Independent
+point-set D1/D2 and exact point-to-triangle surface metrics are reported
+separately. Sampled Hausdorff is labelled as an estimate. The decoder's source
+access check uses Python audit hooks, not an operating-system sandbox. Keep
+experiment outputs outside the repository.
+
 ## Data and release
 
 Keep datasets, training runs, checkpoints, logs and generated media outside the

@@ -140,6 +140,22 @@ truncation band, such as silhouette edges, take the mean colour of their
 coloured neighbours. Frame times come from the cameras'
 timestamps.
 
+Pass `camera_mode=` to `load_rgbd_capture`, or put `camera_mode.json` in the
+calibration directory, when image size, binning, crop or depth units differ from
+the default rig. The resolved mode and calibration paths remain in capture
+provenance. `sync_error_us` is measured from device timestamps when present;
+`reconstruct(..., max_sync_error_us=1000, sync_policy="error")` rejects frames
+outside the specified tolerance. `"warn"` and `"off"` retain the measurements
+and the applied policy in output metadata. Missing timing is recorded as
+unknown, not as successful synchronization.
+
+`open4d.reconstruction.rgbd.load_sequence(path, layout="redwood" | "tum")`
+loads registered recorded images and camera trajectories. TUM uses 5000 depth
+units per metre and interpolates recorded poses at depth timestamps. Use
+`static=True` only for views of a still scene. Recorded or synthetic software
+tests do not establish calibration, synchronization or reconstruction accuracy
+for a physical rig; those need camera measurements.
+
 Without `device=`, the same capture and settings give bit-identical meshes
 across runs, processes and OpenMP thread counts, and PLY or USDC export reloads
 them exactly. The tensor TSDF gives the same surface, but its vertex and

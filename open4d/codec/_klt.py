@@ -21,6 +21,7 @@ from open4d.io import open_sequence
 from ._metadata import _json_value, _validate_manifest
 from ._protocol import CodecError
 from ._research import research_module
+from ._stages import Stages, validate_stage_hook
 from ._tsdf import write_tsdf_sequence
 from ._torch import torch_device
 from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
@@ -142,8 +143,13 @@ class KLTCodec:
         self, sequence: Sequence, destination: Path, *, overwrite: bool = False,
         resolution: int = 63, num_components: int = 64, block_size: int = 8,
         k_total: int = 16384, training_frames=(0,), frame_rate: float = 30,
-        verbose: bool = False,
+        verbose: bool = False, stage_hook=None,
     ) -> Path:
+        """Learn a block KLT basis and write quantized per-frame coefficients.
+
+        ``stage_hook`` receives instrumentation events (see ``_stages``): the
+        TSDF zero level set as the ``"target"`` mesh and phase durations.
+        """
         destination = Path(destination).absolute()
         if destination.suffix.lower() != ".o4d":
             raise ValueError("KLT destination must have a .o4d extension")
@@ -163,6 +169,7 @@ class KLTCodec:
             raise ValueError("KLT training_frames must select existing frames")
         if type(frame_rate) not in (int, float) or not np.isfinite(frame_rate) or frame_rate <= 0:
             raise ValueError("KLT frame_rate must be finite and positive")
+        validate_stage_hook(stage_hook)
         for frame in sequence:
             mesh = frame.geometry
             if any((mesh.colors is not None, mesh.normals is not None,
@@ -179,25 +186,40 @@ class KLTCodec:
             } for ordinal, frame in enumerate(sequence)],
         }
         backend = _backend()
+        torch = import_module("torch")
+        stages = Stages(stage_hook, torch, getattr(backend, "device", None))
         with tempfile.TemporaryDirectory(prefix="open4d-klt-") as directory:
             work = Path(directory)
-            manifest["normalization"] = write_tsdf_sequence(
-                sequence, work / "tsdf", resolution=resolution
-            )
+            with stages.phase("preprocessing"):
+                manifest["normalization"] = write_tsdf_sequence(
+                    sequence, work / "tsdf", resolution=resolution
+                )
+            if stages.enabled:
+                center, scale = _normalization(manifest)
+                for ordinal, path in enumerate(sorted((work / "tsdf").glob("*.npz"))):
+                    volume = backend.load_tsdf_tensor(path)
+                    grid, cubes = backend.construct_voxel_grid(volume.shape[0] - 1, volume.device)
+                    vertices, faces = backend.dynamic_marching_cubes(grid * 2.2, cubes, volume.flatten())
+                    if len(faces):
+                        stages.mesh("target", ordinal, vertices.cpu().numpy() / scale + center,
+                                    faces.cpu().numpy())
             arguments = SimpleNamespace(
                 input_path=str(work / "tsdf"), output_path=str(work / "encoded"),
                 num_components=num_components, block_size=block_size,
                 voxel_grid_res=resolution, k_total=k_total, fps=frame_rate,
                 num_frames=len(sequence), training_frames=list(training_frames),
             )
-            if verbose:
-                backend.run_compression(arguments, verify_decode=False)
-            else:
-                with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
+            # Basis learning and coefficient quantization share one backend call.
+            with stages.phase("transform-and-quantization"):
+                if verbose:
                     backend.run_compression(arguments, verify_decode=False)
+                else:
+                    with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
+                        backend.run_compression(arguments, verify_decode=False)
             native = work / "encoded/compressed"
-            (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
-            pack_o4d(native, destination, overwrite=overwrite)
+            with stages.phase("packing"):
+                (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
+                pack_o4d(native, destination, overwrite=overwrite)
         return destination
 
     def decode(self, source: Path, *, device=None) -> Sequence:

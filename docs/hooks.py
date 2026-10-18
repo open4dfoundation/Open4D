@@ -32,11 +32,13 @@ GENERATED = set()
 SUBMODULES = {}
 PUBLIC = {
     "open4d": ["load", "save", "encode", "decode", "reconstruct", "stream", "send", "receive", "visualize", "available_codecs"],
-    "open4d.core": ["Sequence", "Frame", "TriangleMesh", "PointCloud", "GaussianCloud"],
-    "open4d.codec": ["codec_info", "register_codec", "inspect_o4d", "pack_o4d", "unpack_o4d"],
+    "open4d.core": ["Sequence", "Frame", "TriangleMesh", "PointCloud", "GaussianCloud", "TextureImage", "MeshTexture"],
+    "open4d.codec": ["codec_info", "register_codec", "inspect_o4d", "pack_o4d", "unpack_o4d", "StreamEncoder", "StreamDecoder", "stream_profiles"],
+    "open4d.backends": ["plan", "install", "attach", "doctor"],
+    "open4d.transport": ["LiveSender", "Receiver", "PipelineStats"],
     "open4d.reconstruction": ["available_methods", "MultiviewCapture"],
     "open4d.reconstruction.rgbd": ["RGBDCapture", "load_capture", "reconstruct"],
-    "open4d.data": ["DatasetSpec", "DownloadableDataset", "SyntheticMeshSequence", "SyntheticGaussianSequence"],
+    "open4d.data": ["DatasetSpec", "DownloadableDataset", "SyntheticMeshSequence", "SyntheticGaussianSequence", "get", "catalog", "Asset"],
     "open4d.visualization": ["Visualizer", "ViewerOptions", "render_gif"],
     "open4d.ml": ["train", "TrainingHistory"],
 }
@@ -47,7 +49,6 @@ GUIDES = {
     "open4d/reconstruction/rgbd/README.md": "guides/rgbd.md",
     "open4d/streamer/README.md": "guides/browser-streaming.md",
     "open4d/integrations/open3d/README.md": "guides/open3d.md",
-    "integrations/unity/README.md": "guides/unity.md",
     "examples/visualization/README.md": "guides/visualization.md",
 }
 TUTORIALS = {
@@ -189,6 +190,9 @@ def on_files(files, config):
         result = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT, capture_output=True, text=True)
         ref = result.stdout.strip() if result.returncode == 0 else "main"
     REPO = config.repo_url.rstrip("/") + "/blob/" + ref + "/"
+    for file in list(files):
+        if "__pycache__" in Path(file.src_uri).parts or file.src_uri.endswith((".pyc", ".pyo")):
+            files.remove(file)
     SOURCE_ROUTES.clear(); PAGE_SOURCES.clear(); GENERATED.clear()
     SUBMODULES.clear(); SUBMODULES.update(_submodules())
     SOURCE_ROUTES.update({f"docs/{p.name}": p.name for p in (ROOT / "docs").glob("*.md")})
@@ -199,6 +203,8 @@ def on_files(files, config):
             PAGE_SOURCES[route] = ROOT / source
         files.append(File.generated(config, route, content=text))
     add("index.md", HOME)
+    add("guides/unity.md", "# Unity integration\n\nThe Unity integration retains its own source and licensing review. "
+        f"[Read the integration guide at its source]({_source_url('integrations/unity/README.md')}).\n")
     for source, route in GUIDES.items():
         if not (ROOT / source).is_file():
             raise ValueError(f"Missing documentation source: {source}")

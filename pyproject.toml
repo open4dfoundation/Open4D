@@ -67,6 +67,7 @@ all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph>=0.14", "PyOpenGL", "open3d>
 include-package-data = false
 packages = [
     "open4d",
+    "open4d.backends",
     "open4d.codec",
     "open4d.data",
     "open4d.ml",
@@ -80,6 +81,10 @@ packages = [
     "open4d.integrations",
     "open4d.integrations.open3d",
 ]
+
+[tool.setuptools.package-data]
+"open4d.data" = ["catalog.json"]
+"open4d.backends" = ["recipes/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"

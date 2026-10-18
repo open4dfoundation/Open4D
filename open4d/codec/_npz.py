@@ -22,6 +22,7 @@ import numpy as np
 from open4d.core import Frame, Sequence, TopologyMode, TriangleMesh, PointCloud, GaussianCloud
 
 from ._protocol import CodecError
+from ._mesh_payload import texture_arrays, texture_fields, read_texture
 from ._metadata import _json_value
 from ._o4d_format import contains_codec, pack_o4d, probe_codec, unpack_o4d
 
@@ -100,6 +101,22 @@ def _read_array(archive: ZipFile, name: str, codec: "NumPyZipCodec", budget=None
         raise CodecError(f"invalid array payload {name}: {error}") from error
 
 
+def _geometry(representation: str, values: dict, attributes: dict, domains=None, texture=None):
+    """Build a frame geometry from stored arrays, keeping lossless bit patterns."""
+    geometry_type = _GEOMETRIES[representation][0]
+    options = {"attribute_domains": domains or {}, "texture": texture} if representation == "mesh" else {}
+    geometry = geometry_type(**values, attributes=attributes, **options)
+    if geometry_type is GaussianCloud:
+        # Canonical GaussianCloud quaternions are already normalized.
+        # Preserve their exact float bit patterns through a lossless codec.
+        rotations = values["rotations"]
+        norms = np.linalg.norm(rotations, axis=1)
+        if (rotations.dtype == geometry.rotations.dtype
+                and np.allclose(norms, 1, rtol=0, atol=4 * np.finfo(rotations.dtype).eps)):
+            object.__setattr__(geometry, "rotations", rotations)
+    return geometry
+
+
 class _ZipProvider:
     def __init__(
         self, temporary, native: Path, manifest: dict, codec: "NumPyZipCodec"
@@ -149,16 +166,10 @@ class _ZipProvider:
                 name: _read_array(archive, path, self.codec, budget)
                 for name, path in arrays.get("attributes", {}).items()
             }
-        geometry_type = _GEOMETRIES[record.get("representation", "mesh")][0]
-        geometry = geometry_type(**values, attributes=attributes)
-        if geometry_type is GaussianCloud:
-            # Canonical GaussianCloud quaternions are already normalized.
-            # Preserve their exact float bit patterns through a lossless codec.
-            rotations = values["rotations"]
-            norms = np.linalg.norm(rotations, axis=1)
-            if (rotations.dtype == geometry.rotations.dtype
-                    and np.allclose(norms, 1, rtol=0, atol=4 * np.finfo(rotations.dtype).eps)):
-                object.__setattr__(geometry, "rotations", rotations)
+            texture = read_texture(record.get("texture"),
+                                   lambda key: _read_array(archive, key, self.codec, budget))
+        geometry = _geometry(record.get("representation", "mesh"), values, attributes,
+                             record.get("attribute_domains"), texture)
         return Frame(
             frame_index=record["frame_index"],
             timestamp=record["timestamp"],
@@ -176,7 +187,7 @@ class NumPyZipCodec:
     suffixes = (".o4d",)
     backend = "python"
     lossless = True
-    preserves = (*_FIELDS, "scales", "rotations", "opacities", "attributes")
+    preserves = (*_FIELDS, "scales", "rotations", "opacities", "attributes", "attribute_domains", "texture")
     representation = "geometry_sequence"
 
     def __init__(
@@ -264,7 +275,7 @@ class NumPyZipCodec:
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
             "version": 1, "codec": self.id,
-            "native": {"profile": f"{self.id}/2", "rle": self.rle},
+            "native": {"profile": f"{self.id}/3", "rle": self.rle},
             "metadata": _json_value(sequence.metadata, "sequence"),
             "topology": sequence.topology.value,
             "has_constant_vertex_count": sequence.has_constant_vertex_count,
@@ -280,7 +291,8 @@ class NumPyZipCodec:
                     raise TypeError(f"array codecs do not support {representation!r} frames")
                 fields = _GEOMETRIES[representation][1]
                 member_count = sum(getattr(frame.geometry, name) is not None for name in fields)
-                if member_count + len(frame.geometry.attributes) > _MAX_FRAME_MEMBERS:
+                texture, pixels = texture_arrays(getattr(frame.geometry, "texture", None))
+                if member_count + len(frame.geometry.attributes) + len(pixels) > _MAX_FRAME_MEMBERS:
                     raise CodecError("frame array member count outside limits")
                 budget = [_MAX_FRAME_BYTES]
                 arrays = {}
@@ -297,10 +309,14 @@ class NumPyZipCodec:
                         archive.writestr(f"{key}.npy", self._member(value, f"frame {ordinal} attribute {name!r}", budget))
                         attributes[name] = key
                     arrays["attributes"] = attributes
+                    for key, value in pixels.items():
+                        archive.writestr(f"{key}.npy", self._member(value, key, budget))
                 manifest["frames"].append({
                     "frame_index": frame.frame_index, "timestamp": frame.timestamp,
                     "representation": representation,
                     "metadata": _json_value(frame.metadata, f"frame {ordinal}"), "arrays": arrays,
+                    **({"attribute_domains": dict(frame.geometry.attribute_domains), "texture": texture}
+                       if representation == "mesh" else {}),
                 })
             (native / "metadata.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
             pack_o4d(native, destination, overwrite=overwrite)
@@ -336,6 +352,9 @@ class NumPyZipCodec:
                     raise CodecError("invalid mesh attribute field index")
                 expected = {f"{key}.npy" for key in arrays if key != "attributes"}
                 expected.update(f"{key}.npy" for key in attributes.values())
+                expected.update(f"{key}.npy" for key in texture_fields(frame.get("texture")))
+                if representation != "mesh" and frame.get("texture") is not None:
+                    raise CodecError("only mesh frames carry textures")
                 with ZipFile(native / f"frame_{ordinal:06d}.npz") as archive:
                     members = archive.namelist()
                     if len(members) > _MAX_FRAME_MEMBERS:

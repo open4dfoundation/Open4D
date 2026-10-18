@@ -13,7 +13,7 @@ import numpy as np
 from open4d.core import Frame, GaussianCloud, PointCloud, TriangleMesh
 
 from ._api import _options
-from ._frames import UP_TO_Z, to_render_frame
+from ._frames import GaussianFrame, UP_TO_Z, gaussian_geometry, to_render_frame, texture_pixels
 
 
 _UNCHANGED = object()
@@ -41,9 +41,12 @@ class Visualizer:
     Call ``poll_events`` regularly when feeding frames yourself, or use
     ``stream`` to keep Qt responsive while an iterator waits for network data.
 
-    Geometry is an Open4D Frame, TriangleMesh, PointCloud or GaussianCloud.
-    Gaussians are explicitly displayed as colored, opacity-weighted *centers*;
-    covariance and directional appearance require a native splat renderer.
+    Geometry is an Open4D Frame, TriangleMesh, PointCloud, GaussianCloud,
+    GaussianSplats or NeuralGaussianFrame. Gaussians are drawn as splats from
+    their covariance, opacity and color; GaussianSplats SH is re-evaluated when
+    the camera moves. A NeuralGaussianFrame's colors are evaluated once, for
+    the camera when the frame is shown, since each evaluation runs the Vega
+    worker. A context without instanced OpenGL falls back to Gaussian centers.
     Textures are explicit RGB(A) arrays using UVs with origin at bottom left.
     Per-vertex and per-corner UVs are interpolated by the GPU. Comparison panes
     share camera controls but do not infer correspondence or error metrics.
@@ -89,14 +92,21 @@ class Visualizer:
         return self._backend
 
     def _prepare_geometry(self, geometry, texture):
+        if gaussian_geometry(geometry):
+            geometry = GaussianFrame(0, 0.0, geometry)
+        if isinstance(geometry, GaussianFrame) and gaussian_geometry(geometry.geometry):
+            if texture is not None:
+                raise ValueError("textured geometry needs triangles and texture_coordinates")
+            return to_render_frame(geometry, UP_TO_Z[self.up]), None
         if not isinstance(geometry, Frame):
             if not isinstance(geometry, (TriangleMesh, PointCloud, GaussianCloud)):
-                raise TypeError("geometry must be a Frame, TriangleMesh, PointCloud or GaussianCloud")
+                raise TypeError("geometry must be a Frame, TriangleMesh, PointCloud, "
+                                "GaussianCloud, GaussianSplats or NeuralGaussianFrame")
             geometry = Frame(0, 0.0, geometry)
         if not isinstance(geometry.geometry, (TriangleMesh, PointCloud, GaussianCloud)):
             raise TypeError("this viewer supports mesh, point and GaussianCloud frames")
         frame = to_render_frame(geometry, UP_TO_Z[self.up])
-        pixels = _texture(texture)
+        pixels = texture_pixels(frame) if texture is None else _texture(texture)
         if pixels is not None and (not frame.is_mesh or frame.texture_coordinates is None):
             raise ValueError("textured geometry needs triangles and texture_coordinates")
         return frame, pixels
@@ -129,7 +139,8 @@ class Visualizer:
         if key not in self._geometries:
             raise KeyError(f"no geometry {name!r} in this pane; call add_geometry first")
         if texture is _UNCHANGED:
-            texture = self._geometries[key][1]
+            mesh = geometry.geometry if isinstance(geometry, Frame) else geometry
+            texture = None if getattr(mesh, "texture", None) is not None else self._geometries[key][1]
         frame, pixels = self._prepare_geometry(geometry, texture)
         backend.set_geometry(key, frame, pixels, reset_camera=reset_camera)
         self._geometries[key] = frame, pixels
@@ -183,8 +194,10 @@ class Visualizer:
              cache_size=3, texture=None, baseline_texture=None, up=None) -> None:
         """Loop equal-length sequences with matching frame timestamps.
 
-        Use ``visualize`` for the one-line API. This method retains the same
-        bounded lazy frame cache; it does not load an entire sequence into RAM.
+        Sequences are open4d.Sequences or the Gaussian sources ``visualize``
+        accepts. Use ``visualize`` for the one-line API. This method retains
+        the same bounded lazy frame cache; it does not load an entire sequence
+        into RAM.
         ``up`` defaults to this visualizer's coordinate convention.
         """
         from ._api import _prepare
@@ -207,13 +220,13 @@ class Visualizer:
         while self.poll_events():
             now = time.monotonic()
             if now >= deadline:
-                pair = [(False, frames[ordinal], pixels)]
+                pair = [(False, frames[ordinal], pixels if pixels is not None else texture_pixels(frames[ordinal]))]
                 if reference is not None:
                     other = reference[ordinal]
                     if not math.isclose(pair[0][1].timestamp, other.timestamp,
                                         rel_tol=1e-7, abs_tol=1e-6):
                         raise ValueError(f"baseline and current timestamps differ at frame {ordinal}")
-                    pair.append((True, other, reference_pixels))
+                    pair.append((True, other, reference_pixels if reference_pixels is not None else texture_pixels(other)))
                 # Validate both panes before changing either one.
                 if any(image is not None and (not frame.is_mesh or frame.texture_coordinates is None)
                        for _, frame, image in pair):

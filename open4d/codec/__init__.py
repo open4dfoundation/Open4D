@@ -11,16 +11,19 @@ from ._api import (
 from ._klt import KLTCodec
 from ._n4mc import N4MCCodec
 from ._protocol import Codec, CodecError
+from ._attributes import AttributeSupport
 from ._qndf import QNDFCodec
 from ._o4d import O4DCodec
 from ._tracked import TrackedMeshCodec
 from ._migration import migrate_legacy
 from ._o4d_format import inspect_o4d, pack_o4d, unpack_o4d
+from ._stream import StreamEncoder, StreamDecoder, stream_profiles, splats_to_frame, frame_to_splats
 
 __all__ = [
     "Codec",
     "CodecError",
     "CodecInfo",
+    "AttributeSupport",
     "KLTCodec",
     "N4MCCodec",
     "QNDFCodec",
@@ -35,4 +38,5 @@ __all__ = [
     "pack_o4d",
     "migrate_legacy",
     "unpack_o4d",
+    "StreamEncoder", "StreamDecoder", "stream_profiles", "splats_to_frame", "frame_to_splats",
 ]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import os
 from pathlib import Path
+import warnings
 
 from .codec import Codec, available_codecs, decode_sequence, encode_sequence
 from .core import Sequence
@@ -196,14 +197,36 @@ def reconstruct(source, output=None, *, method="rgbd", codec=None,
         from .reconstruction.rgbd import RGBDCapture, reconstruct as reconstruct_rgbd
 
         if isinstance(source, RGBDCapture):
-            given = [name for name in ("color", "intrinsics", "camera_poses", "timestamps")
+            given = [name for name in ("color", "intrinsics", "camera_poses", "timestamps",
+                                       "sync_error_us")
                      if name in options] + (["rgb"] if output is not None else [])
             if given:
                 raise TypeError(f"{', '.join(given)} come from the RGBDCapture; omit them")
             if source.timestamps is not None and "fps" in options:
                 raise TypeError("the RGBDCapture has timestamps; omit fps")
+            if "depth_scale" in options and options["depth_scale"] != source.depth_scale:
+                raise ValueError(f"depth_scale={options['depth_scale']!r} conflicts with the "
+                                 f"RGBDCapture's {source.depth_scale:g} depth units per metre")
+            if (source.sync_error_us is None and source.depth.shape[1] > 1
+                    and options.get("sync_policy", "error") != "off"):
+                from .reconstruction.rgbd import SyncWarning
+
+                warnings.warn("the RGBDCapture records no camera synchronization, so frame "
+                              "timing across cameras is unknown; metadata['sync'] marks it "
+                              "(pass sync_policy='off' to accept unsynchronized input)",
+                              SyncWarning, stacklevel=2)
+            extra = options.get("metadata") or {}
+            if not isinstance(extra, Mapping):
+                raise TypeError("metadata must be a mapping or None")
+            capture = {**source.provenance, "frame_numbers": list(source.pair_numbers),
+                       "serials": list(source.serials)}
+            if source.camera_timestamps_us is not None:
+                capture["camera_timestamps_us"] = [list(stamps)
+                                                   for stamps in source.camera_timestamps_us]
             options.update(color=source.color, intrinsics=source.intrinsics,
-                           camera_poses=source.camera_poses, timestamps=source.timestamps)
+                           camera_poses=source.camera_poses, timestamps=source.timestamps,
+                           sync_error_us=source.sync_error_us, depth_scale=source.depth_scale,
+                           metadata={**extra, "capture": capture})
             source = source.depth
         elif output is not None:
             if "color" in options:

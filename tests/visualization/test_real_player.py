@@ -143,6 +143,35 @@ def test_live_viewer_displays_a_real_tcp_stream():
     assert not source.closed
 
 
+def test_owned_texture_is_rendered_and_updated_without_a_separate_image_argument(tmp_path):
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    from dataclasses import replace
+    from open4d.core import MeshTexture, TextureImage
+    from PIL import Image
+    mesh = TriangleMesh([[-1., -1, 0], [1., -1, 0], [1., 1, 0], [-1., 1, 0]],
+                        [[0, 1, 2], [0, 2, 3]],
+                        texture_coordinates=[[0., 0], [1., 0], [1., 1], [0., 1]])
+    green = np.full((32, 32, 3), [20, 230, 20], np.uint8)
+    red = np.full((32, 32, 3), [230, 20, 20], np.uint8)
+    first = replace(mesh, texture=MeshTexture((TextureImage(green),)))
+    second = replace(mesh, texture=MeshTexture((TextureImage(red),)))
+    with Visualizer(width=320, height=240, elevation=90, distance=2.5) as viewer:
+        viewer.add_geometry(first)
+        pixels = viewer.capture_screen()
+        assert ((pixels[:, :, 1] > 180) & (pixels[:, :, 0] < 80)).mean() > .02
+        viewer.update_geometry(second)
+        pixels = viewer.capture_screen()
+        assert ((pixels[:, :, 0] > 180) & (pixels[:, :, 1] < 80)).mean() > .02
+    frames = Sequence(MemoryFrameProvider([Frame(0, 0, first), Frame(1, .1, second)]))
+    path = render_gif(frames, tmp_path / "owned.gif", width=320, height=240,
+                      elevation=90, distance=2.5, no_metrics=True)
+    with Image.open(path) as image:
+        assert image.n_frames == 2
+        pixels = np.asarray(image.convert("RGB"))
+        assert ((pixels[:, :, 1] > 180) & (pixels[:, :, 0] < 80)).mean() > .02
+
+
 def test_live_viewer_keeps_one_application_after_repeated_gifs(tmp_path):
     if os.environ.get("OPEN4D_TEST_RENDER") != "1":
         pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
@@ -251,3 +280,175 @@ print('GIF, player and live viewer reported actionable context errors')
     assert result.returncode == 0, result.stdout + result.stderr
     assert "actionable context errors" in result.stdout
     assert not (tmp_path / "mismatch.gif").exists()
+
+
+def _require_render():
+    if os.environ.get("OPEN4D_TEST_RENDER") != "1":
+        pytest.skip("set OPEN4D_TEST_RENDER=1 with a desktop or Xvfb display")
+    pytest.importorskip("PyQt6.QtWidgets")
+
+
+def _cloud(count, *, seed=0, z=0.0):
+    from open4d import GaussianCloud
+
+    rng = np.random.default_rng(seed)
+    positions = np.c_[rng.uniform(-0.8, 0.8, (count, 2)), np.full(count, z)]
+    return GaussianCloud(positions, np.full((count, 3), 0.05), np.tile([1., 0, 0, 0], (count, 1)),
+                         np.full(count, 0.9), colors=np.tile([[0.1, 0.2, 0.9]], (count, 1)))
+
+
+def _foreground(pixels):
+    return np.any(pixels < 235, axis=2)
+
+
+def test_splats_render_oriented_anisotropic_ellipses():
+    _require_render()
+    from open4d import GaussianCloud
+
+    half = np.radians(30) / 2
+    # Long along x, then turned 30 degrees about z: seen from above, the
+    # ellipse's major axis must sit 30 degrees counterclockwise of screen x.
+    cloud = GaussianCloud([[0., 0, 0]], [[0.4, 0.06, 0.06]], [[np.cos(half), 0, 0, np.sin(half)]],
+                          [0.95], colors=[[0.9, 0.1, 0.1]])
+    with Visualizer(width=400, height=400, elevation=90, azimuth=-90, distance=3.0) as viewer:
+        viewer.add_geometry(cloud)
+        assert viewer.poll_events()
+        pixels = viewer.capture_screen()
+        assert "Gaussian splats" in viewer._backend.labels[False].text()
+    red = (pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 150)
+    rows, columns = np.nonzero(red)
+    assert len(rows) > 100, "the splat is missing"
+    covariance = np.cov([columns - columns.mean(), rows.mean() - rows])
+    minor, major = np.linalg.eigvalsh(covariance)
+    # A uniform ellipse's variance ratio is its squared axis ratio, (0.4/0.06)^2.
+    assert major / minor > 20
+    angle = 0.5 * np.degrees(np.arctan2(2 * covariance[0, 1], covariance[0, 0] - covariance[1, 1]))
+    assert abs(angle - 30) < 3
+
+
+def test_splats_blend_back_to_front_for_every_camera():
+    _require_render()
+    from open4d import GaussianCloud
+
+    # Red sits above blue. Splats do not write depth, so only the per-camera
+    # sort decides which one covers the other: from above red must win, from
+    # below blue, with the same upload order both times.
+    cloud = GaussianCloud([[0., 0, 0.3], [0., 0, -0.3]], np.full((2, 3), 0.25),
+                          [[1., 0, 0, 0]] * 2, [0.99, 0.99],
+                          colors=[[0.95, 0.05, 0.05], [0.05, 0.05, 0.95]])
+    with Visualizer(width=320, height=320, elevation=90, azimuth=-90, distance=3.0) as viewer:
+        viewer.add_geometry(cloud)
+        assert viewer.poll_events()
+        above = viewer.capture_screen()
+        view = viewer._backend.views[False]
+        view.setCameraPosition(elevation=-90)
+        assert viewer.poll_events()
+        below = viewer.capture_screen()
+    for pixels, front, back in ((above, 0, 2), (below, 2, 0)):
+        centre = pixels[pixels.shape[0] // 2, pixels.shape[1] // 2].astype(int)
+        assert centre[front] > 200 and centre[back] < 60, centre
+
+
+def test_splat_sh_color_is_reevaluated_when_the_camera_moves():
+    _require_render()
+    from open4d import GaussianSplats
+
+    sh = np.zeros((1, 4, 3), np.float32)
+    sh[0, 2, 0] = 1.5                       # red rises with the view direction's z
+    splats = GaussianSplats(positions=[[0., 0, 0]], scales=[[0.25, 0.25, 0.25]],
+                            rotations=[[1., 0, 0, 0]], opacities=[0.99], spherical_harmonics=sh)
+    with Visualizer(width=320, height=320, elevation=90, azimuth=-90, distance=3.0) as viewer:
+        viewer.add_geometry(splats)
+        assert viewer.poll_events()
+        above = viewer.capture_screen()
+        viewer._backend.views[False].setCameraPosition(elevation=-90)
+        assert viewer.poll_events()
+        below = viewer.capture_screen()
+    middle = (above.shape[0] // 2, above.shape[1] // 2)
+    assert above[middle][0] < 60 and below[middle][0] > 200
+
+
+def test_splat_comparison_panes_stay_in_sync_and_follow_counts():
+    _require_render()
+    with Visualizer(width=800, height=400, elevation=30, azimuth=20, distance=2.5) as viewer:
+        backend = viewer._backend
+        viewer.add_geometry(_cloud(30))
+        viewer.add_geometry(_cloud(30), baseline=True)
+        assert viewer.poll_events()
+        current, baseline = viewer.capture_screen(), viewer.capture_screen(baseline=True)
+        assert _foreground(current).mean() > 0.01
+        assert np.abs(current.astype(int) - baseline).max() <= 2
+        backend.views[False].setCameraPosition(azimuth=110, elevation=60)
+        backend._sync_camera(backend.views[False])
+        assert viewer.poll_events()
+        moved, moved_baseline = viewer.capture_screen(), viewer.capture_screen(baseline=True)
+        assert np.abs(moved.astype(int) - moved_baseline).max() <= 2
+        assert np.abs(moved.astype(int) - current).max() > 50
+        areas = []
+        for count in (60, 0, 4, 60):
+            viewer.update_geometry(_cloud(count, seed=count))
+            assert viewer.poll_events()
+            areas.append(_foreground(viewer.capture_screen()).mean())
+        assert areas[1] == 0, "an empty frame must draw nothing"
+        assert areas[0] > areas[2] > 0 and areas[3] == pytest.approx(areas[0])
+        viewer.remove_geometry(baseline=True)
+        assert viewer.poll_events()
+
+
+def test_splat_gif_playback_handles_empty_and_changing_frames(tmp_path, monkeypatch):
+    _require_render()
+    from PIL import Image
+    from open4d.visualization import _qt
+
+    views = []
+    original = _qt.Scene
+
+    class TrackedScene(original):
+        def __init__(self, *args, **options):
+            super().__init__(*args, **options)
+            views.append(weakref.ref(self.view))
+
+    monkeypatch.setattr(_qt, "Scene", TrackedScene)
+    frames = [Frame(index, index / 10, _cloud(count, seed=index))
+              for index, count in enumerate((0, 5, 40))]
+    sequence = Sequence(MemoryFrameProvider(frames))
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        output = render_gif(sequence, tmp_path / "splats.gif", width=320, height=240,
+                            elevation=90, azimuth=-90, distance=2.5, no_metrics=True)
+        assert all(view() is None for view in views), "splat buffers must not wait for cyclic GC"
+    finally:
+        if enabled:
+            gc.enable()
+    areas = []
+    with Image.open(output) as image:
+        for index in range(image.n_frames):
+            image.seek(index)
+            areas.append(_foreground(np.asarray(image.convert("RGB"))).mean())
+    assert areas[0] == 0 and 0 < areas[1] < areas[2]
+
+
+def test_splats_fall_back_to_points_without_instancing(tmp_path, monkeypatch):
+    _require_render()
+    from PIL import Image
+    from open4d.visualization import _splats
+
+    def unsupported(context):
+        raise _splats.SplatsUnsupported("instancing disabled for this test")
+
+    monkeypatch.setattr(_splats, "capabilities", unsupported)
+    with Visualizer(width=320, height=320, elevation=90, azimuth=-90, distance=3.0,
+                    point_size=12) as viewer:
+        viewer.add_geometry(_cloud(3))
+        assert viewer.poll_events()
+        pixels = viewer.capture_screen()
+        assert "point fallback: instancing disabled" in viewer._backend.labels[False].text()
+        assert _foreground(pixels).mean() > 0
+    sequence = Sequence(MemoryFrameProvider([Frame(0, 0, _cloud(3))]))
+    output = render_gif(sequence, tmp_path / "fallback.gif", width=320, height=240,
+                        elevation=90, azimuth=-90, distance=2.5, point_size=12)
+    with Image.open(output) as image:
+        # The first captured frame already shows the fallback, and says so.
+        pixels = np.asarray(image.convert("RGB"))
+        assert (np.all(pixels[:, :, :2] < 120, axis=2) & (pixels[:, :, 2] > 150)).any()

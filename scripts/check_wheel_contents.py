@@ -6,10 +6,11 @@ from __future__ import annotations
 import argparse
 import configparser
 import re
+import stat
 import sys
 import zipfile
 from email.parser import Parser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 try:
     import tomllib
@@ -20,6 +21,7 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIRS = {
     "open4d": ROOT / "open4d",
+    "open4d.backends": ROOT / "open4d/backends",
     "open4d.codec": ROOT / "open4d/codec",
     "open4d.data": ROOT / "open4d/data",
     "open4d.ml": ROOT / "open4d/ml",
@@ -50,6 +52,26 @@ def expected_python_files() -> set[str]:
     return expected
 
 
+def expected_data_files() -> set[str]:
+    return {"open4d/data/catalog.json", *(
+        path.relative_to(ROOT).as_posix() for path in (ROOT / "open4d/backends/recipes").glob("*.json"))}
+
+
+def unsafe_zip_member_errors(info: zipfile.ZipInfo) -> list[str]:
+    """Reject symlink entries and names that leave the installation root."""
+    name = info.filename
+    path = PurePosixPath(name)
+    drive = bool(path.parts) and ":" in path.parts[0]
+    if path.is_absolute() or ".." in path.parts or "\\" in name or drive:
+        return [f"unsafe member path: {name}"]
+    mode = info.external_attr >> 16
+    if stat.S_ISLNK(mode):
+        return [f"symlink member is not allowed: {name}"]
+    if stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
+        return [f"special file member is not allowed: {name}"]
+    return []
+
+
 def check_wheel(path: Path) -> list[str]:
     errors: list[str] = []
     if configured_packages() != set(PACKAGE_DIRS):
@@ -58,6 +80,8 @@ def check_wheel(path: Path) -> list[str]:
         return errors + [f"wheel does not exist: {path}"]
 
     with zipfile.ZipFile(path) as wheel:
+        for info in wheel.infolist():
+            errors.extend(unsafe_zip_member_errors(info))
         namelist = [name for name in wheel.namelist() if not name.endswith("/")]
         if len(namelist) != len(set(namelist)):
             seen = set()
@@ -93,7 +117,10 @@ def check_wheel(path: Path) -> list[str]:
         missing_metadata = expected_metadata - members
         if missing_metadata:
             errors.append(f"missing wheel metadata: {sorted(missing_metadata)}")
-        unexpected = members - expected_python - expected_metadata
+        expected_data = expected_data_files()
+        if expected_data - members:
+            errors.append(f"missing package data: {sorted(expected_data - members)}")
+        unexpected = members - expected_python - expected_metadata - expected_data
         if unexpected:
             errors.append(f"unexpected wheel members: {sorted(unexpected)}")
 

@@ -63,6 +63,140 @@ DEFAULT_PCA_CHANNELS = (7, 13)
 DENSITY_ACT = -4.1
 
 
+class BitstreamError(ValueError):
+    """A bitstream that cannot be decoded as declared, refused before decoding."""
+
+
+def _feature_present(path: Path, prefix: str, channels: int) -> bool:
+    """One entropy half: the coder writes ``<prefix><channel>`` per channel."""
+    return all((path / ("%s%d" % (prefix, channel))).is_file() for channel in range(channels))
+
+
+def validate_bitstream(path, frames: Sequence[int], *, group_size: int, pca: bool,
+                       pca_channels: Sequence[int] = DEFAULT_PCA_CHANNELS,
+                       n_channel: Optional[int] = None) -> None:
+    """Refuse a bitstream whose structure disagrees with how it will be decoded.
+
+    Every check here guards a decode that would otherwise *succeed* and show
+    the wrong scene: a group joined mid-way, a gap that residuals across two
+    frames, a residual with its motion missing (the legacy player decodes it
+    as a key frame), a ``--pca``/``--pca_chs``/``--group_size`` that differs
+    from the encode, or a colour network that would be fetched from wherever
+    the trainer left it. Reads JSON and file names only.
+    """
+    path = Path(path)
+    frames = list(frames)
+    problems: List[str] = []
+    if type(group_size) is not int or group_size <= 0:
+        raise BitstreamError(f"group size must be a positive integer, not {group_size!r}")
+    if not frames:
+        raise BitstreamError(f"{path} holds no header_<frame>.json")
+    if (any(type(index) is not int or index < 0 for index in frames)
+            or frames != sorted(set(frames))):
+        raise BitstreamError("ReRF frame indices must be nonnegative, unique and increasing")
+    if frames[0] % group_size:
+        problems.append(
+            f"the stream starts at frame {frames[0]}, which is not a key frame for group "
+            f"size {group_size}; its residuals have nothing to accumulate onto. Include "
+            f"frames from {frames[0] - frames[0] % group_size}, or pass the group size "
+            "it was encoded with"
+        )
+    missing = [index for a, b in zip(frames, frames[1:]) for index in range(a + 1, b)]
+    if missing:
+        problems.append("frames are not contiguous; missing %s" % _ranges(missing))
+    for name, role in (("model_kwargs.json", "field model"), ("rgb_net.tar", "shared colour network")):
+        if not (path / name).is_file():
+            problems.append(f"{name} ({role}) is missing beside the bitstream")
+    pca_channels = tuple(int(c) for c in pca_channels)
+    if pca and (len(pca_channels) != 2 or not 0 < pca_channels[0] < pca_channels[1]):
+        problems.append(f"PCA channels must be two increasing counts, not {pca_channels}")
+        pca = False
+    if pca and n_channel is not None and pca_channels[1] != n_channel:
+        problems.append(
+            f"PCA channels {pca_channels} do not cover the field's {n_channel} channels "
+            "(rgbnet_dim + 1)"
+        )
+
+    for frame in frames:
+        key = frame % group_size == 0
+        kind = "key" if key else "residual"
+        try:
+            headers = json.loads((path / ("header_%d.json" % frame)).read_text())["headers"]
+            channels = [int(entry["size"][1]) for entry in headers]
+            quality = int(headers[0]["quality"])
+            qualities = [int(entry["quality"]) for entry in headers]
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
+            problems.append(f"frame {frame}: unreadable header ({error})")
+            continue
+        halves = 2 if (pca and not key) else 1
+        if len(headers) != halves:
+            problems.append(
+                f"frame {frame} is a {kind} frame for group size {group_size} with PCA "
+                f"{'on' if pca else 'off'}, so it needs {halves} entropy header(s), and has "
+                f"{len(headers)}; the stream was encoded with a different --group_size or --pca"
+            )
+            continue
+        if qualities != [quality - half for half in range(halves)]:
+            problems.append(f"frame {frame}: entropy header qualities {qualities} are inconsistent")
+        if halves == 2:
+            expected = [pca_channels[0], pca_channels[1] - pca_channels[0]]
+        else:
+            expected = [n_channel] if n_channel is not None else channels
+        if channels != expected:
+            problems.append(
+                f"frame {frame}: entropy channels {channels}, expected {expected}; "
+                "the stream was encoded with different --pca_chs or a different rgbnet_dim"
+            )
+        required = ["mask_%d.rerf" % frame]
+        if halves == 2:
+            required.append("pca_m_%d.npy" % frame)
+        motion = ["deform_%d.npy" % frame, "deform_mask_%d.rerf" % frame]
+        present = [name for name in motion if (path / name).is_file()]
+        if not key:
+            required += motion
+        elif present:
+            problems.append(
+                f"frame {frame} is a key frame for group size {group_size} but carries "
+                f"motion ({', '.join(present)}); the stream was encoded with a different "
+                "--group_size"
+            )
+        absent = [name for name in required if not (path / name).is_file()]
+        for half in range(halves):
+            prefix = "feature_%d_%d.rerf" % (frame, quality - half)
+            if not _feature_present(path, prefix, channels[half]):
+                absent.append(prefix + "*")
+        if absent:
+            problems.append(f"{kind} frame {frame} is incomplete: missing {', '.join(absent)}")
+
+    if problems:
+        shown = problems[:12] + (["... and %d more" % (len(problems) - 12)] if len(problems) > 12 else [])
+        raise BitstreamError(
+            f"ReRF bitstream {path} cannot be decoded as declared:\n  - " + "\n  - ".join(shown)
+            + "\nstrict=False restores the legacy player, which decodes such streams "
+            "without complaint and renders whatever results."
+        )
+
+
+def _ranges(values: Sequence[int]) -> str:
+    """``[3, 4, 5, 9]`` -> ``"3-5, 9"``."""
+    spans: List[List[int]] = []
+    for value in values:
+        if spans and value == spans[-1][1] + 1:
+            spans[-1][1] = value
+        else:
+            spans.append([value, value])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in spans)
+
+
+def packaged_camera(entry) -> Camera:
+    """A camera from a packaged decoder config's ``cameras`` list."""
+    return Camera(
+        camera_id=int(entry["camera_id"]), width=int(entry["width"]), height=int(entry["height"]),
+        fx=float(entry["fx"]), fy=float(entry["fy"]), cx=float(entry["cx"]), cy=float(entry["cy"]),
+        c2w=np.asarray(entry["c2w"], dtype=np.float64),
+    )
+
+
 @dataclass
 class DecodedFrame:
     """One frame, decoded and installed in the player's model.
@@ -88,6 +222,17 @@ class BitstreamPlayer:
     upstream's ``codec/compress.py`` wrote. ``pca`` and ``pca_channels`` have to
     match how it was encoded -- upstream's README says so, and it is worth
     repeating because the failure is a decode that succeeds and yields noise.
+
+    ``strict`` (the default) refuses, before any kernel is built, a stream
+    whose structure disagrees with that configuration -- see
+    :func:`validate_bitstream` -- and never reads ``rgb_net.tar`` from the
+    training run. ``strict=False`` is the legacy player: it decodes a residual
+    with missing motion as a key frame, starts mid-group, and falls back to the
+    training directory's colour network.
+
+    ``config_path`` may also be a mapping: the packaged decoder configuration
+    Open4D carries, whose ``render`` near/far and ``cameras`` stand in for the
+    training corpus.
     """
 
     def __init__(
@@ -100,6 +245,7 @@ class BitstreamPlayer:
         group_size: Optional[int] = None,
         device: str = "cuda",
         render_bounds=None,
+        strict: bool = True,
     ) -> None:
         self.path = Path(compression_path).expanduser().resolve()
         self.frames = self._available_frames()
@@ -108,9 +254,35 @@ class BitstreamPlayer:
                 f"{self.path} holds no ReRF bitstream: no header_<frame>.json. "
                 "Encode one with upstream's codec/compress.py."
             )
+        self.strict = bool(strict)
+        self.pca = bool(pca)
+        self.pca_channels = tuple(int(channel) for channel in pca_channels)
+        # Upstream: `group_size = args.group_size if given else args.frame_num`.
+        # Defaulting to the number of frames present plays a single-group
+        # bitstream correctly without having to be told its own structure.
+        self.group_size = int(group_size) if group_size else len(self.frames)
+
+        # Read the configuration before the runtime is activated, so a stream
+        # that cannot be decoded is refused before minutes of kernel builds.
+        env.patch_dependencies()
+        import mmcv
+
+        self.config_path = None if isinstance(config_path, Mapping) else Path(config_path).expanduser().resolve()
+        self.cfg = mmcv.Config(dict(config_path)) if self.config_path is None else mmcv.Config.fromfile(str(self.config_path))
+        datadir = self.cfg.data.get("datadir")
+        # A packaged decoder configuration names no corpus.
+        self.corpus_dir = Path(datadir).expanduser() if datadir else None
+        self.n_channel = int(self.cfg.fine_model_and_render["rgbnet_dim"]) + 1
+        self.voxel_size = int(self.cfg.voxel_size)
+        if self.strict:
+            validate_bitstream(
+                self.path, self.frames, group_size=self.group_size, pca=self.pca,
+                pca_channels=self.pca_channels, n_channel=self.n_channel,
+            )
+        rgb_net = self._rgb_net()
+
         env.activate()
         with env.upstream_cwd():
-            import mmcv
             import torch
             import torch.nn.functional as functional
             from codec import (
@@ -141,31 +313,10 @@ class BitstreamPlayer:
         }
 
         self.device = torch.device(device)
-        self.config_path = None if isinstance(config_path, Mapping) else Path(config_path).expanduser().resolve()
-        self.cfg = mmcv.Config(dict(config_path)) if self.config_path is None else mmcv.Config.fromfile(str(self.config_path))
-        self.corpus_dir = Path(self.cfg.data["datadir"]).expanduser()
-        self.pca = bool(pca)
-        self.pca_channels = tuple(int(channel) for channel in pca_channels)
-
-        self.n_channel = int(self.cfg.fine_model_and_render["rgbnet_dim"]) + 1
-        self.voxel_size = int(self.cfg.voxel_size)
-
-        # Upstream: `group_size = args.group_size if given else args.frame_num`.
-        # Defaulting to the number of frames present plays a single-group
-        # bitstream correctly without having to be told its own structure.
-        self.group_size = int(group_size) if group_size else len(self.frames)
 
         with open(self.path / "model_kwargs.json") as handle:
             self.model_kwargs = json.load(handle)
 
-        # One colour network for the whole video, exactly as the trainer had it:
-        # it is not per frame, and it ships beside the bitstream rather than
-        # inside any frame of it.
-        rgb_net = self.path / "rgb_net.tar"
-        if not rgb_net.is_file():
-            rgb_net = Path(self.cfg.basedir).expanduser() / self.cfg.expname / "rgb_net.tar"
-        if not rgb_net.is_file():
-            raise FileNotFoundError(f"no rgb_net.tar beside {self.path} or in the run dir")
         with env.upstream_cwd():
             container = dvgo_video.DirectVoxGO_Video()
             container.current_frame_id = self.frames[0]
@@ -175,7 +326,14 @@ class BitstreamPlayer:
             )
         self.model.k0.eval()
 
+        if render_bounds is None and "render" in self.cfg:
+            render_bounds = dict(self.cfg.render)
         if render_bounds is None:
+            if self.corpus_dir is None:
+                raise ValueError(
+                    "no render bounds: the configuration carries no render near/far "
+                    "and names no corpus to derive them from"
+                )
             near, far = inward_near_far(self.corpus_dir)
         else:
             near, far = render_bounds["near"], render_bounds["far"]
@@ -191,6 +349,27 @@ class BitstreamPlayer:
             "flip_x": self.cfg.data["flip_x"],
             "flip_y": self.cfg.data["flip_y"],
         }
+
+    def _rgb_net(self) -> Path:
+        """The colour network: one for the whole video, shipped with the stream.
+
+        Upstream's compress.py copies it in beside the bitstream. Strict decoding
+        accepts only that copy; the legacy fallback to the training run is what
+        let a "decoded" stream depend on files a receiver never has.
+        """
+        packaged = self.path / "rgb_net.tar"
+        if packaged.is_file():
+            return packaged
+        if self.strict:
+            raise FileNotFoundError(
+                f"no rgb_net.tar beside the bitstream in {self.path}. It is the shared "
+                "colour network and part of the stream: copy it from the training run "
+                "(upstream's compress.py does), or pass strict=False to read it from there."
+            )
+        training = Path(self.cfg.basedir).expanduser() / self.cfg.expname / "rgb_net.tar"
+        if not training.is_file():
+            raise FileNotFoundError(f"no rgb_net.tar beside {self.path} or in the run dir")
+        return training
 
     # ------------------------------------------------------------- the shape ---
     def _available_frames(self) -> List[int]:
@@ -210,7 +389,17 @@ class BitstreamPlayer:
         return sorted(found)
 
     def cameras(self, frame_index: Optional[int] = None) -> List[Camera]:
-        """The trainer's own viewpoints, which is what renders are scored at."""
+        """The trainer's own viewpoints, which is what renders are scored at.
+
+        A packaged decoder configuration carries them as ``cameras``; otherwise
+        they are read from the training corpus.
+        """
+        if "cameras" in self.cfg:
+            return [packaged_camera(entry) for entry in self.cfg.cameras]
+        if self.corpus_dir is None:
+            raise FileNotFoundError(
+                "the configuration carries no cameras and names no corpus to read them from"
+            )
         return training_cameras(
             self.corpus_dir, self.frames[0] if frame_index is None else frame_index
         )
@@ -279,10 +468,21 @@ class BitstreamPlayer:
 
         deform_mask_path = self.path / ("deform_mask_%d.rerf" % frame_id)
         deform_path = self.path / ("deform_%d.npy" % frame_id)
-        as_key = (
-            key_frame or first
-            or not deform_mask_path.is_file() or not deform_path.is_file()
-        )
+        if self.strict:
+            # Validated when opened: residuals carry motion and the stream starts
+            # at a key frame. Never reinterpret a residual as a key frame -- that
+            # decodes, renders, and shows the wrong scene.
+            as_key = key_frame
+            if not key_frame and former is None:
+                raise BitstreamError(
+                    f"frame {frame_id} is a residual with no decoded predecessor; "
+                    "decoding has to start at its group's key frame"
+                )
+        else:
+            as_key = (
+                key_frame or first
+                or not deform_mask_path.is_file() or not deform_path.is_file()
+            )
         if as_key:
             former = torch.zeros(
                 (mask.size(0), self.n_channel, self.voxel_size ** 3), device=self.device

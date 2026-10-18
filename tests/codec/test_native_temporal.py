@@ -100,9 +100,12 @@ def native_run(tmp_path, codec):
         (root / "model_kwargs.json").write_text('{}')
         (root / "rgb_net.tar").write_bytes(b"opaque shared network")
         for i in (0, 1):
-            headers = [dict(quality=8 - half, size=[1, 2, 8, 8, 8]) for half in range(i + 1)]
+            channels = [13] if i == 0 else [7, 6]
+            headers = [dict(quality=8 - half, size=[1, count, 8, 8, 8])
+                       for half, count in enumerate(channels)]
             (root / f"header_{i}.json").write_text(json.dumps({"headers": headers}))
-            for name in (f"mask_{i}.rerf", f"feature_{i}_8.rerf0", f"feature_{i}_8.rerf1"):
+            for name in [f"mask_{i}.rerf", *[f"feature_{i}_{8-half}.rerf{channel}"
+                         for half, count in enumerate(channels) for channel in range(count)]]:
                 (root / name).write_bytes(b"opaque features")
         for name in ("feature_1_7.rerf0", "feature_1_7.rerf1", "pca_m_1.npy", "deform_1.npy", "deform_mask_1.rerf"):
             (root / name).write_bytes(b"opaque residual dependencies")

@@ -17,7 +17,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from ._files import publish_directory
-from ._research_paths import default_runtime, runtime_checkout
+from ._research_paths import default_runtime, managed_python, runtime_checkout
 
 if TYPE_CHECKING:
     from .native import NativeSequence
@@ -118,7 +118,11 @@ def load_gaussians(path: str | Path) -> GaussianSplats:
             raise
         raise ImportError("Reading splats requires pip install 'open4d[gaussians]'") from exc
 
-    vertex = PlyData.read(Path(path))["vertex"].data
+    return splats_from_ply_vertices(PlyData.read(Path(path))["vertex"].data)
+
+
+def splats_from_ply_vertices(vertex: NDArray) -> GaussianSplats:
+    """Activate a structured array of Graphdeco PLY vertex fields."""
     names = set(vertex.dtype.names or ())
     required = {"x", "y", "z", "opacity"}
     required.update(f"{prefix}_{i}" for prefix, count in
@@ -172,8 +176,9 @@ def _runtime(path: str | Path | None) -> Path:
 
 
 def _python(value: str | Path | None, method: str) -> str:
-    """The method's interpreter: python=, then OPEN4D_<METHOD>_PYTHON, then this one."""
-    return str(value or os.environ.get(f"OPEN4D_{method.upper()}_PYTHON") or sys.executable)
+    """The method's interpreter: python=, OPEN4D_<METHOD>_PYTHON, a registered backend, then this one."""
+    return str(value or os.environ.get(f"OPEN4D_{method.upper()}_PYTHON")
+               or managed_python(method) or sys.executable)
 
 
 def _run(runtime: Path, python: str, arguments: Sequence[str]) -> None:

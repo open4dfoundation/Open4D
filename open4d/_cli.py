@@ -12,6 +12,7 @@ from . import load
 from .codec import CodecError
 from .codec._o4d_format import is_mesh_profile, probe_codec
 from .core import Sequence
+from .data._cli import register as _register_data, run as _run_data
 from .demo import write_demo
 from .io import Open4DError
 from .native import NativeSequence
@@ -58,6 +59,9 @@ def _parser() -> argparse.ArgumentParser:
         prog="open4d", description="Generate, inspect, and view 4D geometry sequences.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    _register_data(commands)
+    from .backends._cli import register as register_backends
+    register_backends(commands)
     demo = commands.add_parser("demo", help="generate a shareable PLY wave animation")
     demo.add_argument(
         "destination", nargs="?", type=Path, default=Path("open4d-demo"),
@@ -260,6 +264,11 @@ def _run(args: argparse.Namespace, source: Path, native: NativeSequence | None) 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "data":
+        return _run_data(args)
+    if args.command == "backend":
+        from .backends._cli import run as run_backend
+        return run_backend(args)
     try:
         if args.command == "demo":
             path = write_demo(args.destination, side=args.side, frames=args.frames, fps=args.fps)

@@ -11,6 +11,11 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from . import dtypes
+from .texture import MeshTexture, _texture
+
+#: Where a custom mesh attribute lives: one row per vertex, per triangle, or per
+#: triangle corner (``3 * triangle_count`` rows in triangle-major order).
+ATTRIBUTE_DOMAINS = ("vertex", "face", "corner")
 
 _RESERVED_ATTRIBUTES = {
     "positions",
@@ -117,6 +122,19 @@ class TriangleMesh:
     mutating that buffer mutates the mesh; one that had to be converted is a
     fresh array and does not. Callers needing a value snapshot should pass
     copies rather than depend on which case they are in.
+
+    Custom ``attributes`` each live in one domain from ``ATTRIBUTE_DOMAINS``:
+    ``"vertex"`` (one row per vertex), ``"face"`` (one row per triangle) or
+    ``"corner"`` (``3 * triangle_count`` rows, triangle-major). Pass
+    ``attribute_domains`` to state it; otherwise it is inferred from the row
+    count, and construction fails when that count fits domains that would read
+    the rows differently (for example equal vertex and triangle counts). A
+    triangle soup whose corner ``c`` is vertex ``c`` reads both ways alike and
+    is inferred as ``"vertex"``.
+    ``attribute_domains`` always holds the resolved domain of every attribute.
+
+    ``texture`` is an owned `MeshTexture` (pixels, color space, sampling and
+    per-triangle material ids); it requires ``texture_coordinates``.
     """
 
     positions: NDArray
@@ -125,6 +143,8 @@ class TriangleMesh:
     normals: NDArray | None = None
     texture_coordinates: NDArray | None = None
     attributes: Mapping[str, NDArray] = field(default_factory=dict)
+    attribute_domains: Mapping[str, str] = field(default_factory=dict)
+    texture: MeshTexture | None = None
 
     def __post_init__(self) -> None:
         positions = _array(self.positions, "positions")
@@ -149,9 +169,18 @@ class TriangleMesh:
         texture_coordinates = self._validate_texture_coordinates(
             self.texture_coordinates, len(positions), len(triangles)
         )
-        attributes = self._validate_attributes(
-            self.attributes, len(positions), len(triangles)
+        attributes, domains = self._validate_attributes(
+            self.attributes, len(positions), triangles, self.attribute_domains
         )
+        texture = _texture(self.texture)
+        if texture is not None:
+            if texture_coordinates is None:
+                raise ValueError("a texture requires texture_coordinates")
+            if texture.material_ids is not None and texture.material_ids.shape != (len(triangles),):
+                raise ValueError(
+                    f"texture material_ids must have shape ({len(triangles)},); "
+                    f"got {texture.material_ids.shape}"
+                )
 
         object.__setattr__(self, "positions", positions)
         object.__setattr__(self, "triangles", triangles)
@@ -159,6 +188,8 @@ class TriangleMesh:
         object.__setattr__(self, "normals", normals)
         object.__setattr__(self, "texture_coordinates", texture_coordinates)
         object.__setattr__(self, "attributes", MappingProxyType(attributes))
+        object.__setattr__(self, "attribute_domains", MappingProxyType(domains))
+        object.__setattr__(self, "texture", texture)
 
     @property
     def representation(self) -> Representation:
@@ -208,26 +239,70 @@ class TriangleMesh:
 
     @staticmethod
     def _validate_attributes(
-        values: Mapping[str, ArrayLike], vertex_count: int, triangle_count: int
-    ) -> dict[str, NDArray]:
+        values: Mapping[str, ArrayLike],
+        vertex_count: int,
+        triangles: NDArray,
+        declared: Mapping[str, str] | None = None,
+    ) -> tuple[dict[str, NDArray], dict[str, str]]:
         if not isinstance(values, Mapping):
             raise TypeError("attributes must be a mapping")
+        declared = {} if declared is None else declared
+        if not isinstance(declared, Mapping):
+            raise TypeError("attribute_domains must be a mapping")
+        unknown = sorted(set(declared) - set(values))
+        if unknown:
+            raise ValueError(f"attribute_domains names unknown attributes: {', '.join(map(repr, unknown))}")
+        triangle_count = len(triangles)
+        counts = {"vertex": vertex_count, "face": triangle_count, "corner": 3 * triangle_count}
+        # In a triangle soup whose corner c is vertex c, a vertex and a corner
+        # reading of the same rows assign every corner the same value.
+        soup = vertex_count == 3 * triangle_count and np.array_equal(
+            triangles.reshape(-1), np.arange(vertex_count)
+        )
         result: dict[str, NDArray] = {}
-        allowed_counts = {vertex_count, triangle_count, triangle_count * 3}
+        domains: dict[str, str] = {}
         for name, value in values.items():
             if not isinstance(name, str) or not name:
                 raise ValueError("attribute names must be non-empty strings")
             if name in _RESERVED_ATTRIBUTES:
                 raise ValueError(f"{name!r} is a reserved attribute name")
             attribute = _array(value, f"attribute {name!r}")
-            if attribute.ndim == 0 or attribute.shape[0] not in allowed_counts:
-                raise ValueError(
-                    f"attribute {name!r} must be vertex-, triangle-, or "
-                    "triangle-corner-aligned"
-                )
+            rows = None if attribute.ndim == 0 else attribute.shape[0]
+            domain = declared.get(name)
+            if domain is not None:
+                if domain not in ATTRIBUTE_DOMAINS:
+                    raise ValueError(
+                        f"attribute {name!r} domain must be one of "
+                        f"{', '.join(ATTRIBUTE_DOMAINS)}; got {domain!r}"
+                    )
+                if rows != counts[domain]:
+                    raise ValueError(
+                        f"{domain} attribute {name!r} must have {counts[domain]} rows; "
+                        f"got shape {attribute.shape}"
+                    )
+            else:
+                matches = [key for key, count in counts.items() if rows == count]
+                if not matches:
+                    raise ValueError(
+                        f"attribute {name!r} must be vertex-, triangle-, or "
+                        "triangle-corner-aligned"
+                    )
+                # An empty attribute carries no values whose meaning could be
+                # misread, so prefer the vertex reading instead of failing; so
+                # does a soup, where the vertex and corner readings coincide.
+                if soup and matches == ["vertex", "corner"]:
+                    matches = ["vertex"]
+                if len(matches) > 1 and rows:
+                    raise ValueError(
+                        f"attribute {name!r} has {rows} rows, which matches the "
+                        f"{' and '.join(matches)} domains of this mesh; pass "
+                        f"attribute_domains={{{name!r}: ...}} to say which it is"
+                    )
+                domain = matches[0]
             _finite(attribute, f"attribute {name!r}")
             result[name] = dtypes.as_attribute(attribute, f"attribute {name!r}")
-        return result
+            domains[name] = domain
+        return result, domains
 
 
 @dataclass(frozen=True, eq=False)

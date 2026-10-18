@@ -133,6 +133,7 @@ def run(args) -> int:
         pca=not args.no_pca,
         pca_channels=tuple(int(c) for c in args.pca_chs.split(",")),
         group_size=args.group_size or None,
+        strict=not args.legacy_decode,
     )
     rungs = (
         {"default": (args.scale, args.quality)} if not args.rungs
@@ -417,6 +418,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--no-pca", action="store_true")
     parser.add_argument("--pca_chs", default="7,13")
     parser.add_argument("--group-size", type=int, default=0)
+    parser.add_argument("--legacy-decode", action="store_true",
+                        help="skip strict bitstream validation and allow the training "
+                             "run's rgb_net.tar (the pre-validation behaviour)")
     return parser.parse_args(argv)
 
 

@@ -438,6 +438,9 @@ def main(argv=None) -> int:
     parser.add_argument("--pca_chs", default="7,13")
     parser.add_argument("--group-size", type=int, default=0)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--legacy-decode", action="store_true",
+                        help="skip strict bitstream validation and allow the training "
+                             "run's rgb_net.tar (the pre-validation behaviour)")
     args = parser.parse_args(argv)
 
     out = Path(args.out).expanduser().resolve()
@@ -450,6 +453,7 @@ def main(argv=None) -> int:
         pca=not args.no_pca,
         pca_channels=[int(c) for c in args.pca_chs.split(",")],
         group_size=args.group_size,
+        strict=not args.legacy_decode,
     )
     export(player, out, name=args.name, scene=args.scene,
            threshold=args.threshold, azimuth=args.azimuth,

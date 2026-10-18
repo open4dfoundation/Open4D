@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import configparser
+import datetime as dt
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -28,6 +29,7 @@ EXPLICIT_REQUIRED_LEDGER_PATHS = (
 )
 ALLOWED_PACKAGES = {
     "open4d",
+    "open4d.backends",
     "open4d.codec",
     "open4d.core",
     "open4d.data",
@@ -127,7 +129,72 @@ def parse_component_ledger(ledger: str) -> dict[str, str]:
     return component_map
 
 
-def release_decision_errors(ledger: str) -> list[str]:
+# Values that name a role or a template field instead of an accountable person.
+PLACEHOLDER_VALUES = {
+    "", "approver", "changeme", "example", "github-login", "login", "maintainer",
+    "n/a", "na", "name", "none", "pending", "placeholder", "tbc", "tbd", "todo",
+    "unassigned", "unknown", "user", "username", "xxx", "your-github-login",
+}
+GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
+# GitHub was founded in 2008; earlier dates are typing errors, not approvals.
+EARLIEST_APPROVAL_DATE = dt.date(2008, 1, 1)
+
+
+def is_placeholder(value: object) -> bool:
+    """Return whether a recorded value is empty, a template or a generic role."""
+    text = str(value).strip().lower().lstrip("@")
+    return (
+        text in PLACEHOLDER_VALUES
+        or any(marker in text for marker in ("example", "tbd", "todo", "placeholder", "<", ">"))
+    )
+
+
+def github_login_errors(value: object, field: str = "approver") -> list[str]:
+    """Validate a GitHub account name rather than a free-form display name."""
+    if not isinstance(value, str) or is_placeholder(value):
+        return [f"{field} must name the approving maintainer's GitHub login, not a placeholder"]
+    if not GITHUB_LOGIN.fullmatch(value.strip().lstrip("@")):
+        return [f"{field} is not a valid GitHub login: {value!r}"]
+    return []
+
+
+def latest_valid_date(now: dt.datetime | None = None) -> dt.date:
+    """Latest calendar date anywhere on Earth (UTC+14) at this instant."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    return (now.astimezone(dt.timezone.utc) + dt.timedelta(hours=14)).date()
+
+
+def approval_date_errors(
+    value: object, field: str = "date", *, now: dt.datetime | None = None
+) -> list[str]:
+    """Require a real calendar date that is neither implausibly old nor future."""
+    if isinstance(value, dt.datetime):
+        return [f"{field} must be a calendar date (YYYY-MM-DD), not a timestamp"]
+    if isinstance(value, str):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()):
+            return [f"{field} must use YYYY-MM-DD: {value!r}"]
+        try:
+            value = dt.date.fromisoformat(value.strip())
+        except ValueError:
+            return [f"{field} is not a real calendar date: {value!r}"]
+    if not isinstance(value, dt.date):
+        return [f"{field} must be a calendar date (YYYY-MM-DD)"]
+    if value > latest_valid_date(now):
+        return [f"{field} is in the future: {value.isoformat()}"]
+    if value < EARLIEST_APPROVAL_DATE:
+        return [f"{field} predates any possible approval: {value.isoformat()}"]
+    return []
+
+
+def ledger_approval(ledger: str) -> tuple[str, str] | None:
+    """Return the ledger's ``(login, date)`` approval line, if one is recorded."""
+    approval = re.search(
+        r"^Maintainer approval: (.+) \(([^)]*)\)\s*$", ledger, re.MULTILINE
+    )
+    return (approval[1].strip().lstrip("@"), approval[2].strip()) if approval else None
+
+
+def release_decision_errors(ledger: str, *, now: dt.datetime | None = None) -> list[str]:
     """Require one explicit release state and recorded approval before clearance."""
     decisions = re.findall(r"^## Release decision: (\w+)\s*$", ledger, re.MULTILINE)
     if len(decisions) != 1 or decisions[0] not in {"blocked", "approved"}:
@@ -138,12 +205,61 @@ def release_decision_errors(ledger: str) -> list[str]:
     if any(line.startswith("|") and re.search(r"\bBLOCK\b", line)
            for line in ledger.splitlines()):
         errors.append("an approved release cannot retain BLOCK entries")
-    approval = re.search(
-        r"^Maintainer approval: (.+) \((\d{4}-\d{2}-\d{2})\)\s*$", ledger, re.MULTILINE
-    )
-    if not approval or approval[1].strip().lower() in {"unassigned", "pending", "none"}:
-        errors.append("an approved release requires Maintainer approval: NAME (YYYY-MM-DD)")
+    approval = ledger_approval(ledger)
+    if not approval:
+        errors.append(
+            "an approved release requires Maintainer approval: @github-login (YYYY-MM-DD)"
+        )
+    else:
+        login, date = approval
+        errors.extend(f"Maintainer approval {error}" for error in
+                      github_login_errors(login, "login") + approval_date_errors(date, now=now))
     return errors
+
+
+def parse_component_rows(ledger: str) -> list[dict[str, object]]:
+    """Return every component-ledger row, including rows without a path cell.
+
+    ``paths`` holds the repository paths a row governs: the backticked path in
+    the first cell, or for descriptive rows such as ``Tracked media`` the
+    backticked paths in the evidence cell (brace lists are expanded).
+    """
+    rows = []
+    in_ledger = False
+    for line in ledger.splitlines():
+        if line.startswith("## Component ledger"):
+            in_ledger = True
+            continue
+        if in_ledger and line.startswith("##"):
+            break
+        if not in_ledger or not line.startswith("|") or line.startswith("| Path"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 4 or set(cells[0]) <= {"-", " "}:
+            continue
+        decision = re.match(r"`?(BLOCK|EXCLUDED|APPROVED)`?(?:;|\s|$)", cells[3])
+        label_path = re.fullmatch(r"`([^`]+)`", cells[0])
+        if label_path:
+            paths = [label_path[1]]
+        else:
+            paths = [expanded for raw in re.findall(r"`([^`]+)`", cells[1])
+                     for expanded in _expand_braces(raw) if "/" in expanded]
+        rows.append({
+            "component": label_path[1] if label_path else cells[0],
+            "paths": paths,
+            "decision": decision[1] if decision else None,
+            "action": cells[3],
+            "reviewer": cells[4] if len(cells) > 4 else "",
+        })
+    return rows
+
+
+def _expand_braces(path: str) -> list[str]:
+    match = re.search(r"\{([^{}]+)\}", path)
+    if not match:
+        return [path]
+    return [expanded for option in match[1].split(",")
+            for expanded in _expand_braces(path[:match.start()] + option.strip() + path[match.end():])]
 
 
 def main() -> int:

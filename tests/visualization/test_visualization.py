@@ -371,6 +371,9 @@ def test_lazy_decode_failure_returns_to_viewer_caller(monkeypatch, prefetch_erro
             self.index = index % 2
             return frames[self.index]
 
+        def metrics(self):
+            return []
+
     def catch_callback_error(*error):
         callback_errors.append(error)
         application.closeAllWindows()

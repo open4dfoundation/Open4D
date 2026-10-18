@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import posixpath
 import sys
 import tarfile
 from pathlib import Path, PurePosixPath
 
-from check_wheel_contents import expected_python_files
+from check_wheel_contents import expected_python_files, expected_data_files
 
 
 ALLOWED_ROOT_FILES = {
@@ -34,13 +35,37 @@ ALLOWED_EGG_INFO = {
 }
 
 
+def unsafe_member_errors(member: tarfile.TarInfo) -> list[str]:
+    """Reject links, special files and names that leave the archive root."""
+    name = member.name
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts or "\\" in name:
+        return [f"unsafe member path: {name}"]
+    if member.issym() or member.islnk():
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(name), member.linkname)) \
+            if member.issym() else posixpath.normpath(member.linkname)
+        root = path.parts[0] if path.parts else ""
+        escapes = (posixpath.isabs(member.linkname) or target == ".."
+                   or target.startswith("../") or target.split("/", 1)[0] != root)
+        kind = "symlink" if member.issym() else "hard link"
+        where = "escaping the source tree" if escapes else "inside the source tree"
+        return [f"{kind} {where} is not allowed: {name} -> {member.linkname}"]
+    if not (member.isfile() or member.isdir()):
+        return [f"special file is not allowed: {name}"]
+    return []
+
+
 def check_sdist(path: Path) -> list[str]:
     if not path.is_file():
         return [f"source distribution does not exist: {path}"]
     errors: list[str] = []
     expected_python = expected_python_files()
     with tarfile.open(path, "r:gz") as archive:
-        files = [member for member in archive.getmembers() if member.isfile()]
+        members = archive.getmembers()
+        for member in members:
+            errors.extend(unsafe_member_errors(member))
+        files = [member for member in members
+                 if member.isfile() and not unsafe_member_errors(member)]
         raw_names = [member.name for member in files]
         if len(raw_names) != len(set(raw_names)):
             seen = set()
@@ -77,7 +102,7 @@ def check_sdist(path: Path) -> list[str]:
 
     for name in stripped - python_files:
         parts = PurePosixPath(name).parts
-        if name in ALLOWED_ROOT_FILES:
+        if name in ALLOWED_ROOT_FILES or name in expected_data_files():
             continue
         if len(parts) == 2 and parts[0].endswith(".egg-info") and parts[1] in ALLOWED_EGG_INFO:
             continue

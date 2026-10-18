@@ -6,6 +6,7 @@ import numpy as np
 
 from ._qt import _application, _guarded_view, _mesh_shader, _qt
 from ._frames import bounds, vertex_colors
+from ._splats import splat_item
 
 
 def _textured_item(gl):
@@ -41,6 +42,7 @@ def _textured_item(gl):
             self.set_texture_data(frame, pixels)
 
         def set_texture_data(self, frame, pixels):
+            self.sampling = frame.texture.images[0] if frame.texture is not None else None
             # Expand corners to preserve UV seams instead of averaging them.
             uv = frame.texture_coordinates
             corners = uv[frame.triangles] if uv.ndim == 2 else uv
@@ -71,10 +73,13 @@ def _textured_item(gl):
                     GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
                     GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, format_, pixels.shape[1],
                                     pixels.shape[0], 0, format_, GL.GL_UNSIGNED_BYTE, pixels)
-                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
-                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
-                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
-                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+                    filtering = GL.GL_NEAREST if self.sampling is not None and self.sampling.filter == "nearest" else GL.GL_LINEAR
+                    wrapping = {"repeat": GL.GL_REPEAT, "clamp": GL.GL_CLAMP_TO_EDGE,
+                                "mirror": GL.GL_MIRRORED_REPEAT}[self.sampling.wrap if self.sampling is not None else "repeat"]
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, filtering)
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, filtering)
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, wrapping)
+                    GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, wrapping)
                     self.texture_dirty = False
                 # The sampler defaults to unit zero. ShaderProgram sets the MVP.
                 super().paint()
@@ -178,6 +183,10 @@ class LiveWindow:
         if frame.is_mesh:
             return self.gl.GLMeshItem(meshdata=self._mesh_data(frame), shader=_mesh_shader(),
                                       smooth=False, drawEdges=self.options.wireframe)
+        if frame.covariances is not None:
+            # Filled by set_geometry once the item is in its view, so neural
+            # colors see the camera the frame is shown from.
+            return splat_item(self.gl)(point_size=self.options.point_size)
         item = self.gl.GLScatterPlotItem(pos=frame.positions, color=self._colors(frame),
                                          size=self.options.point_size, pxMode=True)
         item.setGLOptions("translucent")
@@ -192,14 +201,15 @@ class LiveWindow:
 
     def set_geometry(self, key, frame, texture, *, reset_camera):
         previous = self.items.get(key)
-        kind = "texture" if texture is not None else "mesh" if frame.is_mesh else "points"
+        kind = ("texture" if texture is not None else "mesh" if frame.is_mesh
+                else "splats" if frame.covariances is not None else "points")
         if previous is not None and previous[3] == kind:
             item = previous[0]
             if kind == "texture":
                 item.set_texture_data(frame, texture)
             elif kind == "mesh":
                 item.setMeshData(meshdata=self._mesh_data(frame))
-            else:
+            elif kind == "points":
                 item.setData(pos=frame.positions, color=self._colors(frame), size=self.options.point_size)
         else:
             if previous is not None:
@@ -210,11 +220,14 @@ class LiveWindow:
             item = self._make_item(frame, texture)
             self.views[key[0]].addItem(item)
         self.items[key] = item, frame, texture, kind
+        if reset_camera:
+            self.reset_camera()
+        if kind == "splats":
+            item.set_frame(frame, base_color=self.options.color,
+                           point_size=self.options.point_size)
         item.setVisible(bool(len(frame.positions)))
         self.panes[True].setVisible(any(k[0] for k in self.items))
         self._refresh_labels()
-        if reset_camera:
-            self.reset_camera()
         self.render()
 
     def reset_camera(self):
@@ -234,13 +247,16 @@ class LiveWindow:
     def _refresh_labels(self):
         for baseline, label in self.labels.items():
             heading = "Baseline" if baseline else "Current"
-            frames = [record[1] for key, record in self.items.items() if key[0] == baseline]
+            records = [record for key, record in self.items.items() if key[0] == baseline]
+            frames = [record[1] for record in records]
             details = []
             if frames and not self.options.no_metrics:
                 details.append(f"frame #{frames[-1].frame_index}  t {frames[-1].timestamp:.3f}s")
-            if any(frame.representation == "gaussians" for frame in frames):
-                details.append("Gaussian centers: point preview, not splat rendering")
-            label.setText("  |  ".join([heading, *details]))
+            details.extend(sorted({record[0].status for record in records
+                                   if record[3] == "splats"}))
+            text = "  |  ".join([heading, *details])
+            if label.text() != text:
+                label.setText(text)
 
     def _remove_item(self, key):
         item = self.items[key][0]
@@ -283,6 +299,9 @@ class LiveWindow:
 
     def poll_events(self):
         self.application.processEvents()
+        if self.is_open:
+            # A splat item learns whether it fell back to points on first paint.
+            self._refresh_labels()
         return self.is_open
 
     def render(self):
@@ -293,6 +312,8 @@ class LiveWindow:
         self.render()
         self.application.processEvents()
         image = self.views[baseline].grabFramebuffer()
+        self.views[baseline].check_context()
+        self._refresh_labels()
         if image.isNull():
             raise RuntimeError("Qt could not create an OpenGL framebuffer; use a desktop display")
         image = image.convertToFormat(image.Format.Format_RGB888)
