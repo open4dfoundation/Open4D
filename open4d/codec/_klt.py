@@ -186,7 +186,7 @@ class KLTCodec:
             } for ordinal, frame in enumerate(sequence)],
         }
         backend = _backend()
-        torch = import_module("torch")
+        torch = import_module("torch") if stage_hook is not None else None
         stages = Stages(stage_hook, torch, getattr(backend, "device", None))
         with tempfile.TemporaryDirectory(prefix="open4d-klt-") as directory:
             work = Path(directory)

@@ -478,6 +478,10 @@ def test_klt_artifact_fresh_decode_uses_saved_payload(tmp_path, monkeypatch, req
         torch = pytest.importorskip("torch")
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
         monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    else:
+        def no_instrumentation_import(name):
+            raise AssertionError(f"disabled instrumentation imported {name}")
+        monkeypatch.setattr(implementation, "import_module", no_instrumentation_import)
     monkeypatch.setattr(implementation, "_backend", lambda: SimpleNamespace(
         run_compression=compress, decode_compressed=decompress,
     ))
