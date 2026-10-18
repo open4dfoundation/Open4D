@@ -43,3 +43,20 @@ def test_incomplete_transfer_keeps_partial_and_rejects_wrong_hash(tmp_path, monk
     with pytest.raises(ValueError, match="SHA-256"):
         _transfer.fetch("https://example.org/data", partial, size=20, sha256="a" * 64)
     assert not partial.exists()
+
+
+def test_project_site_requires_approved_bytes_and_matching_origin():
+    record = _catalog.find(_samples.MESH_ID)
+    record["hosting"] = {"status": "open4d-hosted", "provider": "project-site",
+        "repository": "open4dfoundation/open4dfoundation.github.io",
+        "base_url": "https://open4dfoundation.github.io"}
+    record["files"][0]["url"] = "https://open4dfoundation.github.io/assets/samples/sample.tar"
+    document = {"schema": _catalog.SCHEMA, "catalog_version": "1.0.0", "assets": [record]}
+    assert any("redistribution is approved" in error for error in _catalog.validate_catalog(document))
+    # Approval is a test fixture only; the shipped records remain pending review.
+    record["redistribution"]["status"] = "approved"
+    assert not _catalog.validate_catalog(document)
+    record["files"][0]["url"] = "https://example.org/sample.tar"
+    assert any("outside hosting.base_url" in error for error in _catalog.validate_catalog(document))
+    record["hosting"].pop("base_url")
+    assert any("hosting.base_url" in error for error in _catalog.validate_catalog(document))

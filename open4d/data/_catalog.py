@@ -295,10 +295,12 @@ def _check_record(errors, item, index):
     if status == "open4d-hosted" and review.get("status") != "approved":
         errors.append(f"{where}: Open4D may host only assets whose redistribution is approved")
     if status in ("open4d-hosted", "pending-upload"):
-        if hosting.get("provider") not in ("huggingface", "r2"):
-            errors.append(f"{where}: hosting.provider must be huggingface or r2")
+        if hosting.get("provider") not in ("huggingface", "r2", "project-site"):
+            errors.append(f"{where}: hosting.provider must be huggingface, r2 or project-site")
         if not _text(hosting.get("repository")):
             errors.append(f"{where}: hosting.repository is required")
+        if hosting.get("provider") == "project-site":
+            _url(errors, f"{where}: hosting.base_url", hosting.get("base_url"))
     if status == "manual-acquisition":
         _url(errors, f"{where}: hosting.acquisition_url", hosting.get("acquisition_url"))
         if not _text(hosting.get("instructions")):
@@ -326,6 +328,18 @@ def _check_record(errors, item, index):
             errors.append(f"{where}: file names must be unique")
         for number, entry in enumerate(files):
             _check_file(errors, f"{where}: files[{number}]", entry, status)
+        if status == "open4d-hosted" and hosting.get("provider") == "project-site":
+            base = hosting.get("base_url")
+            if isinstance(base, str):
+                for entry in files:
+                    if not isinstance(entry, dict):
+                        continue
+                    parts = entry.get("parts")
+                    parts = parts if isinstance(parts, list) else []
+                    urls = [entry.get("url")] + [part.get("url") for part in parts if isinstance(part, dict)]
+                    for url in urls:
+                        if isinstance(url, str) and not url.startswith(base.rstrip("/") + "/"):
+                            errors.append(f"{where}: file URL is outside hosting.base_url")
         if status == "open4d-hosted" and hosting.get("provider") == "huggingface":
             revision = hosting.get("revision")
             if not (isinstance(revision, str) and _COMMIT.fullmatch(revision)):
