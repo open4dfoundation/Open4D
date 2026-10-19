@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import open4d
-from open4d.codec._npz import NumPyZipCodec
+from open4d.codecs._npz import NumPyZipCodec
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 
 pytestmark = pytest.mark.cpu

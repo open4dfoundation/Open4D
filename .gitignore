@@ -48,27 +48,27 @@ benchmark_app/archives/
 # Codec datasets, training runs, and generated reconstructions
 # Existing tracked fixtures are unaffected.
 4d_files/
-codecs/*/datasets/
-codecs/*/outputs/
-codecs/*/experiments/
-codecs/*/checkpoints/
-codecs/*/logs/
-codecs/*/data/bench_*/
-codecs/tvmc/arap-volume-tracking/data/*/
-codecs/tsmc/arap-volume-tracking/data/*/
+open4d/codecs/*/source/datasets/
+open4d/codecs/*/source/outputs/
+open4d/codecs/*/source/experiments/
+open4d/codecs/*/source/checkpoints/
+open4d/codecs/*/source/logs/
+open4d/codecs/*/source/data/bench_*/
+open4d/codecs/tvmc/source/arap-volume-tracking/data/*/
+open4d/codecs/tsmc/source/arap-volume-tracking/data/*/
 
 # Reconstruction datasets and outputs
-codecs/*/data/
-codecs/*/datasets/
-codecs/*/output/
-codecs/*/outputs/
-codecs/*/logs/
-codecs/*/checkpoints/
+open4d/codecs/*/source/data/
+open4d/codecs/*/source/datasets/
+open4d/codecs/*/source/output/
+open4d/codecs/*/source/outputs/
+open4d/codecs/*/source/logs/
+open4d/codecs/*/source/checkpoints/
 # Submodules use their own ignore rules.
 
 # ARAP volume tracker caches
-codecs/*/data/*/meshes/*vg_*.bin
-codecs/*/data/*/meshes/*pc_*.bin
+open4d/codecs/*/source/data/*/meshes/*vg_*.bin
+open4d/codecs/*/source/data/*/meshes/*pc_*.bin
 
 # Common generated model artifacts
 *.ckpt
@@ -77,12 +77,12 @@ codecs/*/data/*/meshes/*pc_*.bin
 *.pth
 *.safetensors
 # 3DGStream's flame_steak scene requires these shipped weights.
-!codecs/3dgstream/ntc/*.pth
+!open4d/codecs/3dgstream/source/ntc/*.pth
 
 # Basketball comparison app generated render assets (frames/videos/heatmaps)
 basketball_comparison_app/assets/
 basketball_comparison_app/outputs/
 
 # QNDF-INT8 local setup symlinks (point into the sibling QNDF codec on this host)
-codecs/qndf_int8/experiments
-codecs/qndf_int8/objs_original
+open4d/codecs/qndf_int8/source/experiments
+open4d/codecs/qndf_int8/source/objs_original

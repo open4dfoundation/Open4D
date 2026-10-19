@@ -20,8 +20,8 @@ pytestmark = pytest.mark.cpu
 
 def test_gitmodule_paths_are_parsed_from_configuration_not_a_manual_list():
     gitmodules = """
-[submodule "codecs/faster_vdmc"]
-    path = codecs/faster_vdmc
+[submodule "open4d/codecs/faster_vdmc/source"]
+    path = open4d/codecs/faster_vdmc/source
     url = https://example.invalid/faster-vdmc.git
 [submodule "vendor/tool"]
     path = vendor/tool
@@ -29,19 +29,20 @@ def test_gitmodule_paths_are_parsed_from_configuration_not_a_manual_list():
 """
 
     assert parse_gitmodule_paths(gitmodules) == {
-        "codecs/faster_vdmc",
+        "open4d/codecs/faster_vdmc/source",
         "vendor/tool",
     }
 
 
 def test_component_discovery_covers_new_directories_and_submodules(tmp_path: Path):
-    (tmp_path / "codecs/existing").mkdir(parents=True)
+    (tmp_path / "open4d/codecs/existing/source").mkdir(parents=True)
+    (tmp_path / "open4d/codecs/_backends").mkdir(parents=True)
     (tmp_path / "open4d/reconstruction/capture").mkdir(parents=True)
     (tmp_path / "integrations/unity").mkdir(parents=True)
     (tmp_path / ".gitmodules").write_text(
         """
-[submodule "codecs/faster_vdmc"]
-    path = codecs/faster_vdmc
+[submodule "open4d/codecs/faster_vdmc/source"]
+    path = open4d/codecs/faster_vdmc/source
     url = https://example.invalid/faster-vdmc.git
 [submodule "vendor/tool"]
     path = vendor/tool
@@ -52,19 +53,19 @@ def test_component_discovery_covers_new_directories_and_submodules(tmp_path: Pat
 
     assert discover_required_ledger_paths(tmp_path) == {
         *EXPLICIT_REQUIRED_LEDGER_PATHS,
-        "codecs/existing",
-        "codecs/faster_vdmc",
+        "open4d/codecs/existing/source",
+        "open4d/codecs/faster_vdmc/source",
         "open4d/reconstruction/capture",
         "vendor/tool",
     }
 
 
 def test_nested_submodules_are_covered_by_their_top_level_component(tmp_path: Path):
-    (tmp_path / "codecs/qndf").mkdir(parents=True)
+    (tmp_path / "open4d/codecs/qndf/source").mkdir(parents=True)
     (tmp_path / ".gitmodules").write_text(
         """
-[submodule "codecs/qndf/ssp_remesh/libigl"]
-    path = codecs/qndf/ssp_remesh/libigl
+[submodule "open4d/codecs/qndf/source/ssp_remesh/libigl"]
+    path = open4d/codecs/qndf/source/ssp_remesh/libigl
     url = https://example.invalid/libigl.git
 """,
         encoding="utf-8",
@@ -72,30 +73,31 @@ def test_nested_submodules_are_covered_by_their_top_level_component(tmp_path: Pa
 
     assert discover_required_ledger_paths(tmp_path) == {
         *EXPLICIT_REQUIRED_LEDGER_PATHS,
-        "codecs/qndf",
+        "open4d/codecs/qndf/source",
     }
 
 
 def test_component_discovery_ignores_generated_and_hidden_directories(tmp_path: Path):
-    (tmp_path / "codecs/qndf").mkdir(parents=True)
-    (tmp_path / "codecs/__pycache__").mkdir()
-    (tmp_path / "codecs/.pytest_cache").mkdir()
+    (tmp_path / "open4d/codecs/qndf/source").mkdir(parents=True)
+    (tmp_path / "open4d/codecs/__pycache__").mkdir()
+    (tmp_path / "open4d/codecs/.pytest_cache").mkdir()
+    (tmp_path / "open4d/reconstruction/__pycache__").mkdir(parents=True)
 
     assert discover_required_ledger_paths(tmp_path) == {
         *EXPLICIT_REQUIRED_LEDGER_PATHS,
-        "codecs/qndf",
+        "open4d/codecs/qndf/source",
     }
 
 
 def test_an_unledgered_discovered_component_fails_coverage():
     required = {
-        "codecs/draco",
-        "codecs/faster_vdmc",
+        "open4d/codecs/draco/source",
+        "open4d/codecs/faster_vdmc/source",
     }
-    ledger = {"codecs/draco": "EXCLUDED"}
+    ledger = {"open4d/codecs/draco/source": "EXCLUDED"}
 
     assert uncovered_component_paths(required, ledger) == {
-        "codecs/faster_vdmc"
+        "open4d/codecs/faster_vdmc/source"
     }
 
 

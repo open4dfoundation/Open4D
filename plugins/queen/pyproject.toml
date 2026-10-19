@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"queen" = "open4d.codec._native_temporal:QUEEN_CODEC"
+"queen" = "open4d.codecs.queen:QUEEN_CODEC"
 
 [project.entry-points."open4d.reconstruction"]
 "queen" = "open4d.reconstruction._registry:queen_reconstruction"

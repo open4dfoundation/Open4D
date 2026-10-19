@@ -9,7 +9,7 @@ name: Publish
 #    exclusion evidence as run artifacts for the maintainer's review.
 # 2. Stage `pypi` (manual) or a published GitHub release promotes the SAME files
 #    to PyPI without rebuilding. It requires `.github/release-approval.toml`
-#    naming that successful run and every file's digest; see THIRD_PARTY.md.
+#    naming that successful run and every file's digest; see docs/THIRD_PARTY.md.
 #
 # Before the first run: create the GitHub environments `testpypi` and `pypi`
 # with required reviewers, and register this workflow (`publish.yml`) as a

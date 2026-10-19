@@ -282,7 +282,7 @@ def test_3dgstream_frame_with_no_second_stage_gaussians(tmp_path):
 
 def test_native_render_commands_do_not_call_destructive_extractor(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "streamer", None)
-    root = ROOT / "codecs/gs_tools"
+    root = ROOT / "open4d/reconstruction/gs_tools"
     monkeypatch.syspath_prepend(str(root))
     try:
         base = importlib.import_module("gs_tools.methods.base")
@@ -303,14 +303,14 @@ def test_native_render_commands_do_not_call_destructive_extractor(monkeypatch, t
 def test_gs_tools_default_configs_match_the_runtime(monkeypatch, tmp_path):
     yaml = pytest.importorskip("yaml")
     monkeypatch.setitem(sys.modules, "streamer", None)
-    root = ROOT / "codecs/gs_tools"
+    root = ROOT / "open4d/reconstruction/gs_tools"
     monkeypatch.syspath_prepend(str(root))
     try:
         base = importlib.import_module("gs_tools.methods.base")
         queen = importlib.import_module("gs_tools.methods.queen")
         gstream = importlib.import_module("gs_tools.methods.gstream")
         spec = base.RunSpec(tmp_path, tmp_path / "out")
-        upstream = yaml.safe_load((root.parent / "queen" / "configs" / "dynerf.yaml").read_text())
+        upstream = yaml.safe_load((ROOT / "open4d/codecs/queen/source/configs/dynerf.yaml").read_text())
         queen._write_config(spec, None)
         derived = yaml.safe_load((spec.run_dir / queen.DEFAULT_CONFIG_NAME).read_text())
         assert derived["model_params"]["depth_init"] is False
@@ -547,7 +547,7 @@ def test_real_vega_round_trip(tmp_path):
 
 def test_public_encode_decode_dispatch_to_vega(tmp_path, monkeypatch, registered_research_codecs):
     import open4d
-    from open4d.codec import inspect_o4d
+    from open4d.codecs import inspect_o4d
     from open4d.native import NativeSequence
 
     frames = [splats(), splats()]

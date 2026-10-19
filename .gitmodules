@@ -1,17 +1,17 @@
 [submodule "open4d/codecs/tvmc/draco"]
-	path = codecs/tvmc/draco
+	path = open4d/codecs/tvmc/source/draco
 	url = https://github.com/google/draco.git
 [submodule "open4d/codecs/tsmc/draco"]
-	path = codecs/tsmc/draco
+	path = open4d/codecs/tsmc/source/draco
 	url = https://github.com/google/draco.git
 [submodule "open4d/codecs/tsmc/third_party/sam3"]
-	path = codecs/tsmc/third_party/sam3
+	path = open4d/codecs/tsmc/source/third_party/sam3
 	url = https://github.com/facebookresearch/sam3.git
 [submodule "open4d/codecs/draco/draco"]
-	path = codecs/draco/draco
+	path = open4d/codecs/draco/source/draco
 	url = https://github.com/google/draco.git
 [submodule "open4d/codecs/vdmc"]
-	path = codecs/vdmc
+	path = open4d/codecs/vdmc/source
 	url = https://github.com/MPEGGroup/mpeg-vdmc-tm.git
 # Pinned to v2.3.0, not to a newer release. `ssp_remesh/cmake/FindLIBIGL.cmake`
 # ends with `include(libigl)` and the target links `igl::opengl_glfw`; libigl
@@ -19,9 +19,9 @@
 # FATAL_ERROR and renamed that target to `igl::glfw`. v2.3.0 is the last release
 # the vendored build script speaks to.
 [submodule "open4d/codecs/qndf/ssp_remesh/libigl"]
-	path = codecs/qndf/ssp_remesh/libigl
+	path = open4d/codecs/qndf/source/ssp_remesh/libigl
 	url = https://github.com/libigl/libigl.git
 [submodule "open4d/codecs/faster_vdmc"]
-	path = codecs/faster_vdmc
+	path = open4d/codecs/faster_vdmc/source
 	url = https://github.com/cicm4/mpeg-vdmc-tm.git
 	branch = faster_vdmc

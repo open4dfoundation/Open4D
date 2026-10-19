@@ -171,7 +171,7 @@ def _runtime(path: str | Path | None) -> Path:
             default_runtime("gs_tools")).resolve()
     if not (root / "gs_tools" / "cli.py").is_file():
         raise FileNotFoundError(missing_runtime(
-            "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "codecs/gs_tools"))
+            "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "open4d/reconstruction/gs_tools"))
     return root
 
 
@@ -477,7 +477,7 @@ def _vega_runtime(path: str | Path | None) -> Path:
 
 def _check_vega_runtime(root: Path) -> None:
     if not (root / "vega" / "encoder.py").is_file():
-        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "codecs/vega"))
+        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "open4d/codecs/vega/source"))
 
 
 def _vega_command(runtime: Path, python: str, request: dict, work: Path) -> None:
@@ -624,40 +624,3 @@ def decode_gaussians(
     if not (source / "manifest.json").is_file() or not (source / "color_model.pt").is_file():
         raise FileNotFoundError(f"No native Vega bitstream at {source}")
     return VegaRun(source, _vega_runtime(runtime), _python(python, "vega")).decode()
-
-
-class _VegaCodec:
-    id = "vega"
-    suffixes = (".o4d",)
-    representation = "gaussian_splats"
-    backend = "research-subprocess"
-    lossless = False
-    preserves = ("positions", "scales", "rotations", "opacities", "neural_appearance")
-
-    def can_decode(self, source):
-        from .codec._o4d_format import contains_codec
-        return contains_codec(source, self.id)
-
-    def encode(self, sequence, destination: Path, **options) -> Path:
-        from .codec._metadata import require_o4d_destination
-        from .native import NativeSequence, import_native, save_native
-        from .codec._native_temporal import encode_native
-        destination = require_o4d_destination(destination)
-        if isinstance(sequence, (NativeSequence, VegaRun, str, os.PathLike)):
-            return encode_native(sequence, destination, codec="vega", **options)
-        overwrite = options.pop("overwrite", False)
-        if destination.exists() and not overwrite:
-            raise FileExistsError(destination)
-        timeline = {key: options.pop(key) for key in ("fps", "timestamps", "frame_indices", "metadata", "frame_metadata") if key in options}
-        with tempfile.TemporaryDirectory(prefix="open4d-vega-encode-") as folder:
-            encoded = encode_gaussians(sequence, Path(folder) / "native", **options)
-            with import_native(encoded, **timeline) as native:
-                return save_native(native, destination, overwrite=overwrite)
-
-    def decode(self, source: Path, **options) -> NativeSequence:
-        """Open the owned native state; call ``.decode()`` to evaluate frames."""
-        from .codec._native_temporal import NativeTemporalCodec
-        return NativeTemporalCodec("vega").decode(source, **options)
-
-
-VEGA_CODEC = _VegaCodec()

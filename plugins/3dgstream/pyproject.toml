@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"3dgstream" = "open4d.codec._native_temporal:GSTREAM_CODEC"
+"3dgstream" = "open4d.codecs.queen:GSTREAM_CODEC"
 
 [project.entry-points."open4d.reconstruction"]
 "3dgstream" = "open4d.reconstruction._registry:gstream_reconstruction"

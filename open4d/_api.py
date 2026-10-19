@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import warnings
 
-from .codec import Codec, available_codecs, decode_sequence, encode_sequence
+from .codecs import Codec, available_codecs, decode_sequence, encode_sequence
 from .core import Sequence
 from .gaussians import NeuralGaussianFrame
 from .io import open_sequence, write_sequence
@@ -186,7 +186,7 @@ def reconstruct(source, output=None, *, method="rgbd", codec=None,
             if destination.suffix.lower() != ".o4d" and codec is not None:
                 raise TypeError("codec applies only to a .o4d destination")
             if destination.suffix.lower() == ".o4d":
-                from .codec._api import _codec
+                from .codecs._api import _codec
                 _codec(codec or "npz", destination)
             else:
                 from .io._usd import _pxr

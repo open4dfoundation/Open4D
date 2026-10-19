@@ -25,7 +25,7 @@ def metadata_wheel(tmp_path, *, implementation=False, dependency="open4d<0.4,>=0
         for name in ("WHEEL", "RECORD", "top_level.txt"):
             archive.writestr(f"{root}/{name}", "")
         archive.writestr(f"{root}/METADATA", metadata)
-        archive.writestr(f"{root}/entry_points.txt", "[open4d.codecs]\nklt = open4d.codec._klt:KLT_CODEC\n")
+        archive.writestr(f"{root}/entry_points.txt", "[open4d.codecs]\nklt = open4d.codecs.klt:KLT_CODEC\n")
         archive.writestr(f"{root}/licenses/LICENSE", (PROJECT / "LICENSE").read_bytes())
         if implementation:
             archive.writestr("research/checkpoint.pt", b"restricted fixture")

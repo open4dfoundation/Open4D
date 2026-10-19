@@ -13,10 +13,10 @@ import tracemalloc
 import numpy as np
 
 from open4d import Frame, MemoryFrameProvider, Sequence, TriangleMesh
-from open4d.codec import available_codecs, decode_sequence, encode_sequence
-from open4d.codec._npz import REFERENCE_CODECS
-from open4d.codec._draco import DRACO_CODEC
-from open4d.codec._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC
+from open4d.codecs import available_codecs, decode_sequence, encode_sequence
+from open4d.codecs._npz import REFERENCE_CODECS
+from open4d.codecs.draco import DRACO_CODEC
+from open4d.codecs._temporal import TEMPORAL_DELTA_CODEC, TEMPORAL_PCA_CODEC
 from open4d.demo import mesh_sequence
 from open4d.io import open_sequence
 

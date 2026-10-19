@@ -7,7 +7,7 @@ representation and research backends.
 ## Install
 
 The PyPI release is being prepared. Until the
-[release ledger](https://github.com/open4dfoundation/Open4D/blob/main/THIRD_PARTY.md)
+[release ledger](https://github.com/open4dfoundation/Open4D/blob/main/docs/THIRD_PARTY.md)
 is cleared, install a source checkout with `python -m pip install -e .`.
 After publication:
 
@@ -139,12 +139,12 @@ Short `.o4d` examples:
 | --- | --- | --- | --- |
 | `vdmc` | Mesh sequence | `.o4d` | Build the V-DMC submodule and configure its encoder and decoder |
 | `faster_vdmc` | Mesh sequence | `.o4d` | Build the faster V-DMC submodule and configure its encoder and decoder |
-| `tvmc` | Mesh sequence | `.o4d` | [TVMC setup](https://github.com/open4dfoundation/Open4D/blob/main/codecs/tvmc/README.md) |
-| `tsmc` | Mesh sequence | `.o4d` | [TSMC setup](https://github.com/open4dfoundation/Open4D/blob/main/codecs/tsmc/README.md) |
+| `tvmc` | Mesh sequence | `.o4d` | [TVMC setup](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/tvmc/source/README.md) |
+| `tsmc` | Mesh sequence | `.o4d` | [TSMC setup](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/tsmc/source/README.md) |
 | `klt` | Mesh sequence converted to TSDF volumes | `.o4d` | Research source and `.[klt]` |
 | `n4mc` | Mesh sequence converted to TSDF volumes | `.o4d` | Research source and `.[n4mc]` |
 | `qndf`, `qndf-int8` | Mesh frames | `.o4d` | Research source and `.[qndf]` |
-| `vega` | Gaussian splat frames or native run | `.o4d` | [Vega CUDA environment](https://github.com/open4dfoundation/Open4D/blob/main/codecs/vega/README.md) |
+| `vega` | Gaussian splat frames or native run | `.o4d` | [Vega CUDA environment](https://github.com/open4dfoundation/Open4D/blob/main/open4d/codecs/vega/source/README.md) |
 | `queen`, `3dgstream`, `rerf` | Native temporal research output | `.o4d`, with native USDC interchange | Method-specific CUDA runtime for evaluation |
 
 All twelve public codecs write standalone `.o4d` files whose profile identifies
@@ -351,7 +351,7 @@ native group per run and rejects output requiring several color models.
 It does not replace the learned colors with invented SH coefficients.
 
 QUEEN and 3DGStream reconstruct splats from calibrated camera images. After
-[setting up their runtime](https://github.com/open4dfoundation/Open4D/blob/main/codecs/gs_tools/README.md):
+[setting up their runtime](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/gs_tools/README.md):
 
 ```python
 run = open4d.reconstruct("my_scene", "queen_output", method="queen")
@@ -417,7 +417,7 @@ QUEEN's depth initialisation also fills uncovered black backgrounds with points;
   error between sequences or paths with the `.[metrics]` extra; see
   [comparing sequences](https://github.com/open4dfoundation/Open4D/blob/main/docs/api.md#comparing-sequences).
 - [Viewer examples](https://github.com/open4dfoundation/Open4D/blob/main/examples/visualization/README.md) include GIF export and comparisons.
-- [Contributor setup and tests](https://github.com/open4dfoundation/Open4D/blob/main/CONTRIBUTING.md) cover optional dependencies and packaging.
+- [Contributor setup and tests](https://github.com/open4dfoundation/Open4D/blob/main/docs/CONTRIBUTING.md) cover optional dependencies and packaging.
 
 Publication is still blocked by the unresolved component rights
-in [THIRD_PARTY.md](https://github.com/open4dfoundation/Open4D/blob/main/THIRD_PARTY.md); preparing the package does not resolve them.
+in [THIRD_PARTY.md](https://github.com/open4dfoundation/Open4D/blob/main/docs/THIRD_PARTY.md); preparing the package does not resolve them.

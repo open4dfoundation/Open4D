@@ -110,19 +110,19 @@ the Draco baseline codec's own, plus TSMC's and TVMC's — with:
 ## One Python dependency set for the codecs
 
 The supported baseline for codec Python stages is described by
-[`environment.yml`](../environment.yml) at the repository root:
+[`open4d/codecs/environment.yml`](../open4d/codecs/environment.yml), next to the codecs:
 
 ```bash
-conda env create -f environment.yml
+conda env create -f open4d/codecs/environment.yml
 conda activate open4d
 pip install -e .
 ```
 
 The Python set is Python 3.12, NumPy 1.26.4, Open3D 0.19, and PyTorch 2.7.0.
 Native projects use the .NET 10 SDK. Python pins live in
-[`requirements-codecs.txt`](../requirements-codecs.txt), which `environment.yml`
+[`open4d/codecs/requirements-codecs.txt`](../open4d/codecs/requirements-codecs.txt), which `environment.yml`
 installs; it lists direct dependencies only, so inside an existing Python 3.12
-environment `pip install -r requirements-codecs.txt` is equivalent.
+environment `pip install -r open4d/codecs/requirements-codecs.txt` is equivalent.
 
 Codec-local setup scripts may create a convenience virtual environment, but
 they must use these same Python and package pins rather than defining a second
@@ -139,7 +139,7 @@ Projects target `net10.0`. If an older `/usr/lib/dotnet` precedes `~/.dotnet` on
 Some codecs additionally need compiled extensions that pip cannot resolve from a
 version number alone, because each is built against one exact PyTorch and CUDA
 build. Those are optional and separate, with install commands in
-[`requirements-gpu.txt`](../requirements-gpu.txt):
+[`open4d/codecs/requirements-gpu.txt`](../open4d/codecs/requirements-gpu.txt):
 
 | Extra | Needed by |
 |---|---|
@@ -152,15 +152,15 @@ build. Those are optional and separate, with install commands in
 
 | Module | Adds |
 |---|---|
-| `codecs/tvmc` | .NET 10 SDK, CMake; Homebrew macOS or Ubuntu |
-| `codecs/tsmc` | .NET 10 SDK, SAM3, `cupy`; Ubuntu 24.04, tested against Meta Quest 3. `convert_to_std_obj.py` runs inside Blender, which supplies `bpy` |
-| `codecs/n4mc` | All four GPU extras and an NVIDIA GPU — 24 GB holds only about two training frames at resolution 256 |
-| `codecs/qndf`, `codecs/qndf_int8` | An NVIDIA GPU for training. Evaluation (`mesh_errors.py`) runs on CPU. Building the `ssp_remesh` preprocessor needs CMake and Eigen (`libeigen3-dev`/`brew install eigen`), plus the pinned libigl submodule |
-| `codecs/klt` | `kaolin` and an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
-| `codecs/draco` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
-| `codecs/vdmc`, `codecs/faster_vdmc` | The MPEG reference and optimized test models' own build requirements |
+| `open4d/codecs/tvmc/source` | .NET 10 SDK, CMake; Homebrew macOS or Ubuntu |
+| `open4d/codecs/tsmc/source` | .NET 10 SDK, SAM3, `cupy`; Ubuntu 24.04, tested against Meta Quest 3. `convert_to_std_obj.py` runs inside Blender, which supplies `bpy` |
+| `open4d/codecs/n4mc/source` | All four GPU extras and an NVIDIA GPU — 24 GB holds only about two training frames at resolution 256 |
+| `open4d/codecs/qndf/source`, `open4d/codecs/qndf_int8/source` | An NVIDIA GPU for training. Evaluation (`mesh_errors.py`) runs on CPU. Building the `ssp_remesh` preprocessor needs CMake and Eigen (`libeigen3-dev`/`brew install eigen`), plus the pinned libigl submodule |
+| `open4d/codecs/klt/source` | `kaolin` and an NVIDIA GPU; 24 GB is the same ceiling at resolution 128–256 |
+| `open4d/codecs/draco/source` | A CMake build of the vendored Draco submodule. Open3D, pymeshlab, and OpenCV are for evaluation only |
+| `open4d/codecs/vdmc/source`, `open4d/codecs/faster_vdmc/source` | The MPEG reference and optimized test models' own build requirements |
 | `reconstruction/rgbd` | Two hardware-synchronized RGB-D cameras, a Windows capture host, and an Ubuntu host with Python 3.10+, an NVIDIA GPU, and CUDA-enabled Open3D. Its legacy C++ pipeline additionally wants CUDA 12.x, Open3D 0.18, OpenCV, Eigen, jsoncpp, Draco, CMake, Ninja, and either the Azure Kinect SDK or the Orbbec K4A wrapper |
-| `reconstruction/gs_tools`, `queen`, `3dgstream`, `vega` | The separate `open4d-gs` conda environment and five CUDA extensions built with `--no-build-isolation`, per [`gs_tools`](../codecs/gs_tools/README.md). Build on ext4; on an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter` |
+| `reconstruction/gs_tools`, `queen`, `3dgstream`, `vega` | The separate `open4d-gs` conda environment and five CUDA extensions built with `--no-build-isolation`, per [`gs_tools`](../open4d/reconstruction/gs_tools/README.md). Build on ext4; on an ntfs3 mount ninja deadlocks in `ntfs_file_write_iter` |
 | `reconstruction/rerf` | Python 3.8, because `ac_dc/ncvv_ac_dc.cpython-38-*.so` ships without sources and cannot be rebuilt for a newer interpreter. Plus torch with CUDA, mmcv, bitarray, Pillow, NumPy — a separate environment from every other module here |
 | `integrations/unity` | Unity, plus a C++ toolchain to rebuild the backend for anything other than the prebuilt macOS and Android/Quest 3 plugins |
 
@@ -171,7 +171,7 @@ build script. It needs the Xcode Command Line Tools, CMake 3.17 or newer, and
 network access on the first run, when CMake downloads the dependencies.
 
 ```bash
-git submodule update --init codecs/vdmc   # or codecs/faster_vdmc
+git submodule update --init open4d/codecs/vdmc/source   # or open4d/codecs/faster_vdmc/source
 ./scripts/build_vdmc_macos.sh vdmc               # or faster_vdmc
 ```
 

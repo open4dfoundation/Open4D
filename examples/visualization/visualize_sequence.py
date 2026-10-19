@@ -41,7 +41,7 @@ from frame_sources import (
     supported_formats,
 )
 from open4d import save as save_sequence
-from open4d.codec import CodecError
+from open4d.codecs import CodecError
 from open4d.io import Open4DError
 from open4d.visualization._frames import (
     LazyRenderSequence,

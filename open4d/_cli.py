@@ -9,8 +9,8 @@ from pathlib import Path
 import sys
 
 from . import load
-from .codec import CodecError
-from .codec._o4d_format import is_mesh_profile, probe_codec
+from .codecs import CodecError
+from .codecs._o4d_format import is_mesh_profile, probe_codec
 from .core import Sequence
 from .data._cli import register as _register_data, run as _run_data
 from .demo import write_demo
@@ -60,7 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     _register_data(commands)
-    from .backends._cli import register as register_backends
+    from .codecs._backends._cli import register as register_backends
     register_backends(commands)
     demo = commands.add_parser("demo", help="generate a shareable PLY wave animation")
     demo.add_argument(
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "data":
         return _run_data(args)
     if args.command == "backend":
-        from .backends._cli import run as run_backend
+        from .codecs._backends._cli import run as run_backend
         return run_backend(args)
     try:
         if args.command == "demo":

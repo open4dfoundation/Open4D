@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+from tests import ROOT
+
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+from scipy.spatial import cKDTree
+
+from open4d import MemoryFrameProvider, Sequence
+from open4d.codecs import decode_sequence, encode_sequence
+from open4d.io import open_sequence, write_sequence
+
+pytestmark = [pytest.mark.gpu, pytest.mark.slow]
+
+
+def test_tsmc_gpu_solver_repeats_exactly():
+    import subprocess
+
+    python = os.environ.get("OPEN4D_TEST_TSMC_PYTHON")
+    if not python:
+        pytest.skip("set OPEN4D_TEST_TSMC_PYTHON to the CUDA TSMC environment")
+    backend = ROOT / "open4d/codecs/tsmc/source/tsmc"
+    subprocess.run([python, "-c", """
+import sys
+import numpy as np
+import cupy as cp
+import cupyx.scipy.sparse as sparse
+sys.path.insert(0, sys.argv[1])
+from util import solve_sparse_least_squares_cg
+rng = np.random.default_rng(41)
+A = rng.normal(size=(257, 128)).astype(np.float32)
+A[rng.random(A.shape) < .7] = 0
+expected = rng.normal(size=(128, 3)).astype(np.float32)
+matrix = sparse.csr_matrix(cp.asarray(A))
+rhs = cp.asarray(A @ expected)
+results = [cp.asnumpy(solve_sparse_least_squares_cg(
+    matrix, rhs, maxiter=500, tol=1e-6)) for _ in range(6)]
+np.testing.assert_allclose(results[0], expected, rtol=1e-4, atol=1e-4)
+for result in results[1:]:
+    np.testing.assert_array_equal(result, results[0])
+""", str(backend)], check=True, timeout=120)
+
+
+def test_tsmc_single_component_survives_fresh_process_decode(tmp_path):
+    import subprocess
+    import sys
+    from open4d.codecs import unpack_o4d
+
+    source = os.environ.get("OPEN4D_TEST_TSMC_SEQUENCE")
+    if not source:
+        pytest.skip("set OPEN4D_TEST_TSMC_SEQUENCE to a prepared two-frame mesh sequence")
+    artifact = encode_sequence(source, tmp_path / "single.o4d", codec="tsmc",
+                               num_centers=40, grid_resolution=32, components=1)
+    native = unpack_o4d(artifact, tmp_path / "native")
+    with np.load(native / "entropy_model.npz", allow_pickle=False) as model:
+        assert model["shape"][1] == 1
+    exported = tmp_path / "fresh.usdc"
+    subprocess.run([sys.executable, "-c", """
+import sys
+import open4d
+with open4d.decode(sys.argv[1]) as sequence:
+    assert len(sequence) == 2
+    assert all(len(f.geometry.positions) and len(f.geometry.triangles) for f in sequence)
+    open4d.save(sequence, sys.argv[2])
+""", str(artifact), str(exported)], check=True, timeout=300)
+    with open_sequence(source) as original, open_sequence(exported) as fresh, decode_sequence(artifact) as repeated:
+        assert fresh.timestamps == repeated.timestamps == original.timestamps
+        for expected, actual in zip(fresh, repeated, strict=True):
+            np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
+            np.testing.assert_array_equal(actual.geometry.triangles, expected.geometry.triangles)
+
+
+def surface_rms_fraction(expected, actual, seed):
+    pcu = pytest.importorskip("point_cloud_utils")
+    clouds = []
+    for mesh, value in ((expected, seed), (actual, seed + 1)):
+        vertices = np.asarray(mesh.positions, dtype=np.float64)
+        faces = np.asarray(mesh.triangles, dtype=np.int32)
+        indices, barycentric = pcu.sample_mesh_random(
+            vertices, faces, 2000, random_seed=value
+        )
+        clouds.append(np.einsum(
+            "nij,ni->nj", vertices[faces[indices]], barycentric
+        ))
+    left, right = clouds
+    distances = np.concatenate((
+        cKDTree(right).query(left, workers=-1)[0],
+        cKDTree(left).query(right, workers=-1)[0],
+    ))
+    return np.sqrt(np.mean(distances ** 2)) / np.linalg.norm(np.ptp(left, axis=0))
+
+
+@pytest.mark.parametrize("input_format", ("ply", "glb"))
+@pytest.mark.parametrize("codec", (
+    "klt", "n4mc", "qndf", "qndf-int8",
+))
+def test_research_codecs_fresh_decode_quality_and_export_real_rafa(
+    tmp_path, codec, input_format
+):
+    if os.environ.get("OPEN4D_TEST_RESEARCH_CODECS") != "1":
+        pytest.skip("set OPEN4D_TEST_RESEARCH_CODECS=1 on the codec host")
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("point_cloud_utils")
+    pytest.importorskip("trimesh")
+    pytest.importorskip("open3d")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the real research-codec matrix")
+    dataset = Path(os.environ["OPEN4D_RAFA_DATASET"])
+    opened = open_sequence(dataset, fps=30)
+    source = Sequence(MemoryFrameProvider(tuple(opened[:2])))
+    input_path = write_sequence(
+        source, tmp_path / f"input-{input_format}", format=input_format
+    )
+    options = {
+        "klt": dict(
+            resolution=15, num_components=8, block_size=4,
+            k_total=256, training_frames=(0,),
+        ),
+        "n4mc": dict(
+            resolution=15, epochs=20, hidden_channels=(8, 16),
+            latent_channels=8, learning_rate=1e-3, device="cuda:0",
+        ),
+        "qndf": dict(
+            coarse_size=100, num_subdiv=0, epochs=20, hidden_dim=8,
+            num_layers=3, batch_size=256, device="cuda:0",
+        ),
+        "qndf-int8": dict(
+            coarse_size=100, num_subdiv=0, epochs=20, hidden_dim=8,
+            num_layers=3, batch_size=256, device="cuda:0",
+        ),
+    }
+    suffix = {"klt": ".o4d", "n4mc": ".o4d", "qndf": ".o4d",
+              "qndf-int8": ".o4d"}[codec]
+    artifact = encode_sequence(
+        input_path, tmp_path / f"rafa-{codec}{suffix}",
+        codec=codec,
+        **options[codec],
+    )
+    first = decode_sequence(artifact, device="cuda:0")
+    second = decode_sequence(artifact, device="cuda:0")
+    assert len(first) == len(second) == 2
+    assert first.timestamps == second.timestamps == source.timestamps
+    for left, right in zip(first, second, strict=True):
+        assert len(left.geometry.positions) and len(left.geometry.triangles)
+        np.testing.assert_array_equal(left.geometry.positions, right.geometry.positions)
+        np.testing.assert_array_equal(left.geometry.triangles, right.geometry.triangles)
+    for ordinal, (expected, actual) in enumerate(zip(source, first, strict=True)):
+        assert surface_rms_fraction(
+            expected.geometry, actual.geometry, 100 + ordinal * 2
+        ) < .1
+    for output_format in ("obj", "ply", "off", "stl", "gltf", "glb"):
+        exported = write_sequence(
+            first, tmp_path / f"{codec}-{input_format}-{output_format}",
+            format=output_format,
+            allow_lossy=output_format == "stl",
+        )
+        assert len(open_sequence(exported)) == 2
+    first.close()
+    second.close()
+    opened.close()

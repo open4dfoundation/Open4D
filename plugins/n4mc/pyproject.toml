@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"n4mc" = "open4d.codec._n4mc:N4MC_CODEC"
+"n4mc" = "open4d.codecs.n4mc:N4MC_CODEC"
 
 [project.optional-dependencies]
 runtime = ["torch", "trimesh", "scikit-image", "point-cloud-utils"]

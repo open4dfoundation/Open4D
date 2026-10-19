@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"faster_vdmc" = "open4d.codec._o4d:FASTER_VDMC_CODEC"
+"faster_vdmc" = "open4d.codecs.faster_vdmc:FASTER_VDMC_CODEC"
 
 [tool.setuptools]
 packages = []

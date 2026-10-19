@@ -21,11 +21,6 @@ def markdown_files() -> list[Path]:
         ROOT / name
         for name in (
             "README.md",
-            "CHANGELOG.md",
-            "CODE_OF_CONDUCT.md",
-            "CONTRIBUTING.md",
-            "SECURITY.md",
-            "THIRD_PARTY.md",
         )
     ]
     trees = [ROOT / name for name in ("docs", "apps", "examples", "scripts")]

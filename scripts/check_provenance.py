@@ -17,9 +17,11 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDITED_DIRECTORY_ROOTS = (
-    "codecs",
     "open4d/reconstruction",
 )
+# Each codec folder pairs a packaged adapter with a research tree in source/;
+# the research tree is the auditable component.
+CODEC_ROOT = "open4d/codecs"
 EXPLICIT_REQUIRED_LEDGER_PATHS = (
     "docs/assets",
     "integrations/unity",
@@ -29,8 +31,20 @@ EXPLICIT_REQUIRED_LEDGER_PATHS = (
 )
 ALLOWED_PACKAGES = {
     "open4d",
-    "open4d.backends",
-    "open4d.codec",
+    "open4d.codecs",
+    "open4d.codecs._backends",
+    "open4d.codecs.draco",
+    "open4d.codecs.klt",
+    "open4d.codecs.n4mc",
+    "open4d.codecs.qndf",
+    "open4d.codecs.qndf_int8",
+    "open4d.codecs.vdmc",
+    "open4d.codecs.faster_vdmc",
+    "open4d.codecs.tvmc",
+    "open4d.codecs.tsmc",
+    "open4d.codecs.queen",
+    "open4d.codecs.rerf",
+    "open4d.codecs.vega",
     "open4d.core",
     "open4d.data",
     "open4d.ml",
@@ -65,6 +79,9 @@ def parse_gitmodule_paths(gitmodules: str) -> set[str]:
 
 def _top_level_component(path: str) -> str:
     """Map a nested audited path to the component row that owns it."""
+    parts = path.split("/")
+    if path.startswith(f"{CODEC_ROOT}/") and len(parts) > 3 and parts[3] == "source":
+        return "/".join(parts[:4])
     for root in AUDITED_DIRECTORY_ROOTS:
         prefix = f"{root}/"
         if path.startswith(prefix):
@@ -86,6 +103,13 @@ def discover_required_ledger_paths(root: Path) -> set[str]:
                 and child.name != "__pycache__"
                 and not child.name.startswith(".")
             )
+    codecs = root / CODEC_ROOT
+    if codecs.is_dir():
+        required.update(
+            f"{CODEC_ROOT}/{child.name}/source"
+            for child in codecs.iterdir()
+            if (child / "source").is_dir()
+        )
 
     gitmodules_path = root / ".gitmodules"
     if gitmodules_path.is_file():
@@ -264,7 +288,7 @@ def _expand_braces(path: str) -> list[str]:
 
 def main() -> int:
     errors: list[str] = []
-    ledger = (ROOT / "THIRD_PARTY.md").read_text(encoding="utf-8")
+    ledger = (ROOT / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
     errors.extend(release_decision_errors(ledger))
 
     component_ledger = parse_component_ledger(ledger)
@@ -294,7 +318,9 @@ def main() -> int:
 
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     for path in (
-        "codecs", "open4d/reconstruction", "integrations/unity",
+        *(f"{CODEC_ROOT}/{name}/source" for name in ("draco", "klt", "n4mc", "qndf", "qndf_int8", "vdmc",
+                                                    "faster_vdmc", "tvmc", "tsmc", "queen", "rerf", "vega", "3dgstream")),
+        "open4d/reconstruction", "integrations/unity",
         "open4d/reconstruction/rgbd/app", "open4d/reconstruction/rgbd/src",
         "open4d/reconstruction/rgbd/include", "open4d/reconstruction/rgbd/python",
         "open4d/reconstruction/rgbd/tools",

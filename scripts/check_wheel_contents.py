@@ -21,8 +21,20 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIRS = {
     "open4d": ROOT / "open4d",
-    "open4d.backends": ROOT / "open4d/backends",
-    "open4d.codec": ROOT / "open4d/codec",
+    "open4d.codecs": ROOT / "open4d/codecs",
+    "open4d.codecs._backends": ROOT / "open4d/codecs/_backends",
+    "open4d.codecs.draco": ROOT / "open4d/codecs/draco",
+    "open4d.codecs.klt": ROOT / "open4d/codecs/klt",
+    "open4d.codecs.n4mc": ROOT / "open4d/codecs/n4mc",
+    "open4d.codecs.qndf": ROOT / "open4d/codecs/qndf",
+    "open4d.codecs.qndf_int8": ROOT / "open4d/codecs/qndf_int8",
+    "open4d.codecs.vdmc": ROOT / "open4d/codecs/vdmc",
+    "open4d.codecs.faster_vdmc": ROOT / "open4d/codecs/faster_vdmc",
+    "open4d.codecs.tvmc": ROOT / "open4d/codecs/tvmc",
+    "open4d.codecs.tsmc": ROOT / "open4d/codecs/tsmc",
+    "open4d.codecs.queen": ROOT / "open4d/codecs/queen",
+    "open4d.codecs.rerf": ROOT / "open4d/codecs/rerf",
+    "open4d.codecs.vega": ROOT / "open4d/codecs/vega",
     "open4d.data": ROOT / "open4d/data",
     "open4d.ml": ROOT / "open4d/ml",
     "open4d.core": ROOT / "open4d/core",
@@ -54,7 +66,7 @@ def expected_python_files() -> set[str]:
 
 def expected_data_files() -> set[str]:
     return {"open4d/data/catalog.json", *(
-        path.relative_to(ROOT).as_posix() for path in (ROOT / "open4d/backends/recipes").glob("*.json"))}
+        path.relative_to(ROOT).as_posix() for path in (ROOT / "open4d/codecs/_backends/recipes").glob("*.json"))}
 
 
 def unsafe_zip_member_errors(info: zipfile.ZipInfo) -> list[str]:

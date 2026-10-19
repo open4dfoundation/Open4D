@@ -13,8 +13,8 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"qndf" = "open4d.codec._qndf:QNDF_CODEC"
-"qndf-int8" = "open4d.codec._qndf:QNDF_INT8_CODEC"
+"qndf" = "open4d.codecs.qndf:QNDF_CODEC"
+"qndf-int8" = "open4d.codecs.qndf_int8:QNDF_INT8_CODEC"
 
 [project.optional-dependencies]
 runtime = ["torch", "open3d>=0.19,<0.20", "trimesh", "tqdm"]

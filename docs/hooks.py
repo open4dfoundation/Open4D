@@ -33,8 +33,8 @@ SUBMODULES = {}
 PUBLIC = {
     "open4d": ["load", "save", "encode", "decode", "reconstruct", "stream", "send", "receive", "visualize", "available_codecs"],
     "open4d.core": ["Sequence", "Frame", "TriangleMesh", "PointCloud", "GaussianCloud", "TextureImage", "MeshTexture"],
-    "open4d.codec": ["codec_info", "register_codec", "inspect_o4d", "pack_o4d", "unpack_o4d", "StreamEncoder", "StreamDecoder", "stream_profiles"],
-    "open4d.backends": ["plan", "install", "attach", "doctor"],
+    "open4d.codecs": ["codec_info", "register_codec", "inspect_o4d", "pack_o4d", "unpack_o4d", "StreamEncoder", "StreamDecoder", "stream_profiles"],
+    "open4d.codecs._backends": ["plan", "install", "attach", "doctor"],
     "open4d.transport": ["LiveSender", "Receiver", "PipelineStats"],
     "open4d.reconstruction": ["available_methods", "MultiviewCapture"],
     "open4d.reconstruction.rgbd": ["RGBDCapture", "load_capture", "reconstruct"],
@@ -43,9 +43,9 @@ PUBLIC = {
     "open4d.ml": ["train", "TrainingHistory"],
 }
 GUIDES = {
-    "README.md": "overview.md", "THIRD_PARTY.md": "licenses.md",
-    "CONTRIBUTING.md": "community/contributing.md", "CODE_OF_CONDUCT.md": "community/code-of-conduct.md",
-    "SECURITY.md": "community/security.md", "CHANGELOG.md": "community/changelog.md",
+    "README.md": "overview.md", "docs/THIRD_PARTY.md": "licenses.md",
+    "docs/CONTRIBUTING.md": "community/contributing.md", "docs/CODE_OF_CONDUCT.md": "community/code-of-conduct.md",
+    "docs/SECURITY.md": "community/security.md", "docs/CHANGELOG.md": "community/changelog.md",
     "open4d/reconstruction/rgbd/README.md": "guides/rgbd.md",
     "open4d/streamer/README.md": "guides/browser-streaming.md",
     "open4d/integrations/open3d/README.md": "guides/open3d.md",
@@ -69,8 +69,8 @@ CODEC_SETUPS = {
     "tvmc": ("Mesh", "OPEN4D_TVMC_ROOT / OPEN4D_TVMC_PYTHON; DRACO_ENCODER / DRACO_DECODER", "Native Draco tools and the licensed tracker runtime are required.", "Acquire TVMC independently under its redistribution restrictions, build its recorded tracker/Draco tooling, and configure the native programs. Use OPEN4D_NATIVE_TIMEOUT to bound execution. Geometry-only codec output does not promise UV/image preservation."),
     "tsmc": ("Mesh", "OPEN4D_TSMC_ROOT / OPEN4D_TSMC_PYTHON; DRACO_ENCODER / DRACO_DECODER", "Native tools and a prepared tracker runtime are required.", "Acquire and prepare the pinned TSMC source and native tools. The runtime's optional tracking dependencies are separate from the MIT registration package. Check the backend guide for encoder/decoder configuration and bounded native execution."),
     "vega": ("Native Gaussian model", "OPEN4D_VEGA_ROOT / OPEN4D_VEGA_PYTHON; runtime= (Vega directory), python=", "The native model and its CUDA renderer are optional dependencies.", "Import an existing Vega run or explicitly train using the acquired runtime. Preserve native Gaussian geometry and view-dependent color instead of describing an array export as neural compression. Use native.decode with the configured runtime."),
-    "queen": ("Native Gaussian model", "OPEN4D_GS_ROOT / OPEN4D_QUEEN_PYTHON; OPEN4D_QUEEN_ROOT for native.decode", "CUDA reconstruction/training uses separately acquired QUEEN and gs_tools.", "Install the registration adapter, acquire the QUEEN runtime under NVIDIA's terms, and prepare a calibrated capture. For reconstruction, runtime= points to gs_tools with queen as its sibling; native.decode runtime= points to queen itself. reconstruct(method='queen') trains into an owned output directory or O4D; import_native packages an existing run. No weights are downloaded implicitly."),
-    "3dgstream": ("Native Gaussian model", "OPEN4D_GS_ROOT / OPEN4D_3DGSTREAM_PYTHON; OPEN4D_3DGSTREAM_ROOT for native.decode", "CUDA reconstruction/training uses separately acquired 3DGStream and gs_tools.", "For reconstruction, runtime= points to gs_tools with 3dgstream as its sibling; native.decode runtime= points to 3dgstream itself. Prepare the recorded native runtime and calibrated capture, then use reconstruct(method='3dgstream') or import_native on a genuine run. The browser bundle is a delivery representation, distinct from the compressed native model."),
+    "queen": ("Native Gaussian model", "OPEN4D_GS_ROOT / OPEN4D_QUEEN_PYTHON; OPEN4D_QUEEN_ROOT for native.decode", "CUDA reconstruction/training uses separately acquired QUEEN and gs_tools.", "Install the registration adapter, acquire the QUEEN runtime under NVIDIA's terms, and prepare a calibrated capture. For reconstruction, runtime= points to gs_tools (open4d/reconstruction/gs_tools), which finds open4d/codecs/queen/source; native.decode runtime= points to that QUEEN source itself. reconstruct(method='queen') trains into an owned output directory or O4D; import_native packages an existing run. No weights are downloaded implicitly."),
+    "3dgstream": ("Native Gaussian model", "OPEN4D_GS_ROOT / OPEN4D_3DGSTREAM_PYTHON; OPEN4D_3DGSTREAM_ROOT for native.decode", "CUDA reconstruction/training uses separately acquired 3DGStream and gs_tools.", "For reconstruction, runtime= points to gs_tools (open4d/reconstruction/gs_tools), which finds open4d/codecs/3dgstream/source; native.decode runtime= points to that 3DGStream source itself. Prepare the recorded native runtime and calibrated capture, then use reconstruct(method='3dgstream') or import_native on a genuine run. The browser bundle is a delivery representation, distinct from the compressed native model."),
     "rerf": ("Native radiance field", "OPEN4D_RERF_ROOT / OPEN4D_RERF_PYTHON; runtime=, python=", "The acquired NeVo/ReRF runtime may use a separate Python/CUDA environment.", "Import a genuine trained ReRF/NeVo run, then decode with its selected runtime and interpreter. A radiance field is not a Gaussian cloud. A learned ORBIT model and native decode remain required for real-data validation; an analytic fixture is not such evidence."),
 }
 HOME = '''<div class="home-intro"><div>
@@ -190,12 +190,16 @@ def on_files(files, config):
         result = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT, capture_output=True, text=True)
         ref = result.stdout.strip() if result.returncode == 0 else "main"
     REPO = config.repo_url.rstrip("/") + "/blob/" + ref + "/"
+    # Project policies keep GitHub's conventional names in docs/ but are
+    # published at their wiki routes from GUIDES, not twice.
+    policies = {source[len("docs/"):] for source in GUIDES if source.startswith("docs/")}
     for file in list(files):
-        if "__pycache__" in Path(file.src_uri).parts or file.src_uri.endswith((".pyc", ".pyo")):
+        if ("__pycache__" in Path(file.src_uri).parts or file.src_uri.endswith((".pyc", ".pyo"))
+                or file.src_uri in policies):
             files.remove(file)
     SOURCE_ROUTES.clear(); PAGE_SOURCES.clear(); GENERATED.clear()
     SUBMODULES.clear(); SUBMODULES.update(_submodules())
-    SOURCE_ROUTES.update({f"docs/{p.name}": p.name for p in (ROOT / "docs").glob("*.md")})
+    SOURCE_ROUTES.update({f"docs/{p.name}": p.name for p in (ROOT / "docs").glob("*.md") if p.name not in policies})
     SOURCE_ROUTES.update(GUIDES)
     def add(route, text, source=None):
         GENERATED.add(route)
@@ -225,9 +229,9 @@ def on_files(files, config):
         project = metadata["project"]
         identifiers = list(project.get("entry-points", {}).get("open4d.codecs", {}))
         extras = project.get("optional-dependencies", {}).get("runtime", [])
-        backend = f"codecs/{name}/README.md"
+        backend = f"open4d/codecs/{name}/source/README.md"
         if not (ROOT / backend).is_file():
-            backend = f"codecs/{name}"
+            backend = f"open4d/codecs/{name}/source"
         content = f"# {name}\n\n## Install the adapter\n\nInstall the matching core candidate, then the downloaded `{project['name']}` wheel, or install from the checkout:\n\n```bash\npython -m pip install ./plugins/{name}\n```\n\nAdapter identifiers: {', '.join('`'+i+'`' for i in identifiers)}. The package contains MIT registration metadata; it does not contain the external runtime or weights.\n\n## Prepare the runtime\n\n{instructions}\n\nConfiguration: `{variable}`. {device}\n\n"
         if extras:
             content += f"For declared optional Python requirements use `python -m pip install './plugins/{name}[runtime]'`. Native programs and upstream source remain a separate installation.\n\n"
@@ -238,35 +242,39 @@ def on_files(files, config):
     add("codecs/index.md", "\n".join(codec_index))
     layout = """# Repository layout
 
-The Python namespace contains the interoperable API. Research implementations live outside that namespace and remain excluded from the core wheel and source distribution.
+The `open4d` package is the library. Every codec lives in one folder, `open4d/codecs/<name>/`: its Python adapter (`__init__.py`, part of the wheel) sits next to its research implementation (`source/`, never in the wheel or source distribution). Research runtimes keep their original terms.
 
 ```text
 .github/                 CI, checks and documentation deployment
-open4d/                  distributable Python library
-  codec/                 O4D wrappers and plugin interfaces
-  core/                  meshes, point clouds, Gaussians and sequences
-  io/                    geometry and sequence readers/writers
-  reconstruction/        registry, calibrated captures and built-in RGB-D
-  streamer/              separately distributed browser streamer
-  torch_ops/             shared tensor operations
-  ml/                    generic user-model training utilities
-  transport/             decoded-array TCP transport
-  visualization/         playback, comparisons and live viewer
+open4d/                  the Python library (pip install open4d)
+  __init__.py            public API: load, save, encode, decode, ...
+  codecs/                codec registry, O4D container and NumPy profiles
+    <name>/__init__.py   a codec's adapter
+    <name>/source/       its research implementation (not in the wheel)
+    _backends/           runtime install recipes (open4d backend ...)
+  reconstruction/        meshes and Gaussians from captures; gs_tools for QUEEN/3DGStream
+  streamer/              adaptive streaming
+  transport/             TCP send / receive
+  visualization/         viewer
+  ml/                    neural codec training, shared models
+  data/                  example datasets (open4d.data)
+  core/                  data types (internal)
+  io/                    read / write (internal)
+  torch_ops/             torch ops (internal)
   integrations/          Open3D interoperability
-codecs/                  independently acquired research source and native tools
 plugins/                 separately installable MIT registration packages
-scripts/                 builds, validation and development tools
-tests/                   first-party Python unit/integration tests and fixtures
+scripts/                 build and install helpers
+tests/                   unit and integration tests; tests/research runs in each codec's own environment
 examples/                runnable tutorials, notebooks and visualizer examples
-docs/                    versioned documentation sources and website theme
-integrations/            Unity examples and their dependencies
+docs/                    this wiki: guides, project policies and the license ledger
+integrations/unity/      Unity examples and their dependencies
 ```
 
-Folders are ordinary visible directories; `torch_ops` remains a valid Python package name. Existing public modules such as `metrics`, `gaussians`, `native` and `orbit` remain available. Upstream tests and the browser research-study harness remain with their component, so their original setup and license context is preserved. Local untracked experiments are not part of a distribution.
+QUEEN, 3DGStream and ReRF share one native-temporal adapter in `open4d/codecs/queen/`; `3dgstream` is not a valid Python package name, so its folder holds only `source/`. Local untracked experiments are not part of a distribution.
 
 ## Documentation ownership
 
-The homepage, wiki index, tutorial pages, adapter setup pages and API reference are generated during the documentation build. Guides stay versioned with the code in `docs/` or their owning component; they are not silently removed after appearing on the website. [All source Markdown](library/index.md) remains accessible. Root README and project policies remain available to package users and GitHub contributors.
+The homepage, wiki index, tutorial pages, adapter setup pages and API reference are generated during the documentation build. Guides stay versioned with the code in `docs/` or their owning component; they are not silently removed after appearing on the website. [All source Markdown](library/index.md) remains accessible. The root README and the policies in `docs/` remain available to package users and GitHub contributors.
 """
     add("layout.md", layout)
     documents = source_documents()

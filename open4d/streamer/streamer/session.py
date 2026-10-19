@@ -83,7 +83,7 @@ def _sequence_codecs() -> tuple[str, ...]:
 
 def _sequence_codec(identifier: str) -> bool:
     """Resolve capabilities only for a codec the caller explicitly selected."""
-    from open4d.codec import codec_info
+    from open4d.codecs import codec_info
 
     return codec_info(identifier, resolve=True).representation in {
         "triangle_mesh", "geometry_sequence",

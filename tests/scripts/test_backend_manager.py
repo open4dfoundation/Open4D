@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from open4d.backends import _manager, _recipe, _registry
+from open4d.codecs._backends import _manager, _recipe, _registry
 
 
 def test_recipe_catalog_is_pinned_or_explicitly_attach_only():
@@ -57,7 +57,7 @@ def test_tampered_binary_fails_doctor(tmp_path):
 
 
 def test_explicit_vdmc_root_takes_precedence_over_registered_tools(tmp_path, monkeypatch):
-    from open4d.codec import _o4d
+    from open4d.codecs import vdmc as _o4d
     tool = tmp_path / "build/Release/bin/decode"
     tool.parent.mkdir(parents=True)
     tool.write_text("#!/bin/sh\nexit 0\n")

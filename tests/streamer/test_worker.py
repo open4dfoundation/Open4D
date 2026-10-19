@@ -115,7 +115,7 @@ def test_the_worker_carries_no_pixel_codec():
 
 @requires_node
 def test_a_frame_comes_back_parsed(tmp_path):
-    ply = next((ROOT / "codecs/tvmc").rglob("*.obj"), None)
+    ply = next((ROOT / "open4d/codecs/tvmc/source").rglob("*.obj"), None)
     if ply is None:
         pytest.skip("no mesh source present")
     # A minimal mesh PLY, so this test needs no exporter and no dataset.

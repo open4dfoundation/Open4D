@@ -21,8 +21,8 @@ def test_folder_loader_rejects_an_explicit_zero_fps(tmp_path):
 
 
 def test_example_helpers_treat_codec_artifacts_as_whole_sequences(tmp_path, monkeypatch):
-    from open4d.codec import _api
-    from open4d.codec._npz import NumPyZipCodec
+    from open4d.codecs import _api
+    from open4d.codecs._npz import NumPyZipCodec
 
     monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
     mesh = TriangleMesh(
@@ -75,7 +75,7 @@ def test_raw_o4d_fps_is_forwarded_to_the_public_loader(tmp_path, monkeypatch):
 
 
 def test_standalone_o4d_uses_artifact_timing(tmp_path, monkeypatch):
-    from open4d.codec._npz import NumPyZipCodec
+    from open4d.codecs._npz import NumPyZipCodec
     mesh = TriangleMesh([[0., 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]])
     source = NumPyZipCodec().encode(Sequence(MemoryFrameProvider([Frame(0, 1.25, mesh)])),
                                    tmp_path / "capture.o4d")

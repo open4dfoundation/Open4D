@@ -10,8 +10,8 @@ import time
 
 import numpy as np
 
-from open4d.codec import encode_sequence, decode_sequence
-from open4d.codec._npz import NumPyZipCodec
+from open4d.codecs import encode_sequence, decode_sequence
+from open4d.codecs._npz import NumPyZipCodec
 from open4d.core import Sequence, MemoryFrameProvider
 from scripts.benchmark_codec import _BASELINES
 

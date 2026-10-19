@@ -13,8 +13,8 @@ import tempfile
 import numpy as np
 
 from open4d._files import publish_file
-from open4d.codec._protocol import CodecError
-from open4d.codec._o4d_format import _json, inspect_o4d
+from open4d.codecs._protocol import CodecError
+from open4d.codecs._o4d_format import _json, inspect_o4d
 from ._usd import _pxr
 
 _PRIM = "/O4D"

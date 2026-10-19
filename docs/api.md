@@ -264,7 +264,7 @@ the `open4d.codecs` entry point group. Reconstruction functions use
 execute a plugin. Invalid, duplicate or unavailable plugins produce diagnostic
 errors when selected rather than silently overriding core codecs.
 Lazy providers report an unknown `plugin` representation until selected.
-Use `open4d.codec.codec_info("klt", resolve=True)` to load only that provider
+Use `open4d.codecs.codec_info("klt", resolve=True)` to load only that provider
 and inspect its actual representation and preserved attributes. The browser
 streamer uses this selection step for codec rungs, including core NumPy profiles.
 Entry points extend implementations of the reviewed O4D profiles in the core.
@@ -279,7 +279,7 @@ source and optional dependencies; set `OPEN4D_KLT_ROOT`, `OPEN4D_N4MC_ROOT` or
 `OPEN4D_RESEARCH_ROOT` for compatibility with a full checkout. The V-DMC adapters do not execute
 shell scripts, but they do invoke configured native encoder and decoder
 processes once per sequence. Callers can also register another
-`open4d.codec.Codec`.
+`open4d.codecs.Codec`.
 Native mesh processes run without a time limit by default; set
 `OPEN4D_NATIVE_TIMEOUT` to a positive number of seconds to bound them.
 
@@ -298,15 +298,15 @@ locations are the codec and reconstruction trees.
 | `OPEN4D_RESEARCH_ROOT` | KLT, N4MC, QNDF, QNDF-int8 | This checkout, if present |
 | `OPEN4D_VDMC_ENCODER`, `OPEN4D_VDMC_DECODER` | `vdmc` (`encoder=`, `decoder=`) | `build/Release/bin/encode` and `decode` under `OPEN4D_VDMC_ROOT` |
 | `OPEN4D_FASTER_VDMC_ENCODER`, `OPEN4D_FASTER_VDMC_DECODER` | `faster_vdmc` | The same under `OPEN4D_FASTER_VDMC_ROOT` |
-| `OPEN4D_VDMC_ROOT`, `OPEN4D_FASTER_VDMC_ROOT` | V-DMC built from source | `codecs/vdmc`, `codecs/faster_vdmc` |
+| `OPEN4D_VDMC_ROOT`, `OPEN4D_FASTER_VDMC_ROOT` | V-DMC built from source | `open4d/codecs/vdmc/source`, `open4d/codecs/faster_vdmc/source` |
 | `OPEN4D_VDMC_DECODER_CONFIG`, `OPEN4D_FASTER_VDMC_DECODER_CONFIG` | V-DMC decoding (`decoder_config=`) | The carried `decoder.cfg` |
-| `OPEN4D_TVMC_ROOT`, `OPEN4D_TSMC_ROOT` | TVMC, TSMC (`backend=`) | `codecs/tvmc`, `codecs/tsmc` |
+| `OPEN4D_TVMC_ROOT`, `OPEN4D_TSMC_ROOT` | TVMC, TSMC (`backend=`) | `open4d/codecs/tvmc/source`, `open4d/codecs/tsmc/source` |
 | `OPEN4D_TVMC_PYTHON`, `OPEN4D_TSMC_PYTHON` | TVMC, TSMC (`python=`) | The backend's `.venv`, else this interpreter |
 | `DRACO_ENCODER`, `DRACO_DECODER` | TVMC, TSMC | The backend's `draco/build` |
-| `OPEN4D_GS_ROOT` | QUEEN and 3DGStream reconstruction (`runtime=`) | `codecs/gs_tools` |
+| `OPEN4D_GS_ROOT` | QUEEN and 3DGStream reconstruction (`runtime=`) | `open4d/reconstruction/gs_tools` |
 | `OPEN4D_QUEEN_PYTHON`, `OPEN4D_3DGSTREAM_PYTHON`, `OPEN4D_VEGA_PYTHON` | Reconstruction and Vega encoding (`python=`) | This interpreter |
-| `OPEN4D_VEGA_ROOT` | Vega encoding and decoding (`runtime=`) | `codecs/vega` |
-| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`); `OPEN4D_3DGSTREAM_ROOT` also holds 3DGStream's NTC checkpoint (`ntc=`) | `codecs/<codec>` |
+| `OPEN4D_VEGA_ROOT` | Vega encoding and decoding (`runtime=`) | `open4d/codecs/vega/source` |
+| `OPEN4D_QUEEN_ROOT`, `OPEN4D_3DGSTREAM_ROOT`, `OPEN4D_RERF_ROOT` | `NativeSequence.decode` (`runtime=`); `OPEN4D_3DGSTREAM_ROOT` also holds 3DGStream's NTC checkpoint (`ntc=`) | `open4d/codecs/<codec>/source` |
 | `OPEN4D_<CODEC>_PYTHON` | `NativeSequence.decode` (`python=`) | This interpreter |
 | `OPEN4D_NATIVE_TIMEOUT` | Native mesh encoder and decoder processes | No limit |
 
@@ -520,7 +520,7 @@ Native files are copied verbatim. A directory's `metadata.json` is parsed into
 the manifest and regenerated for the codec adapters on extraction; its JSON
 whitespace is not preserved.
 
-Use `open4d.codec.inspect_o4d`, `pack_o4d`, and `unpack_o4d` to inspect,
+Use `open4d.codecs.inspect_o4d`, `pack_o4d`, and `unpack_o4d` to inspect,
 create and extract files without loading native models. Inspection verifies
 all hashes. Extraction is staged and published only after complete validation.
 
@@ -567,7 +567,7 @@ The tutorials target this revision's Open4D 0.3 API. For a checkout validation,
 install its core into an isolated environment with `python -m pip install .`
 before running the scripts. An older installed Open4D package may not expose
 these APIs. This local installation is separate from publication approval in
-the [release ledger](../THIRD_PARTY.md).
+the [release ledger](THIRD_PARTY.md).
 
 ### 1. Round-trip mesh, point-cloud and Gaussian data
 

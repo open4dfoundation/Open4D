@@ -14,7 +14,7 @@ import numpy as np
 
 import open4d
 import open4d.integrations.open3d
-from open4d.codec import CodecError, available_codecs
+from open4d.codecs import CodecError, available_codecs
 from open4d.io import inspect_sequence, open_sequence, write_sequence
 
 
@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory() as directory:
     installed = {info.id for info in codecs}
     assert installed == {"npz", "raw", "deflate", "bzip2", "lzma", "rle"}
     assert all(info.suffixes == (".o4d",) for info in codecs)
-    from open4d.codec._research import research_module
+    from open4d.codecs._research import research_module
     os.environ.pop("OPEN4D_RESEARCH_ROOT", None)
     try:
         research_module("klt.klt")
@@ -86,8 +86,8 @@ with tempfile.TemporaryDirectory() as directory:
         raise AssertionError("wheel unexpectedly includes KLT research source")
 
     from concurrent.futures import ThreadPoolExecutor
-    from open4d.codec import inspect_o4d
-    from open4d.codec._npz import REFERENCE_CODECS
+    from open4d.codecs import inspect_o4d
+    from open4d.codecs._npz import REFERENCE_CODECS
     from open4d.demo import mesh_sequence
 
     with mesh_sequence(side=3, frames=2) as source:

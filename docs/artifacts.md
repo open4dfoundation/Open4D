@@ -70,13 +70,13 @@ their own plugins and environments.
 
 Use the existing component-local conventions for runtime data:
 
-- `codecs/<codec>/datasets/` for downloaded or private datasets
-- `codecs/<codec>/outputs/` for training and evaluation outputs
-- `codecs/<codec>/experiments/` for per-run working directories
-- `codecs/<codec>/checkpoints/` for model weights
+- `open4d/codecs/<codec>/source/datasets/` for downloaded or private datasets
+- `open4d/codecs/<codec>/source/outputs/` for training and evaluation outputs
+- `open4d/codecs/<codec>/source/experiments/` for per-run working directories
+- `open4d/codecs/<codec>/source/checkpoints/` for model weights
 - codec-specific runtime `data/` directories for downloaded sequences; TVMC's
   ARAP input datasets, for example, live under
-  `codecs/tvmc/arap-volume-tracking/data/`
+  `open4d/codecs/tvmc/source/arap-volume-tracking/data/`
 
 Reconstruction data and output locations:
 

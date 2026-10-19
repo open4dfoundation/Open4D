@@ -7,7 +7,7 @@
 #                               [--jobs N] [--revert]
 #
 #   --source DIR     V-DMC source tree. Default: the submodule in this checkout
-#                    (codecs/vdmc or codecs/faster_vdmc).
+#                    (open4d/codecs/vdmc/source or open4d/codecs/faster_vdmc/source).
 #   --build-dir DIR  CMake build directory. Default: DIR/build/Release, the
 #                    layout upstream build.sh uses. Binaries go to BUILD/bin.
 #   --jobs N         Parallel build jobs. Default: logical CPU count.

@@ -757,7 +757,7 @@ def test_packing_keeps_frames_referenced_by_variants_or_unpacked_clips(tmp_path)
 
 
 def test_browser_o4d_is_validated_by_shared_codec_inspector(tmp_path):
-    from open4d.codec import inspect_o4d
+    from open4d.codecs import inspect_o4d
     paths = _frames(tmp_path / "input", [13, 1_048_581], suffix="drc")
     target = tmp_path / "clip.o4d"
     header = sequence.pack(paths, target, fps=24)
@@ -916,7 +916,7 @@ def test_public_frame_loader_preserves_images_without_deserialization(tmp_path):
 
 
 def test_packing_a_bundle_uses_its_real_fps_and_representation(tmp_path):
-    from open4d.codec import inspect_o4d
+    from open4d.codecs import inspect_o4d
     clip = _clip(tmp_path, [23, 35])
     bundle.write(tmp_path, title="test", source="test", clips=[clip], fps=24)
     sequence.pack_bundle(tmp_path)
@@ -963,7 +963,7 @@ def test_browser_partial_download_can_recover_first_complete_frame(tmp_path):
 
 
 def test_existing_packed_bundle_migrates_and_rewrites_its_url(tmp_path):
-    from open4d.codec import inspect_o4d
+    from open4d.codecs import inspect_o4d
     old = tmp_path / "capture.seq"
     old.write_bytes(_legacy_bytes())
     clip = bundle.Clip(name="capture", representation="gaussians",

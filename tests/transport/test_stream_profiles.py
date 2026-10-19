@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
-from open4d.codec import StreamEncoder, StreamDecoder, stream_profiles
+from open4d.codecs import StreamEncoder, StreamDecoder, stream_profiles
 from open4d.core import Frame, TriangleMesh, PointCloud, GaussianCloud
 from open4d.transport import LiveSender, LatestFrameQueue, receive, send
 

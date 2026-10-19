@@ -13,15 +13,15 @@ from check_wheel_contents import expected_python_files, expected_data_files
 
 
 ALLOWED_ROOT_FILES = {
-    "CHANGELOG.md",
-    "CODE_OF_CONDUCT.md",
-    "CONTRIBUTING.md",
+    "docs/CHANGELOG.md",
+    "docs/CODE_OF_CONDUCT.md",
+    "docs/CONTRIBUTING.md",
     "LICENSE",
     "MANIFEST.in",
     "PKG-INFO",
     "README.md",
-    "SECURITY.md",
-    "THIRD_PARTY.md",
+    "docs/SECURITY.md",
+    "docs/THIRD_PARTY.md",
     "pyproject.toml",
     "setup.cfg",
 }

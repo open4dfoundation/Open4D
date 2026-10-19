@@ -26,8 +26,8 @@ def test_view_previews_numpy_gaussian_geometry(tmp_path, monkeypatch):
 
 
 def npz_o4d(tmp_path, monkeypatch):
-    from open4d.codec import _api
-    from open4d.codec._npz import NumPyZipCodec
+    from open4d.codecs import _api
+    from open4d.codecs._npz import NumPyZipCodec
 
     monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
     with mesh_sequence(side=3, frames=2) as sequence:

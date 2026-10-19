@@ -14,7 +14,7 @@ from pathlib import Path
 import open4d
 assert {c.id for c in open4d.available_codecs()} == {'npz','raw','deflate','bzip2','lzma','rle'}
 assert not any(m in sys.modules for m in ('torch','open3d','scipy'))
-assert not (Path(open4d.__file__).parent / 'codecs').exists()
+assert not list((Path(open4d.__file__).parent / 'codecs').glob('*/source'))
 points = open4d.PointCloud([[0.,0.,0.]], attributes={'label': np.array([17], np.int16)})
 gaussians = open4d.GaussianCloud([[1.,2.,3.]], [[.1,.2,.3]], [[1.,1.,0.,0.]], [.7])
 with open4d.Sequence(open4d.MemoryFrameProvider([
@@ -37,7 +37,7 @@ print('Cold process decoded universal geometry without codecs, weights or option
 PLUGINS = '''
 import sys, open4d
 from pathlib import Path
-from open4d.codec._api import _codec
+from open4d.codecs._api import _codec
 from open4d.reconstruction import available_methods
 expected={'klt','n4mc','qndf','qndf-int8','tvmc','tsmc','vdmc','faster_vdmc','queen','3dgstream','rerf','vega',
           'npz','raw','deflate','bzip2','lzma','rle'}
@@ -46,11 +46,11 @@ assert {m.id for m in available_methods()} == {'rgbd','queen','3dgstream'}
 for identifier in expected:
     assert _codec(identifier,Path('unused.o4d')).id == identifier
 assert not any(m in sys.modules for m in ('torch','open3d','scipy'))
-assert not (Path(open4d.__file__).parent / 'codecs').exists()
+assert not list((Path(open4d.__file__).parent / 'codecs').glob('*/source'))
 print('All 12 adapter providers discovered lazily from the installed wheel.')
 '''
 INDIVIDUAL = '''
-from open4d.codec import available_codecs
+from open4d.codecs import available_codecs
 assert {c.id for c in available_codecs()} == {'npz','raw','deflate','bzip2','lzma','rle','klt'}
 print('Individual adapter wheel exposes KLT without installing other research adapters.')
 '''

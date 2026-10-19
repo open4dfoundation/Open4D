@@ -52,7 +52,7 @@ def check_site(site: Path, root: Path = ROOT) -> list[str]:
         if relative.suffix == ".html":
             for embed in _Embeds(member.data.decode("utf-8", "replace")).embeds:
                 errors.append(f"{member.name}: embeds media {embed}")
-    ledger = (root / "THIRD_PARTY.md").read_text(encoding="utf-8")
+    ledger = (root / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
     evidence = collect_evidence([artifact], ledger, root)
     for component in evidence["components"]:
         if component["decision"] != "BLOCK":

@@ -21,7 +21,7 @@ def test_reference_centers_accept_short_sequences(tmp_path, frames, group):
     pytest.importorskip("open3d")
     pytest.importorskip("sklearn")
     repository = ROOT
-    script = repository / "codecs/tsmc/tsmc/get_reference_center.py"
+    script = repository / "open4d/codecs/tsmc/source/tsmc/get_reference_center.py"
     points = np.array([[0., 0, 0], [1., 0, 0], [0., 1, 0], [0., 0, 1]])
     for index in range(frames * group):
         np.savetxt(tmp_path/f"centers_{index:03d}.xyz", points + index)
@@ -42,7 +42,7 @@ def test_no_static_reaches_the_evaluation_stage(tmp_path: Path):
     (root / "tvm-editing/TVMEditor.Test/bin/Release/net10.0/TVMEditor.Test.dll").touch()
     (root / "arap-volume-tracking/data/combined-100-max-2000").mkdir(parents=True)
     (root / "data/demo/meshes").mkdir(parents=True)
-    shutil.copy2(repository / "codecs/tsmc/run.sh", root / "run.sh")
+    shutil.copy2(repository / "open4d/codecs/tsmc/source/run.sh", root / "run.sh")
 
     tools = tmp_path / "tools"
     tools.mkdir()

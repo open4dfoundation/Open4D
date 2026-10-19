@@ -5,7 +5,7 @@ import pytest
 
 from open4d.core import Frame, Sequence, MemoryFrameProvider, MeshTexture, TextureImage
 from open4d.io import write_sequence, open_sequence
-from tests.codec.test_owned_attributes import textured_mesh
+from tests.codecs.test_owned_attributes import textured_mesh
 
 
 def test_obj_sequence_retains_owned_pixels_and_corner_uvs(tmp_path):

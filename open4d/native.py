@@ -20,11 +20,11 @@ from types import MappingProxyType
 import numpy as np
 
 from ._research_paths import default_runtime, managed_python
-from .codec._native import run
-from .codec._native_profiles import NEURAL_CODECS, layout
-from .codec._metadata import _json_value
-from .codec._protocol import CodecError
-from .codec._o4d_format import _json, inspect_o4d, pack_o4d, unpack_o4d
+from .codecs._native import run
+from .codecs._native_profiles import NEURAL_CODECS, layout
+from .codecs._metadata import _json_value
+from .codecs._protocol import CodecError
+from .codecs._o4d_format import _json, inspect_o4d, pack_o4d, unpack_o4d
 from ._files import publish_file
 
 
@@ -289,7 +289,7 @@ class NativeSequence:
             run = VegaRun(source, root, executable, _owner=self)
             return run.decode()
         if self.codec not in NEURAL_CODECS:
-            from .codec import decode_sequence
+            from .codecs import decode_sequence
             return decode_sequence(self.path)
         with tempfile.TemporaryDirectory(prefix=f"open4d-{self.codec}-decode-") as directory:
             work = Path(directory)

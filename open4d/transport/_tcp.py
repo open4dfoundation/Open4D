@@ -1,7 +1,7 @@
 """Transfer frames over TCP: O4S1 decoded meshes or O4S2 codec packets.
 
 O4S1, the default for `send` without a profile, carries uncompressed triangle
-mesh arrays. O4S2 (see `open4d.codec.StreamEncoder`) carries mesh, point and
+mesh arrays. O4S2 (see `open4d.codecs.StreamEncoder`) carries mesh, point and
 Gaussian frames through a codec profile. A receiver reads either, decided by
 the first packet's magic.
 """
@@ -21,7 +21,7 @@ import time
 
 import numpy as np
 
-from ..codec._stream import MAGIC as _O4S2, StreamDecoder
+from ..codecs._stream import MAGIC as _O4S2, StreamDecoder
 from ..core import Frame, MemoryFrameProvider, Sequence, TriangleMesh
 from ._pipeline import LatestFrameQueue, LiveSender, StageTiming
 
@@ -182,7 +182,7 @@ def send(frames, host="127.0.0.1", port=47004, *, realtime=True, timeout=30.0,
     mesh arrays and frame metadata, uncompressed. ``profile`` selects O4S2 and
     a codec profile for mesh, point or Gaussian frames: ``raw``, ``lossless``,
     ``zlib``, ``zstd``, ``draco`` or ``quantized``, configured by
-    ``profile_options`` (see `open4d.codec.stream_profiles`). With O4S2,
+    ``profile_options`` (see `open4d.codecs.stream_profiles`). With O4S2,
     ``latest=True`` lets a busy encoder or network replace stale frames and
     ``send_deadline`` drops frames that waited longer than that many seconds;
     use `LiveSender` directly for per-stage timing statistics.

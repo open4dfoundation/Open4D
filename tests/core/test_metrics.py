@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from open4d.codec._npz import NumPyZipCodec
+from open4d.codecs._npz import NumPyZipCodec
 
 import builtins
 import json
@@ -134,7 +134,7 @@ def test_paths_and_sequences_are_interchangeable(tmp_path, monkeypatch):
 
 
 def test_frame_folder_compares_with_o4d_path(tmp_path, monkeypatch):
-    from open4d.codec import _api
+    from open4d.codecs import _api
 
     monkeypatch.setitem(_api._CODECS, "npz", NumPyZipCodec())
     folder = write_demo(tmp_path / "frames", side=4, frames=3)

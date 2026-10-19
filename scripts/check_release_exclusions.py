@@ -362,7 +362,7 @@ def expected_inventory_errors(artifacts: list[Artifact], root: Path = ROOT) -> l
 
 
 def build_report(artifact_dirs: list[Path], site: Path | None, root: Path = ROOT) -> dict:
-    ledger_text = (root / "THIRD_PARTY.md").read_text(encoding="utf-8")
+    ledger_text = (root / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
     artifacts = []
     for directory in artifact_dirs:
         for path in sorted(directory.iterdir()) if directory.is_dir() else []:

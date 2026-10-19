@@ -109,10 +109,10 @@ def registered_research_codecs(monkeypatch):
     The standalone streamer pytest root does not inherit Open4D's conftest.
     No runtime, model, dataset or heavy dependency is imported by registration.
     """
-    from open4d.codec import _api
-    from open4d.codec._klt import KLT_CODEC
-    from open4d.codec._tracked import TSMC_CODEC
-    from open4d.gaussians import VEGA_CODEC
+    from open4d.codecs import _api
+    from open4d.codecs.klt import KLT_CODEC
+    from open4d.codecs.tvmc import TSMC_CODEC
+    from open4d.codecs.vega import VEGA_CODEC
 
     codecs = {**_api._CODECS, **{codec.id: codec for codec in (KLT_CODEC, TSMC_CODEC, VEGA_CODEC)}}
     monkeypatch.setattr(_api, "_CODECS", codecs)
@@ -146,7 +146,7 @@ def test_installed_plugin_rungs_resolve_only_selected_provider(tmp_path, monkeyp
 
     module = "_open4d_streamer_rung_plugin"
     (tmp_path / f"{module}.py").write_text(
-        "from open4d.codec._npz import NumPyZipCodec\n"
+        "from open4d.codecs._npz import NumPyZipCodec\n"
         "calls = []\n"
         "def sequence():\n"
         "    calls.append('sequence')\n"

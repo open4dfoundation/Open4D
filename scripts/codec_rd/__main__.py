@@ -13,8 +13,8 @@ import time
 
 import numpy as np
 
-from open4d.codec import encode_sequence, decode_sequence
-from open4d.codec._npz import NumPyZipCodec
+from open4d.codecs import encode_sequence, decode_sequence
+from open4d.codecs._npz import NumPyZipCodec
 from open4d.core import Sequence, MemoryFrameProvider
 from open4d.io import open_sequence
 from .metrics import mesh_errors, summarize_frames, bounding_box_diagonal
@@ -30,9 +30,9 @@ def digest(path):
 
 def sequence_fingerprint(sequence):
     """Hash logical inputs, excluding NPZ ZIP timestamps that vary per write."""
-    from open4d.codec._metadata import _json_value
-    from open4d.codec._mesh_payload import texture_arrays
-    from open4d.codec._npz import _GEOMETRIES
+    from open4d.codecs._metadata import _json_value
+    from open4d.codecs._mesh_payload import texture_arrays
+    from open4d.codecs._npz import _GEOMETRIES
     value = hashlib.sha256()
     def record(item):
         value.update(json.dumps(_json_value(item, "benchmark input"), sort_keys=True,

@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"tvmc" = "open4d.codec._tracked:TVMC_CODEC"
+"tvmc" = "open4d.codecs.tvmc:TVMC_CODEC"
 
 [tool.setuptools]
 packages = []

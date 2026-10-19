@@ -35,7 +35,7 @@ dependencies = ["numpy>=1.24"]
 [project.urls]
 Homepage = "https://github.com/open4dfoundation/Open4D"
 Documentation = "https://open4dfoundation.github.io/Open4D/"
-Changelog = "https://github.com/open4dfoundation/Open4D/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/open4dfoundation/Open4D/blob/main/docs/CHANGELOG.md"
 Issues = "https://github.com/open4dfoundation/Open4D/issues"
 
 [project.scripts]
@@ -67,8 +67,22 @@ all    = ["plyfile", "trimesh", "PyQt6", "pyqtgraph>=0.14", "PyOpenGL", "open3d>
 include-package-data = false
 packages = [
     "open4d",
-    "open4d.backends",
-    "open4d.codec",
+    "open4d.codecs",
+    "open4d.codecs._backends",
+    # Per-codec adapters; each codec's research implementation in source/ is
+    # not a listed package, so it never enters the wheel.
+    "open4d.codecs.draco",
+    "open4d.codecs.klt",
+    "open4d.codecs.n4mc",
+    "open4d.codecs.qndf",
+    "open4d.codecs.qndf_int8",
+    "open4d.codecs.vdmc",
+    "open4d.codecs.faster_vdmc",
+    "open4d.codecs.tvmc",
+    "open4d.codecs.tsmc",
+    "open4d.codecs.queen",
+    "open4d.codecs.rerf",
+    "open4d.codecs.vega",
     "open4d.data",
     "open4d.ml",
     "open4d.core",
@@ -84,15 +98,17 @@ packages = [
 
 [tool.setuptools.package-data]
 "open4d.data" = ["catalog.json"]
-"open4d.backends" = ["recipes/*.json"]
+"open4d.codecs._backends" = ["recipes/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
+# Research suites under tests/research run in each codec's own environment.
+norecursedirs = ["research", ".*", "__pycache__"]
 testpaths = [
     "tests/core",
     "tests/data",
     "tests/ml",
-    "tests/codec",
+    "tests/codecs",
     "tests/io",
     "tests/reconstruction/rgbd",
     "tests/transport",

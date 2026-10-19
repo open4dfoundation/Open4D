@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from open4d import load as _open_sequence
-from open4d.codec import available_codecs
-from open4d.codec._o4d_format import probe_codec
+from open4d.codecs import available_codecs
+from open4d.codecs._o4d_format import probe_codec
 from open4d.io import available_formats, inspect_sequence
 
 DEFAULT_FPS = 30.0

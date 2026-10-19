@@ -13,18 +13,18 @@ license-files = ["LICENSE"]
 dependencies = ["open4d>=0.3.0,<0.4"]
 
 [project.entry-points."open4d.codecs"]
-"klt" = "open4d.codec._klt:KLT_CODEC"
-"n4mc" = "open4d.codec._n4mc:N4MC_CODEC"
-"qndf" = "open4d.codec._qndf:QNDF_CODEC"
-"qndf-int8" = "open4d.codec._qndf:QNDF_INT8_CODEC"
-"vdmc" = "open4d.codec._o4d:VDMC_CODEC"
-"faster_vdmc" = "open4d.codec._o4d:FASTER_VDMC_CODEC"
-"tvmc" = "open4d.codec._tracked:TVMC_CODEC"
-"tsmc" = "open4d.codec._tracked:TSMC_CODEC"
-"vega" = "open4d.gaussians:VEGA_CODEC"
-"queen" = "open4d.codec._native_temporal:QUEEN_CODEC"
-"3dgstream" = "open4d.codec._native_temporal:GSTREAM_CODEC"
-"rerf" = "open4d.codec._native_temporal:RERF_CODEC"
+"klt" = "open4d.codecs.klt:KLT_CODEC"
+"n4mc" = "open4d.codecs.n4mc:N4MC_CODEC"
+"qndf" = "open4d.codecs.qndf:QNDF_CODEC"
+"qndf-int8" = "open4d.codecs.qndf_int8:QNDF_INT8_CODEC"
+"vdmc" = "open4d.codecs.vdmc:VDMC_CODEC"
+"faster_vdmc" = "open4d.codecs.faster_vdmc:FASTER_VDMC_CODEC"
+"tvmc" = "open4d.codecs.tvmc:TVMC_CODEC"
+"tsmc" = "open4d.codecs.tsmc:TSMC_CODEC"
+"vega" = "open4d.codecs.vega:VEGA_CODEC"
+"queen" = "open4d.codecs.queen:QUEEN_CODEC"
+"3dgstream" = "open4d.codecs.queen:GSTREAM_CODEC"
+"rerf" = "open4d.codecs.rerf:RERF_CODEC"
 
 [project.entry-points."open4d.reconstruction"]
 "queen" = "open4d.reconstruction._registry:queen_reconstruction"

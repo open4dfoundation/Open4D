@@ -19,7 +19,7 @@ import socket
 import threading
 import time
 
-from ..codec._stream import DEFAULT_MAX_FRAME_BYTES, PREFIX, MAGIC, END, StreamEncoder
+from ..codecs._stream import DEFAULT_MAX_FRAME_BYTES, PREFIX, MAGIC, END, StreamEncoder
 from ..core import Frame
 
 
@@ -174,7 +174,7 @@ class LiveSender:
     seconds since submit when their turn to send comes. ``stats`` reports
     per-stage timing and drop counts while running. Worker errors re-raise
     from ``submit`` and ``close``. Profile keyword options pass to
-    `open4d.codec.StreamEncoder`.
+    `open4d.codecs.StreamEncoder`.
     """
 
     def __init__(self, host="127.0.0.1", port=47004, *, profile="raw", latest=True,

@@ -181,7 +181,7 @@ def player(directory: Path, render: bool) -> None:
 
 
 def research(component: str, directory: Path) -> None:
-    from open4d.codec import CodecError
+    from open4d.codecs import CodecError
 
     dependencies = {
         "klt": ("torch", "trimesh", "zstd", "zstandard", "tqdm", "point_cloud_utils"),

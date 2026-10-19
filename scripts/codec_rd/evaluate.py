@@ -10,8 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-from open4d.codec import decode_sequence
-from open4d.codec._npz import NumPyZipCodec
+from open4d.codecs import decode_sequence
+from open4d.codecs._npz import NumPyZipCodec
 from open4d.core import TriangleMesh
 from .__main__ import digest, run_worker
 from .metrics import mesh_errors, summarize_frames, bounding_box_diagonal

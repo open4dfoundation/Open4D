@@ -34,7 +34,7 @@ from .core import (
 )
 from ._api import load, save, unload, reconstruct, stream
 from ._streamer import StreamerDependencyError
-from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode, migrate_legacy
+from .codecs import available_codecs, decode_sequence as decode, encode_sequence as encode, migrate_legacy
 from .transport import receive, send
 from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
 from .metrics import compare_meshes, compare_sequences

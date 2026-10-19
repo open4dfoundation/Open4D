@@ -143,7 +143,7 @@ def test_decode_peak_memory_excludes_surface_validation(tmp_path, monkeypatch):
 
 def test_benchmark_does_not_compare_unrelated_vertex_indices(tmp_path, monkeypatch):
     from open4d import Frame, MemoryFrameProvider, Sequence
-    from open4d.codec._npz import NumPyZipCodec
+    from open4d.codecs._npz import NumPyZipCodec
 
     source = benchmark_codec.synthetic(3, 2)
     codec = NumPyZipCodec()

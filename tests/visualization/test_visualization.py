@@ -139,7 +139,7 @@ def test_visualize_path_owns_and_closes_loaded_sequence(monkeypatch):
     monkeypatch.setattr(
         _api, "load", lambda source: value
     )
-    monkeypatch.setattr("open4d.codec._o4d_format.is_mesh_profile", lambda source: True)
+    monkeypatch.setattr("open4d.codecs._o4d_format.is_mesh_profile", lambda source: True)
     monkeypatch.setattr(_qt, "check_available", lambda **options: None)
     monkeypatch.setattr(_qt, "play", lambda frames, options: frames[0])
     monkeypatch.setattr(
@@ -170,7 +170,7 @@ def test_visualize_path_closes_after_renderer_failure(monkeypatch):
     from open4d.visualization import _qt
 
     monkeypatch.setattr(_api, "load", lambda source: value)
-    monkeypatch.setattr("open4d.codec._o4d_format.is_mesh_profile", lambda source: True)
+    monkeypatch.setattr("open4d.codecs._o4d_format.is_mesh_profile", lambda source: True)
     monkeypatch.setattr(_qt, "check_available", lambda **options: None)
     monkeypatch.setattr(
         _qt, "play", lambda frames, options: (_ for _ in ()).throw(RuntimeError("boom"))
@@ -270,7 +270,7 @@ def test_gaussian_paths_are_rejected_before_native_decode(tmp_path, monkeypatch,
     import open4d._api as public
 
     import json
-    from open4d.codec import pack_o4d
+    from open4d.codecs import pack_o4d
     native = tmp_path / "native"
     native.mkdir()
     (native / "metadata.json").write_text(json.dumps({
