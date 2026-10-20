@@ -51,7 +51,7 @@ HEX64 = re.compile(r"[0-9a-f]{64}")
 
 def blockers(ledger: str | None = None) -> list[str]:
     if ledger is None:
-        ledger = (ROOT / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
+        ledger = (ROOT / ".github/THIRD_PARTY.md").read_text(encoding="utf-8")
     rows: list[str] = []
     for line in ledger.splitlines():
         if line.startswith("|") and re.search(r"\bBLOCK\b", line):
@@ -94,7 +94,7 @@ def _normalized(name: str) -> str:
 def release_projects(root: Path = ROOT) -> dict[str, str]:
     """Map each published project (core and adapters) to its declared version."""
     projects = {}
-    for pyproject in [root / "pyproject.toml", *sorted((root / "plugins").glob("*/pyproject.toml"))]:
+    for pyproject in [root / "pyproject.toml", *sorted((root / "open4d/codecs/_adapters").glob("*/pyproject.toml"))]:
         with pyproject.open("rb") as stream:
             project = tomllib.load(stream)["project"]
         projects[project["name"]] = project["version"]
@@ -136,7 +136,7 @@ def maintainer_logins(root: Path = ROOT) -> set[str] | None:
 
 def git_ledger_digest(root: Path, commit: str) -> str | None:
     """SHA-256 of ``THIRD_PARTY.md`` at ``commit``; None when unavailable."""
-    result = subprocess.run(["git", "show", f"{commit}:docs/THIRD_PARTY.md"], cwd=root,
+    result = subprocess.run(["git", "show", f"{commit}:.github/THIRD_PARTY.md"], cwd=root,
                             capture_output=True, check=False)
     return hashlib.sha256(result.stdout).hexdigest() if result.returncode == 0 else None
 
@@ -169,7 +169,7 @@ def approval_errors(
     to supply the list directly or None to skip the membership check.
     """
     if ledger is None:
-        ledger = (root / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
+        ledger = (root / ".github/THIRD_PARTY.md").read_text(encoding="utf-8")
     errors: list[str] = []
     known = {"schema", "approver", "role", "date", "scope", "version", "ledger", "build", "artifacts"}
     if unknown := sorted(set(approval) - known):
@@ -266,8 +266,8 @@ def approval_errors(
 def draft_approval(digests: dict[str, str], *, root: Path = ROOT,
                    run_id: int | None = None, build_commit: str | None = None) -> str:
     """Render an approval template; personal fields remain rejected placeholders."""
-    ledger = (root / "docs/THIRD_PARTY.md").read_bytes()
-    commit = subprocess.run(["git", "log", "-1", "--format=%H", "--", "docs/THIRD_PARTY.md"], cwd=root,
+    ledger = (root / ".github/THIRD_PARTY.md").read_bytes()
+    commit = subprocess.run(["git", "log", "-1", "--format=%H", "--", ".github/THIRD_PARTY.md"], cwd=root,
                             capture_output=True, text=True, check=False).stdout.strip() or "TBD"
     version = sorted(set(release_projects(root).values()))[0]
     lines = [
@@ -328,7 +328,7 @@ def main() -> int:
     parser.add_argument("--build-run-id", type=int, help="run that built --artifacts")
     parser.add_argument("--build-commit", help="commit that built --artifacts")
     args = parser.parse_args()
-    ledger = (ROOT / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
+    ledger = (ROOT / ".github/THIRD_PARTY.md").read_text(encoding="utf-8")
     approval_path = args.approval or ROOT / DEFAULT_APPROVAL
     approved_state = "## Release decision: approved" in ledger
 

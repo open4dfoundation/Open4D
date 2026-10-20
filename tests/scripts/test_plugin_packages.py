@@ -13,7 +13,7 @@ from check_plugin_contents import check_archive
 
 pytestmark = pytest.mark.cpu
 
-PROJECT = ROOT / "plugins/klt"
+PROJECT = ROOT / "open4d/codecs/_adapters/klt"
 
 
 def metadata_wheel(tmp_path, *, implementation=False, dependency="open4d<0.4,>=0.3.0"):
@@ -26,7 +26,7 @@ def metadata_wheel(tmp_path, *, implementation=False, dependency="open4d<0.4,>=0
             archive.writestr(f"{root}/{name}", "")
         archive.writestr(f"{root}/METADATA", metadata)
         archive.writestr(f"{root}/entry_points.txt", "[open4d.codecs]\nklt = open4d.codecs.klt:KLT_CODEC\n")
-        archive.writestr(f"{root}/licenses/LICENSE", (PROJECT / "LICENSE").read_bytes())
+        archive.writestr(f"{root}/licenses/LICENSE", (ROOT / "LICENSE").read_bytes())
         if implementation:
             archive.writestr("research/checkpoint.pt", b"restricted fixture")
     return path
@@ -48,8 +48,8 @@ def test_old_core_cannot_satisfy_adapter_requirement(tmp_path):
 def test_source_archive_link_is_rejected(tmp_path):
     path = tmp_path / "adapter.tar.gz"
     with tarfile.open(path, "w:gz") as archive:
-        for filename in ("LICENSE", "pyproject.toml"):
-            payload = (PROJECT / filename).read_bytes()
+        for filename, source in (("LICENSE", ROOT / "LICENSE"), ("pyproject.toml", PROJECT / "pyproject.toml")):
+            payload = source.read_bytes()
             info = tarfile.TarInfo(f"adapter/{filename}")
             info.size = len(payload)
             archive.addfile(info, BytesIO(payload))

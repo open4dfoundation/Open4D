@@ -71,7 +71,7 @@ def gaussians(directory: Path) -> None:
 
 def open3d_feature(directory: Path) -> None:
     import open3d as o3d
-    from open4d.integrations.open3d import frame_to_open3d
+    from open4d.io import frame_to_open3d
 
     with mesh_sequence(side=4, frames=1) as source:
         mesh = frame_to_open3d(source[0].geometry)
@@ -196,7 +196,7 @@ def research(component: str, directory: Path) -> None:
             try:
                 open4d.encode(source, directory / f"{component}.o4d", codec=component)
             except CodecError as error:
-                assert "pip install ./plugins/research" in str(error), error
+                assert "pip install ./open4d/codecs/_adapters/research" in str(error), error
             else:
                 raise AssertionError("research implementations must remain outside the wheel")
     finally:

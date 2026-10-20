@@ -171,7 +171,7 @@ def _codec(value: str | Codec | None, path: Path) -> Codec:
             if value in _RESEARCH_IDS:
                 raise CodecError(
                     f"Codec {value!r} requires a separately installed adapter. "
-                    "From an Open4D checkout run 'pip install ./plugins/research'; "
+                    "From an Open4D checkout run 'pip install ./open4d/codecs/_adapters/research'; "
                     "then acquire its backend under its own license and configure "
                     "the documented OPEN4D_*_ROOT variable. Research source, "
                     "weights and datasets are not included in the adapter package."

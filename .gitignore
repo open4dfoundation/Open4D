@@ -36,8 +36,6 @@ htmlcov/
 
 # Renders and containers written by the example scripts
 /open4d-demo/
-examples/out/
-examples/**/out/
 
 # Benchmark dashboard runtime data
 benchmark_app/data/

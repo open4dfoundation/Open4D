@@ -7,7 +7,7 @@ representation and research backends.
 ## Install
 
 The PyPI release is being prepared. Until the
-[release ledger](https://github.com/open4dfoundation/Open4D/blob/main/docs/THIRD_PARTY.md)
+[release ledger](https://github.com/open4dfoundation/Open4D/blob/main/.github/THIRD_PARTY.md)
 is cleared, install a source checkout with `python -m pip install -e .`.
 After publication:
 
@@ -31,17 +31,16 @@ For development, install a checkout with `python -m pip install -e '.[dev]'`.
 Research adapters are separate installable packages. Their source backends,
 native programs and model weights are not bundled in either package. From a
 checkout, install only the adapter you need, for example
-`python -m pip install ./plugins/vdmc`; `./plugins/research` installs all adapter
+`python -m pip install ./open4d/codecs/_adapters/vdmc`; `./open4d/codecs/_adapters/research` installs all adapter
 registrations. These packages are not yet published to PyPI. Each backend,
 dataset and checkpoint keeps its own license; a plugin does not clear a missing
 license or permit redistribution. Hardware, environments
-and per-module requirements are in [docs/requirements.md](https://github.com/open4dfoundation/Open4D/blob/main/docs/requirements.md).
-The versioned documentation site includes a searchable wiki, codec setup guides,
-and [seven runnable tutorials](examples/tutorials/). Build a local preview with
-`python -m pip install -e '.[docs]'` and `python -m mkdocs serve`.
-All source guides and upstream manuals are linked in the site's documentation
-library; project policies, licenses and useful component documentation remain
-versioned in this repository.
+and per-module requirements are in the [installation guide](https://open4dfoundation.github.io/wiki/requirements/).
+The [wiki](https://open4dfoundation.github.io/wiki/) on the project website has codec setup guides, the Python guide
+and [seven runnable tutorials](https://open4dfoundation.github.io/wiki/tutorials/). Its sources, examples and
+notebooks live in the
+[website repository](https://github.com/open4dfoundation/open4dfoundation.github.io);
+project policies and the license ledger stay in `.github/`.
 
 RGB-D reconstruction requires Open3D 0.19.x. The legacy TSDF integrator in
 Open3D 0.20 rescales already-metric float depth and can return empty meshes;
@@ -126,14 +125,14 @@ baseline pane. Gaussians are drawn from their covariance with depth-sorted alpha
 blending and view-dependent SH color; `visualize` also takes a list of
 `GaussianSplats` or a `GaussianRun`.
 
-The [notebook](https://github.com/open4dfoundation/Open4D/blob/main/examples/open4d_sequence_codec.ipynb) walks through these calls,
+The [notebook](https://github.com/open4dfoundation/open4dfoundation.github.io/blob/main/wiki-src/examples/open4d_sequence_codec.ipynb) walks through these calls,
 reconstruction and streaming in separate short cells.
 Short `.o4d` examples:
 
-- [Preserve compressed state through USDC](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/01_container_and_usdc.ipynb)
-- [The eight mesh codecs](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/02_mesh_codecs.ipynb)
-- [Vega, QUEEN and 3DGStream](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/03_gaussian_codecs.ipynb)
-- [ReRF](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/04_rerf.ipynb)
+- [Preserve compressed state through USDC](https://github.com/open4dfoundation/open4dfoundation.github.io/blob/main/wiki-src/examples/o4d/01_container_and_usdc.ipynb)
+- [The eight mesh codecs](https://github.com/open4dfoundation/open4dfoundation.github.io/blob/main/wiki-src/examples/o4d/02_mesh_codecs.ipynb)
+- [Vega, QUEEN and 3DGStream](https://github.com/open4dfoundation/open4dfoundation.github.io/blob/main/wiki-src/examples/o4d/03_gaussian_codecs.ipynb)
+- [ReRF](https://github.com/open4dfoundation/open4dfoundation.github.io/blob/main/wiki-src/examples/o4d/04_rerf.ipynb)
 
 | Codec | Input | Output | Backend setup |
 | --- | --- | --- | --- |
@@ -154,11 +153,11 @@ PLY, OBJ and USD import/export remain available.
 Mesh codecs decode to mesh sequences for ordinary USDC geometry export.
 To preserve a compressed artifact exactly, construct `open4d.NativeSequence`
 and save it to USDC using the custom `O4D` prim, as shown in the
-[container notebook](https://github.com/open4dfoundation/Open4D/blob/main/examples/o4d/01_container_and_usdc.ipynb). This works with
+[container notebook](https://github.com/open4dfoundation/open4dfoundation.github.io/blob/main/wiki-src/examples/o4d/01_container_and_usdc.ipynb). This works with
 every O4D profile. Gaussian and field methods load as `NativeSequence` and
 evaluate their native models explicitly. N4MC shares a model across independent
 frame latents; QNDF has independent frame models.
-[O4D](https://github.com/open4dfoundation/Open4D/blob/main/docs/api.md#o4d-format) is a custom container for native codec payloads,
+[O4D](https://open4dfoundation.github.io/wiki/api/#o4d-format) is a custom container for native codec payloads,
 including V-DMC encoder bitstreams; the container itself is not MPEG V-DMC
 interchange. Convert older artifacts with `open4d.migrate_legacy`.
 
@@ -241,7 +240,7 @@ timestamp is reconstructed separately so motion is preserved.
 
 Saved two-camera captures load with `capture = open4d.load_rgbd_capture(pairs,
 calibration)`, then `open4d.reconstruct(capture, refine_poses=True, device="cuda")`;
-see [open4d/reconstruction/rgbd](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/rgbd/README.md).
+see [the RGB-D capture guide](https://open4dfoundation.github.io/wiki/guides/rgbd/).
 
 ## Stream mesh, point and Gaussian frames
 
@@ -300,14 +299,19 @@ open4d.save(recording, "capture.usdc")
 
 `receiver.close()` from another thread stops a receiver that is waiting.
 
-This sends decoded mesh arrays over TCP, at their recorded frame timing. It is
-not a compression method. Both calls default to this computer on port 47004.
+Frames are sent at their recorded frame timing. Without a profile, `send`
+transmits [uncompressed decoded mesh arrays](open4d/transport/_tcp.py#L181-L182);
+the O4S2 [`zlib` and `zstd`](open4d/codecs/_stream_profiles.py#L179-L182),
+[`lossless`](open4d/codecs/_stream_profiles.py#L494-L497),
+[`quantized`](open4d/codecs/_stream_profiles.py#L280) and
+[`draco`](open4d/codecs/_stream_profiles.py#L418) profiles compress, while `raw`
+does not. Both calls default to this computer on port 47004.
 Pass `host=` and `port=` for another address. Remote transport needs a trusted
 network or SSH tunnel; this protocol has no authentication or encryption.
 Use `realtime=False` to transfer a recorded sequence as fast as possible.
 
-The camera capture and native reconstruction programs are in
-[open4d/reconstruction/rgbd](https://github.com/open4dfoundation/Open4D/blob/main/open4d/reconstruction/rgbd/README.md).
+The camera capture and native reconstruction programs are described in
+[the RGB-D capture guide](https://open4dfoundation.github.io/wiki/guides/rgbd/).
 
 ## Compare methods in a user study
 
@@ -415,9 +419,9 @@ QUEEN's depth initialisation also fills uncovered black backgrounds with points;
   or `.o4d` with an explicitly selected codec.
 - `open4d.compare_sequences("input_frames/", "capture.o4d")` measures mesh
   error between sequences or paths with the `.[metrics]` extra; see
-  [comparing sequences](https://github.com/open4dfoundation/Open4D/blob/main/docs/api.md#comparing-sequences).
-- [Viewer examples](https://github.com/open4dfoundation/Open4D/blob/main/examples/visualization/README.md) include GIF export and comparisons.
-- [Contributor setup and tests](https://github.com/open4dfoundation/Open4D/blob/main/docs/CONTRIBUTING.md) cover optional dependencies and packaging.
+  [comparing sequences](https://open4dfoundation.github.io/wiki/api/#comparing-sequences).
+- [Viewer examples](https://open4dfoundation.github.io/wiki/guides/visualization/) include GIF export and comparisons.
+- [Contributor setup and tests](https://github.com/open4dfoundation/Open4D/blob/main/.github/CONTRIBUTING.md) cover optional dependencies and packaging.
 
 Publication is still blocked by the unresolved component rights
-in [THIRD_PARTY.md](https://github.com/open4dfoundation/Open4D/blob/main/docs/THIRD_PARTY.md); preparing the package does not resolve them.
+in [THIRD_PARTY.md](https://github.com/open4dfoundation/Open4D/blob/main/.github/THIRD_PARTY.md); preparing the package does not resolve them.

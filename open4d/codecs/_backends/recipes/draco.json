@@ -13,7 +13,7 @@
     "versions": ">=0.3,<0.4"
   },
   "license": {
-    "ledger": "docs/THIRD_PARTY.md",
+    "ledger": ".github/THIRD_PARTY.md",
     "component": "open4d/codecs/draco/source",
     "decision": "EXCLUDED",
     "terms": "Apache-2.0",

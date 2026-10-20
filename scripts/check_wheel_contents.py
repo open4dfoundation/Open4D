@@ -44,8 +44,6 @@ PACKAGE_DIRS = {
     "open4d.transport": ROOT / "open4d/transport",
     "open4d.torch_ops": ROOT / "open4d/torch_ops",
     "open4d.visualization": ROOT / "open4d/visualization",
-    "open4d.integrations": ROOT / "open4d/integrations",
-    "open4d.integrations.open3d": ROOT / "open4d/integrations/open3d",
 }
 
 

@@ -18,19 +18,11 @@ prune open4d/codecs/queen/source
 prune open4d/codecs/3dgstream/source
 prune open4d/codecs/rerf/source
 prune open4d/codecs/vega/source
+prune open4d/codecs/_adapters
 prune open4d/reconstruction
-prune integrations/unity
-prune examples
-prune docs
-include docs/CHANGELOG.md
-include docs/CODE_OF_CONDUCT.md
-include docs/CONTRIBUTING.md
-include docs/SECURITY.md
-include docs/THIRD_PARTY.md
 prune scripts
 prune .github
 prune tests
-prune plugins
 
 recursive-exclude open4d/core/tests *
 recursive-exclude open4d/data/tests *
@@ -38,7 +30,6 @@ recursive-exclude open4d/ml/tests *
 recursive-exclude open4d/io/tests *
 recursive-exclude open4d/torch_ops/tests *
 recursive-exclude open4d/visualization/tests *
-recursive-exclude open4d/integrations/open3d/tests *
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store

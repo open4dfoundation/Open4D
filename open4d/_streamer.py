@@ -75,7 +75,7 @@ def _require() -> Any:
     The message names the source checkout rather than an extra, because there
     is no published `open4d-streamer` to resolve: the component is excluded
     from distribution while its provenance review is open (see
-    ``docs/THIRD_PARTY.md``). Advising ``pip install 'open4d[streamer]'`` would be
+    ``.github/THIRD_PARTY.md``). Advising ``pip install 'open4d[streamer]'`` would be
     advice that fails.
     """
     try:

@@ -70,8 +70,7 @@ jobs:
       - name: Run every Open3D-backed test
         run: >-
           python -m pytest -m open3d
-          tests/integrations/open3d tests/torch_ops tests/reconstruction/rgbd
-          tests/codecs/test_notebook.py
+          tests/io/test_open3d.py tests/torch_ops tests/reconstruction/rgbd
 
   research-codecs:
     name: Research codec contracts / CPU
@@ -166,7 +165,7 @@ jobs:
         run: |
           python -c "import PyQt6, pyqtgraph, OpenGL, PIL, open4d.visualization"
           python -c "from pxr import Usd; print(Usd.GetVersion())"
-          python -m pytest tests/visualization tests/examples/visualization
+          python -m pytest tests/visualization
       - name: Render and check the synthetic sample GIF
         env:
           OPEN4D_TEST_RENDER: "1"
@@ -176,7 +175,6 @@ jobs:
         run: |
           render_args=(
             tests/visualization/test_real_player.py
-            tests/examples/visualization/test_compare.py
             -k 'synthetic or empty or gif_after_single or live_viewer or sequential'
             --basetemp "$RUNNER_TEMP/open4d-render"
             --junitxml "$RUNNER_TEMP/open4d-render.xml"
@@ -372,8 +370,7 @@ jobs:
           open4d/transport open4d/codecs/*.py open4d/codecs/*/__init__.py
           open4d/codecs/_backends open4d/core open4d/io
           open4d/torch_ops open4d/visualization open4d/data open4d/ml
-          open4d/integrations
-          examples/visualization examples/streaming_demo.py scripts
+          scripts
       - name: Check shell syntax
         run: bash -n scripts/*.sh
       - name: Check local Markdown links

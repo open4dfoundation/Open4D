@@ -15,7 +15,7 @@
     "versions": ">=0.3,<0.4"
   },
   "license": {
-    "ledger": "docs/THIRD_PARTY.md",
+    "ledger": ".github/THIRD_PARTY.md",
     "component": "open4d/codecs/klt/source",
     "decision": "BLOCK",
     "terms": "See the upstream runtime and THIRD_PARTY.md; runtime, data and model terms are independent.",

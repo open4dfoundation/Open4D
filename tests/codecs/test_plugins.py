@@ -43,7 +43,7 @@ def entries(monkeypatch):
 
 def test_core_registry_is_useful_without_research_plugins(entries):
     assert {info.id for info in available_codecs()} == {codec.id for codec in REFERENCE_CODECS}
-    with pytest.raises(CodecError, match="pip install ./plugins/research"):
+    with pytest.raises(CodecError, match="pip install ./open4d/codecs/_adapters/research"):
         encode_sequence(None, "missing.o4d", codec="klt")
     assert [info.id for info in available_methods()] == ["rgbd"]
     with pytest.raises(ValueError, match="not installed"):

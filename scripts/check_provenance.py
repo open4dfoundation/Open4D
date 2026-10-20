@@ -23,11 +23,9 @@ AUDITED_DIRECTORY_ROOTS = (
 # the research tree is the auditable component.
 CODEC_ROOT = "open4d/codecs"
 EXPLICIT_REQUIRED_LEDGER_PATHS = (
-    "docs/assets",
-    "integrations/unity",
+    "open4d/codecs/_adapters",
     "open4d/streamer",
     "open4d/streamer/study",
-    "plugins",
 )
 ALLOWED_PACKAGES = {
     "open4d",
@@ -54,8 +52,6 @@ ALLOWED_PACKAGES = {
     "open4d.transport",
     "open4d.torch_ops",
     "open4d.visualization",
-    "open4d.integrations",
-    "open4d.integrations.open3d",
 }
 
 
@@ -288,7 +284,7 @@ def _expand_braces(path: str) -> list[str]:
 
 def main() -> int:
     errors: list[str] = []
-    ledger = (ROOT / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
+    ledger = (ROOT / ".github/THIRD_PARTY.md").read_text(encoding="utf-8")
     errors.extend(release_decision_errors(ledger))
 
     component_ledger = parse_component_ledger(ledger)
@@ -320,7 +316,7 @@ def main() -> int:
     for path in (
         *(f"{CODEC_ROOT}/{name}/source" for name in ("draco", "klt", "n4mc", "qndf", "qndf_int8", "vdmc",
                                                     "faster_vdmc", "tvmc", "tsmc", "queen", "rerf", "vega", "3dgstream")),
-        "open4d/reconstruction", "integrations/unity",
+        "open4d/codecs/_adapters", "open4d/reconstruction",
         "open4d/reconstruction/rgbd/app", "open4d/reconstruction/rgbd/src",
         "open4d/reconstruction/rgbd/include", "open4d/reconstruction/rgbd/python",
         "open4d/reconstruction/rgbd/tools",

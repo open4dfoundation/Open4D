@@ -50,10 +50,11 @@ def TOP_LEVEL(relative: str) -> bool:
 
 
 # Where an EXCLUDED component may legitimately appear, as recorded in its row:
-# adapters ship plugins/<name>; the core ships only rgbd's top-level Python API;
-# the separate streamer archives ship open4d/streamer (its study has its own row).
+# adapters ship open4d/codecs/_adapters/<name>; the core ships only rgbd's
+# top-level Python API; the separate streamer archives ship open4d/streamer
+# (its study has its own row).
 EXCLUDED_SCOPES: dict[str, dict[str, Callable[[str], bool]]] = {
-    "plugins": {"adapter": ALL},
+    "open4d/codecs/_adapters": {"adapter": ALL},
     "open4d/reconstruction/rgbd": {"core": TOP_LEVEL},
     "open4d/streamer": {"streamer": ALL},
 }
@@ -90,9 +91,9 @@ def _normalized(name: str) -> str:
 
 
 def adapter_directories(root: Path = ROOT) -> dict[str, str]:
-    """Map normalized adapter project names to their ``plugins/<dir>`` path."""
+    """Map normalized adapter project names to their ``open4d/codecs/_adapters/<dir>`` path."""
     result = {}
-    for pyproject in sorted((root / "plugins").glob("*/pyproject.toml")):
+    for pyproject in sorted((root / "open4d/codecs/_adapters").glob("*/pyproject.toml")):
         with pyproject.open("rb") as stream:
             name = tomllib.load(stream)["project"]["name"]
         result[_normalized(name)] = pyproject.parent.relative_to(root).as_posix()
@@ -156,6 +157,9 @@ def read_artifact(path: Path, root: Path = ROOT) -> Artifact:
         else:
             stripped = "/".join(parts[1:])
             repo = prefix + stripped if stripped else None
+        if kind == "adapter" and repo == prefix + "LICENSE":
+            # Adapters ship the root license; they keep no copy of their own.
+            repo = "LICENSE"
         artifact.members.append(Member(name, repo, data))
     return artifact
 
@@ -362,7 +366,7 @@ def expected_inventory_errors(artifacts: list[Artifact], root: Path = ROOT) -> l
 
 
 def build_report(artifact_dirs: list[Path], site: Path | None, root: Path = ROOT) -> dict:
-    ledger_text = (root / "docs/THIRD_PARTY.md").read_text(encoding="utf-8")
+    ledger_text = (root / ".github/THIRD_PARTY.md").read_text(encoding="utf-8")
     artifacts = []
     for directory in artifact_dirs:
         for path in sorted(directory.iterdir()) if directory.is_dir() else []:

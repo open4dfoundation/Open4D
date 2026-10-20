@@ -46,7 +46,7 @@ def get_method(identifier):
         raise ValueError(
             f"Reconstruction method {identifier!r} is not installed; "
             "inspect available_methods(). Research adapters can be installed "
-            "from an Open4D checkout with 'pip install ./plugins/research'; "
+            "from an Open4D checkout with 'pip install ./open4d/codecs/_adapters/research'; "
             "their external runtimes retain their own license terms."
         )
     try:

@@ -13,12 +13,12 @@ import tempfile
 import numpy as np
 
 import open4d
-import open4d.integrations.open3d
+import open4d.io
 from open4d.codecs import CodecError, available_codecs
 from open4d.io import inspect_sequence, open_sequence, write_sequence
 
 
-for module in (open4d, open4d.integrations.open3d):
+for module in (open4d, open4d.io):
     installed_path = Path(module.__file__).resolve()
     assert installed_path.is_relative_to(Path(sysconfig.get_path("purelib")).resolve()), installed_path
 print(f"Installed package: {open4d.__file__}")

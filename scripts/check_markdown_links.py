@@ -23,17 +23,11 @@ def markdown_files() -> list[Path]:
             "README.md",
         )
     ]
-    trees = [ROOT / name for name in ("docs", "apps", "examples", "scripts")]
+    trees = [ROOT / name for name in (".github", "scripts")]
     files = [path for path in roots if path.is_file()]
     for tree in trees:
         if tree.is_dir():
             files.extend(tree.rglob("*.md"))
-    for path in (
-        ROOT / "integrations/unity/README.md",
-        ROOT / "open4d/integrations/open3d/README.md",
-    ):
-        if path.is_file():
-            files.append(path)
     return sorted(set(files))
 
 

@@ -16,13 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--plugin", action="append", help="directory name under plugins; repeat to select")
+    parser.add_argument("--plugin", action="append", help="directory name under open4d/codecs/_adapters; repeat to select")
     args = parser.parse_args()
     output = args.out_dir.expanduser().resolve()
     if output == ROOT or ROOT in output.parents:
         parser.error("adapter build output must be outside the repository")
     output.mkdir(parents=True, exist_ok=True)
-    projects = {path.name: path for path in (ROOT / "plugins").iterdir() if (path / "pyproject.toml").is_file()}
+    projects = {path.name: path for path in (ROOT / "open4d/codecs/_adapters").iterdir() if (path / "pyproject.toml").is_file()}
     names = sorted(args.plugin or projects)
     unknown = set(names) - projects.keys()
     if unknown:
@@ -32,8 +32,8 @@ def main():
         with tempfile.TemporaryDirectory(prefix="open4d-plugin-build-") as directory:
             copied = Path(directory) / name
             copied.mkdir()
-            for filename in ("LICENSE", "pyproject.toml"):
-                shutil.copyfile(project / filename, copied / filename)
+            shutil.copyfile(ROOT / "LICENSE", copied / "LICENSE")
+            shutil.copyfile(project / "pyproject.toml", copied / "pyproject.toml")
             artifacts = Path(directory) / "dist"
             subprocess.run([sys.executable, "-m", "build", "--outdir", str(artifacts), str(copied)], check=True)
             for archive in sorted(artifacts.iterdir()):

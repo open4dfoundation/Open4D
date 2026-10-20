@@ -17,6 +17,9 @@ except ModuleNotFoundError:
 
 from check_wheel_contents import unsafe_zip_member_errors
 
+# Every adapter ships the root MIT license.
+LICENSE = Path(__file__).resolve().parents[1] / "LICENSE"
+
 
 def check_archive(path: Path, project: Path) -> list[str]:
     with (project / "pyproject.toml").open("rb") as stream:
@@ -52,7 +55,7 @@ def check_archive(path: Path, project: Path) -> list[str]:
             entries.read_string(archive.read(f"{root}/entry_points.txt").decode())
             if {section: dict(entries[section]) for section in entries.sections()} != expected_entries:
                 errors.append("adapter entry points differ from its manifest")
-            if archive.read(f"{root}/licenses/LICENSE") != (project / "LICENSE").read_bytes():
+            if archive.read(f"{root}/licenses/LICENSE") != LICENSE.read_bytes():
                 errors.append("adapter license bytes differ")
     else:
         with tarfile.open(path, "r:gz") as archive:
@@ -77,8 +80,8 @@ def check_archive(path: Path, project: Path) -> list[str]:
                 errors.append("adapter source archive is missing required metadata")
             else:
                 root = next(iter(roots))
-                for filename in ("LICENSE", "pyproject.toml"):
-                    if archive.extractfile(f"{root}/{filename}").read() != (project / filename).read_bytes():
+                for filename, expected in (("LICENSE", LICENSE), ("pyproject.toml", project / "pyproject.toml")):
+                    if archive.extractfile(f"{root}/{filename}").read() != expected.read_bytes():
                         errors.append(f"adapter source {filename} differs from its manifest")
     return errors
 
