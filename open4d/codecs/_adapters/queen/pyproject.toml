@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open4d-queen"
+version = "0.3.0"
+description = "MIT Open4D adapter registrations; no research implementations, data or weights"
+readme = {text = "This MIT package registers Open4D adapters only. It contains no research implementations, models, datasets, native binaries or CUDA extensions. Install the matching Open4D core from this revision, independently acquire each external runtime under its own license, and configure the documented OPEN4D backend root. Installing this adapter does not grant rights to any external runtime.", content-type = "text/plain"}
+requires-python = ">=3.10,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["open4d>=0.3.0,<0.4"]
+
+[project.entry-points."open4d.codecs"]
+"queen" = "open4d.codecs.queen:QUEEN_CODEC"
+
+[project.entry-points."open4d.reconstruction"]
+"queen" = "open4d.reconstruction._registry:queen_reconstruction"
+
+[tool.setuptools]
+packages = []
+include-package-data = false

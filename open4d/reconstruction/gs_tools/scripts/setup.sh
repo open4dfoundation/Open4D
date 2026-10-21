@@ -41,7 +41,7 @@ say() { printf '\n== %s\n' "$*"; }
 #
 # These were pinned submodules under `upstream/` until they were vendored as
 # plain tracked files: the two methods now sit beside this module under
-# open4d/reconstruction/, and the three rasterizers, the single simple-knn, and
+# codecs/, and the three rasterizers, the single simple-knn, and
 # the single glm copy live inside it. So nothing is fetched here anymore -- a
 # checkout either has these trees or is not a complete checkout of this
 # repository. SIBR_viewers is tracked but deliberately never built: it needs its
@@ -117,7 +117,7 @@ fi
 # environment where that import fails.
 if ! command -v nvcc >/dev/null 2>&1; then
   echo "nvcc is not on PATH. Point /usr/local/cuda at 12.6 and add its bin," >&2
-  echo "as ../../../requirements-gpu.txt describes; the extensions need it." >&2
+  echo "as ../../requirements-gpu.txt describes; the extensions need it." >&2
   exit 1
 fi
 

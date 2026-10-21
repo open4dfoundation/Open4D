@@ -12,6 +12,7 @@ from .dtypes import (
 )
 from .frame import Frame
 from .geometry import (
+    ATTRIBUTE_DOMAINS,
     GaussianCloud,
     Geometry,
     PointCloud,
@@ -26,8 +27,10 @@ from .provider import (
     TopologyMode,
 )
 from .sequence import Sequence, SequenceView
+from .texture import MeshTexture, TextureImage
 
 __all__ = [
+    "ATTRIBUTE_DOMAINS",
     "ATTRIBUTE_FLOAT_DTYPE",
     "ATTRIBUTE_INT_DTYPE",
     "COLOR_DTYPE",
@@ -39,12 +42,14 @@ __all__ = [
     "Geometry",
     "INDEX_DTYPE",
     "MemoryFrameProvider",
+    "MeshTexture",
     "NORMAL_DTYPE",
     "PointCloud",
     "POSITION_DTYPE",
     "Representation",
     "Sequence",
     "SequenceView",
+    "TextureImage",
     "TopologyMode",
     "TriangleMesh",
     "UV_DTYPE",

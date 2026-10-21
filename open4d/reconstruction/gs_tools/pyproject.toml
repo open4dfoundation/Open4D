@@ -2,7 +2,7 @@
 #
 # `open4d` is the lightweight NumPy-only core; installing it must never pull a
 # CUDA rasterizer. That separation is why this is `pip install -e
-# open4d/reconstruction/gs_tools` and why the import name is `gs_tools`, with no
+# codecs/gs_tools` and why the import name is `gs_tools`, with no
 # `open4d.` prefix. Runtime dependencies live in requirements.txt rather than
 # here for the same reason the root environment splits them out: torch comes from
 # PyTorch's cu126 index and the compiled extensions are per-machine builds, so a

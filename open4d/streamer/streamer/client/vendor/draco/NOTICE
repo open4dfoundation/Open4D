@@ -1,0 +1,14 @@
+Draco decoder attribution for the Open4D streamer distribution
+
+Copyright 2017 The Draco Authors.
+Google Inc. and other contributors (see the retained upstream AUTHORS file).
+
+Upstream: https://github.com/google/draco
+Revision: 47238930f698250f474163e1a29d77858aa5c158
+Files: javascript/draco_wasm_wrapper.js and javascript/draco_decoder.wasm
+
+Licensed under the Apache License, Version 2.0. See LICENSE beside this file.
+
+The decoder and JavaScript wrapper are unmodified copies from this revision.
+This attribution notice was added by Open4D. The upstream revision does not
+contain a root NOTICE file; this file is not presented as an upstream NOTICE.

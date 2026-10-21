@@ -19,6 +19,7 @@ from ._errors import (
     UnsupportedFeatureError,
     UnsupportedFormatError,
 )
+from ._open3d import frame_to_open3d
 
 __all__ = [
     "AmbiguousFormatError",
@@ -33,6 +34,7 @@ __all__ = [
     "UnsupportedFeatureError",
     "UnsupportedFormatError",
     "available_formats",
+    "frame_to_open3d",
     "inspect_sequence",
     "open_sequence",
     "write_sequence",

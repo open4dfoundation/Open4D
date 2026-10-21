@@ -1,0 +1,180 @@
+{
+  "schema": "open4d.backend-recipe/v1",
+  "name": "faster_vdmc",
+  "recipe_version": 2,
+  "summary": "Build the pinned Linux V-DMC runtime, including pinned HM and geometry dependencies; redistribution remains subject to the license ledger.",
+  "mode": "build",
+  "adapter": {
+    "group": "open4d.codecs",
+    "entry_points": [
+      "faster_vdmc"
+    ],
+    "distributions": [
+      "open4d-faster-vdmc"
+    ],
+    "versions": ">=0.3,<0.4"
+  },
+  "license": {
+    "ledger": ".github/THIRD_PARTY.md",
+    "component": "open4d/codecs/faster_vdmc/source",
+    "decision": "BLOCK",
+    "terms": "See the upstream runtime and THIRD_PARTY.md; runtime, data and model terms are independent.",
+    "restrictions": [
+      "No redistribution authorization is granted by this recipe."
+    ]
+  },
+  "components": {
+    "faster_vdmc": "source"
+  },
+  "profiles": {
+    "linux": {
+      "platform": {
+        "system": "Linux",
+        "machine": [
+          "x86_64"
+        ]
+      },
+      "unresolved": [],
+      "commands": {
+        "git": ">=2.20",
+        "cmake": ">=3.17",
+        "g++": ">=11,<14"
+      },
+      "sources": [
+        {
+          "id": "faster_vdmc",
+          "url": "https://github.com/cicm4/mpeg-vdmc-tm.git",
+          "commit": "93cdd5e1367b0f9f81c251ef89255bcb2f0d2d3f",
+          "path": "source"
+        },
+        {
+          "id": "directx_headers",
+          "url": "https://github.com/microsoft/DirectX-Headers.git",
+          "commit": "1b79ddaeabc4b16c772ca63adc5bdf7d5f741460",
+          "path": "source/dependencies/directx-headers"
+        },
+        {
+          "id": "directx_math",
+          "url": "https://github.com/microsoft/DirectXMath.git",
+          "commit": "b404898c9dcaff7b686bbaf6d2fba8ff0184a17e",
+          "path": "source/dependencies/directx-math"
+        },
+        {
+          "id": "directx_mesh",
+          "url": "https://github.com/microsoft/DirectXMesh.git",
+          "commit": "2c0ed18e271afa99a70948f784dfe082127fa0de",
+          "path": "source/dependencies/directx-mesh"
+        },
+        {
+          "id": "uvatlas",
+          "url": "https://github.com/microsoft/UVAtlas.git",
+          "commit": "5af1b5d2a0fd9e0e5d17aa0971ab17c890e318e0",
+          "path": "source/dependencies/uvatlas"
+        },
+        {
+          "id": "tinyply",
+          "url": "https://github.com/ddiakopoulos/tinyply.git",
+          "commit": "40aa4a0ae9e9c203e11893f78b8bcaf8a50e65f0",
+          "path": "source/dependencies/tinyply"
+        },
+        {
+          "id": "mmetric",
+          "url": "https://github.com/MPEGGroup/mpeg-pcc-mmetric.git",
+          "commit": "5faa660e05ab5ee7febe4cc96dd9f24d02abd5b6",
+          "path": "source/dependencies/mmetric"
+        },
+        {
+          "id": "glfw",
+          "url": "https://github.com/glfw/glfw.git",
+          "commit": "0a49ef0a00baa3ab520ddc452f0e3b1e099c5589",
+          "path": "source/dependencies/mmetric/dependencies/glfw"
+        },
+        {
+          "id": "dmetric",
+          "url": "https://github.com/MPEGGroup/mpeg-pcc-dmetric.git",
+          "commit": "bd6df59f7a6e1176706a88b3531c9be7f5db086f",
+          "path": "source/dependencies/mmetric/dependencies/dmetric"
+        },
+        {
+          "id": "hm",
+          "url": "https://vcgit.hhi.fraunhofer.de/jvet/HM.git",
+          "commit": "f9f83a027b4bc33b60ebac4ed72a00d3fe2a6d93",
+          "path": "source/dependencies/hm"
+        }
+      ],
+      "steps": [
+        {
+          "name": "configure",
+          "argv": [
+            "cmake",
+            "-S",
+            "{root}/source",
+            "-B",
+            "{root}/source/build",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+            "-DBITSTREAM_TRACE=OFF",
+            "-DBUILD_WRAPPER_APPS=OFF",
+            "-DBUILD_UNIT_TEST_APPS=OFF",
+            "-DUSE_DRACO_GEOMETRY_CODEC=OFF",
+            "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={root}/source/build/bin",
+            "-DCMAKE_CXX_FLAGS=-I{root}/source/dependencies/mmetric/dependencies -I{root}/source/source/wrapper/colourConverter -I{root}/source/source/wrapper/videoEncoder"
+          ],
+          "env": {
+            "GIT_COMMITTER_NAME": "Open4D build",
+            "GIT_COMMITTER_EMAIL": "build@localhost",
+            "CC": "gcc",
+            "CXX": "g++"
+          }
+        },
+        {
+          "name": "compile",
+          "argv": [
+            "cmake",
+            "--build",
+            "{root}/source/build",
+            "--parallel",
+            "{jobs}",
+            "--target",
+            "encode",
+            "decode"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "path": "source/build/bin/encode",
+          "executable": true
+        },
+        {
+          "path": "source/build/bin/decode",
+          "executable": true
+        }
+      ],
+      "register": {
+        "tools": {
+          "encoder": "{root}/source/build/bin/encode",
+          "decoder": "{root}/source/build/bin/decode"
+        }
+      }
+    }
+  },
+  "attach": {
+    "components": {
+      "faster_vdmc": {
+        "candidates": [
+          ".",
+          "open4d/codecs/faster_vdmc/source",
+          "faster_vdmc"
+        ],
+        "markers": [
+          "CMakeLists.txt"
+        ]
+      }
+    }
+  },
+  "smoke": {
+    "kind": "roundtrip",
+    "codec": "faster_vdmc"
+  }
+}

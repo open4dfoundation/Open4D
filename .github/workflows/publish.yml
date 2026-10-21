@@ -1,16 +1,26 @@
 name: Publish
 
-# Trusted publishing (OIDC): no API token is stored in the repository.
-# Before the first run, register this workflow as a pending publisher on
-# test.pypi.org and pypi.org (workflow "publish.yml", environments "testpypi"
-# and "pypi"), and protect both GitHub environments with required reviewers.
-# The gate job fails while THIRD_PARTY.md has unresolved BLOCK entries.
+# Two stages with trusted publishing (OIDC); no API token is stored anywhere.
+#
+# 1. Stage `testpypi` (manual) requires the cleared provenance ledger, builds
+#    the core and every adapter exactly once, uploads those files to TestPyPI,
+#    downloads them back by SHA-256 and runs the installed smoke tests in fresh
+#    environments. It keeps the files, their digests, a draft approval and the
+#    exclusion evidence as run artifacts for the maintainer's review.
+# 2. Stage `pypi` (manual) or a published GitHub release promotes the SAME files
+#    to PyPI without rebuilding. It requires `.github/release-approval.toml`
+#    naming that successful run and every file's digest; see .github/THIRD_PARTY.md.
+#
+# Before the first run: create the GitHub environments `testpypi` and `pypi`
+# with required reviewers, and register this workflow (`publish.yml`) as a
+# trusted publisher for `open4d` and every `open4d-*` adapter project on
+# test.pypi.org (environment `testpypi`) and pypi.org (environment `pypi`).
 
 on:
   workflow_dispatch:
     inputs:
-      index:
-        description: Package index to publish to
+      stage:
+        description: testpypi builds and verifies once; pypi promotes the approved TestPyPI-verified files
         type: choice
         options: [testpypi, pypi]
         default: testpypi
@@ -27,6 +37,7 @@ concurrency:
 jobs:
   gate:
     name: Require cleared provenance ledger
+    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'testpypi'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -40,10 +51,10 @@ jobs:
           python scripts/check_release_gate.py
 
   build:
-    name: Build and check distributions
+    name: Build core and adapter distributions once
     needs: gate
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,12 +63,158 @@ jobs:
       - name: Build once
         run: |
           python -m pip install 'build>=1.2' 'twine>=6'
-          python -m build --outdir dist
-      - name: Check distribution contents
+          python -m build --outdir "$RUNNER_TEMP/release-dist"
+          python scripts/build_plugins.py --out-dir "$RUNNER_TEMP/release-dist"
+      - name: Check distribution contents and exclusions
         run: |
-          python scripts/check_wheel_contents.py dist/open4d-*.whl
-          python scripts/check_sdist_contents.py dist/open4d-*.tar.gz
-          python -m twine check --strict dist/*
+          python scripts/check_wheel_contents.py "$RUNNER_TEMP"/release-dist/open4d-*.whl
+          python scripts/check_sdist_contents.py "$RUNNER_TEMP"/release-dist/open4d-*.tar.gz
+          python -m twine check --strict "$RUNNER_TEMP"/release-dist/*
+          mkdir "$RUNNER_TEMP/release-evidence"
+          python scripts/check_release_exclusions.py --artifacts "$RUNNER_TEMP/release-dist" \
+            --json "$RUNNER_TEMP/release-evidence/exclusion-evidence.json"
+      - name: Test wheel, source and adapters in clean environments
+        run: |
+          for kind in wheel source; do
+            python -m venv "$RUNNER_TEMP/$kind-smoke"
+            if [ "$kind" = wheel ]; then
+              artifact=("$RUNNER_TEMP"/release-dist/open4d-*.whl)
+            else
+              artifact=("$RUNNER_TEMP"/release-dist/open4d-*.tar.gz)
+            fi
+            "$RUNNER_TEMP/$kind-smoke/bin/python" -m pip install "${artifact[0]}"
+            "$RUNNER_TEMP/$kind-smoke/bin/python" -m pip check
+            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/$kind-smoke/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py")
+          done
+          core=("$RUNNER_TEMP"/release-dist/open4d-*.whl)
+          python scripts/smoke_installed_plugins.py --core-wheel "${core[0]}" --adapters "$RUNNER_TEMP/release-dist"
+      - name: Record digests and a draft approval for maintainer review
+        run: |
+          (cd "$RUNNER_TEMP/release-dist" && sha256sum -- * > "$RUNNER_TEMP/release-evidence/SHA256SUMS")
+          python scripts/check_release_gate.py --draft-approval --artifacts "$RUNNER_TEMP/release-dist" \
+            --build-run-id "$GITHUB_RUN_ID" --build-commit "$GITHUB_SHA" \
+            > "$RUNNER_TEMP/release-evidence/release-approval.draft.toml"
+          cat "$RUNNER_TEMP/release-evidence/SHA256SUMS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-distributions
+          path: ${{ runner.temp }}/release-dist/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: ${{ runner.temp }}/release-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/open4d/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-evidence
+          path: evidence/
+      - name: Upload only the files built and digested above
+        run: |
+          (cd dist && sha256sum --strict -c ../evidence/SHA256SUMS)
+          test "$(ls dist | sort)" = "$(sed 's/^[0-9a-f]*  //' evidence/SHA256SUMS | sort)"
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+
+  testpypi-verify:
+    name: Install from TestPyPI and smoke test
+    needs: testpypi
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: ${{ runner.temp }}/built
+      - name: Require TestPyPI to serve the exact built files
+        run: >-
+          python scripts/verify_index_release.py --index testpypi
+          --dist "$RUNNER_TEMP/built" --download-to "$RUNNER_TEMP/from-testpypi"
+      - name: Install the TestPyPI files in fresh environments and run smoke tests
+        run: |
+          for kind in wheel source; do
+            python -m venv "$RUNNER_TEMP/testpypi-$kind"
+            if [ "$kind" = wheel ]; then
+              artifact=("$RUNNER_TEMP"/from-testpypi/open4d-*.whl)
+            else
+              artifact=("$RUNNER_TEMP"/from-testpypi/open4d-*.tar.gz)
+            fi
+            "$RUNNER_TEMP/testpypi-$kind/bin/python" -m pip install "${artifact[0]}"
+            "$RUNNER_TEMP/testpypi-$kind/bin/python" -m pip check
+            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/testpypi-$kind/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py")
+          done
+          core=("$RUNNER_TEMP"/from-testpypi/open4d-*.whl)
+          python scripts/smoke_installed_plugins.py --core-wheel "${core[0]}" --adapters "$RUNNER_TEMP/from-testpypi"
+
+  promote-gate:
+    name: Verify approval of TestPyPI-verified files
+    if: github.event_name == 'release' || inputs.stage == 'pypi'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run-id: ${{ steps.approval.outputs.run-id }}
+      commit: ${{ steps.approval.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify containment and release clearance
+        run: |
+          python scripts/check_provenance.py
+          python scripts/check_release_gate.py
+      - name: Read the approved build run
+        id: approval
+        shell: python
+        run: |
+          import os
+          import tomllib
+          build = tomllib.load(open(".github/release-approval.toml", "rb"))["build"]
+          run_id, commit = int(build["run_id"]), str(build["commit"])
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"run-id={run_id}\ncommit={commit}\n")
+      - name: Require that run to be a successful TestPyPI stage of this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.approval.outputs.run-id }}
+          COMMIT: ${{ steps.approval.outputs.commit }}
+        run: |
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '[(.path | split("@")[0]), .event, .status, .conclusion, .head_sha] | join(" ")')
+          echo "Approved run $RUN_ID: $run"
+          test "$run" = ".github/workflows/publish.yml workflow_dispatch completed success $COMMIT"
+          verified=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name == "Install from TestPyPI and smoke test") | .conclusion')
+          test "$verified" = success
       - name: Match the release tag to the package version
         if: github.event_name == 'release'
         env:
@@ -70,60 +227,73 @@ jobs:
           tag = os.environ["TAG"]
           assert tag == f"v{version}", f"release tag {tag} does not match version {version}"
           PY
-      - name: Test wheel and source in clean environments
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: ${{ runner.temp }}/approved
+          run-id: ${{ steps.approval.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Require the approval to name exactly these files and digests
+        env:
+          RUN_ID: ${{ steps.approval.outputs.run-id }}
+          COMMIT: ${{ steps.approval.outputs.commit }}
         run: |
-          for kind in wheel source; do
-            python -m venv "$RUNNER_TEMP/$kind-smoke"
-            if [ "$kind" = wheel ]; then
-              artifact=(dist/open4d-*.whl)
-            else
-              artifact=(dist/open4d-*.tar.gz)
-            fi
-            "$RUNNER_TEMP/$kind-smoke/bin/python" -m pip install "${artifact[0]}"
-            "$RUNNER_TEMP/$kind-smoke/bin/python" -m pip check
-            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/$kind-smoke/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_installed_io.py")
-          done
+          python scripts/check_release_gate.py --artifacts "$RUNNER_TEMP/approved" \
+            --require-scope pypi --build-run-id "$RUN_ID" --build-commit "$COMMIT"
+          python scripts/verify_index_release.py --index testpypi --dist "$RUNNER_TEMP/approved" --attempts 1
       - uses: actions/upload-artifact@v4
         with:
-          name: distributions
-          path: dist/
+          name: approved-distributions
+          path: ${{ runner.temp }}/approved/
           if-no-files-found: error
           retention-days: 7
 
-  testpypi:
-    name: Publish to TestPyPI
-    needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.index == 'testpypi'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/project/open4d/
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: distributions
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
   pypi:
-    name: Publish to PyPI
-    needs: build
-    if: github.event_name == 'release' || inputs.index == 'pypi'
+    name: Promote the approved files to PyPI
+    needs: promote-gate
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment:
       name: pypi
       url: https://pypi.org/project/open4d/
     permissions:
+      contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
-          name: distributions
+          name: approved-distributions
           path: dist/
+      - name: Re-verify the approved digests immediately before upload
+        env:
+          RUN_ID: ${{ needs.promote-gate.outputs.run-id }}
+          COMMIT: ${{ needs.promote-gate.outputs.commit }}
+        run: |
+          python scripts/check_release_gate.py --artifacts dist --require-scope pypi \
+            --build-run-id "$RUN_ID" --build-commit "$COMMIT"
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  pypi-verify:
+    name: Confirm PyPI serves the approved files
+    needs: [promote-gate, pypi]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: approved-distributions
+          path: ${{ runner.temp }}/approved
+      - name: Compare PyPI digests with the approved files
+        run: python scripts/verify_index_release.py --index pypi --dist "$RUNNER_TEMP/approved"

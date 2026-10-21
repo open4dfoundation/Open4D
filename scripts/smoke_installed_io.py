@@ -13,12 +13,12 @@ import tempfile
 import numpy as np
 
 import open4d
-import open4d.integrations.open3d
-from open4d.codec import CodecError, available_codecs
+import open4d.io
+from open4d.codecs import CodecError, available_codecs
 from open4d.io import inspect_sequence, open_sequence, write_sequence
 
 
-for module in (open4d, open4d.integrations.open3d):
+for module in (open4d, open4d.io):
     installed_path = Path(module.__file__).resolve()
     assert installed_path.is_relative_to(Path(sysconfig.get_path("purelib")).resolve()), installed_path
 print(f"Installed package: {open4d.__file__}")
@@ -74,10 +74,9 @@ with tempfile.TemporaryDirectory() as directory:
                ("encode", "decode", "visualize", "reconstruct", "stream", "receive"))
     codecs = available_codecs()
     installed = {info.id for info in codecs}
-    assert installed == {"klt", "n4mc", "qndf", "qndf-int8", "vdmc", "faster_vdmc",
-                         "tvmc", "tsmc", "vega", "queen", "3dgstream", "rerf"}
+    assert installed == {"npz", "raw", "deflate", "bzip2", "lzma", "rle"}
     assert all(info.suffixes == (".o4d",) for info in codecs)
-    from open4d.codec._research import research_module
+    from open4d.codecs._research import research_module
     os.environ.pop("OPEN4D_RESEARCH_ROOT", None)
     try:
         research_module("klt.klt")
@@ -87,13 +86,13 @@ with tempfile.TemporaryDirectory() as directory:
         raise AssertionError("wheel unexpectedly includes KLT research source")
 
     from concurrent.futures import ThreadPoolExecutor
-    from open4d.codec import inspect_o4d
-    from open4d.codec._npz import REFERENCE_CODECS
+    from open4d.codecs import inspect_o4d
+    from open4d.codecs._npz import REFERENCE_CODECS
     from open4d.demo import mesh_sequence
 
     with mesh_sequence(side=3, frames=2) as source:
         reference = next(codec for codec in REFERENCE_CODECS if codec.id == "npz")
-        artifact = open4d.encode(source, Path(directory) / "reference.o4d", codec=reference)
+        artifact = open4d.encode(source, Path(directory) / "reference.o4d", codec="npz")
         assert artifact.read_bytes().startswith(b"VMESH\x00\x01\x00")
         assert inspect_o4d(artifact)["codec"] == "npz"
         with open4d.decode(artifact) as decoded:
@@ -109,4 +108,18 @@ with tempfile.TemporaryDirectory() as directory:
         for expected, actual in zip(source, restored):
             np.testing.assert_array_equal(actual.geometry.positions, expected.geometry.positions)
             assert actual.timestamp == expected.timestamp
+    for geometry in (
+        open4d.PointCloud([[0., 0., 0.], [1., 0., 0.]], attributes={"id": np.array([3, 7])}),
+        open4d.GaussianCloud([[0., 0., 0.]], [[.1, .2, .3]], [[1., 0., 0., 0.]], [.8]),
+    ):
+        with open4d.Sequence(open4d.MemoryFrameProvider([
+            open4d.Frame(4, .25, geometry, {"take": "universal"})
+        ])) as source:
+            artifact = open4d.encode(source, Path(directory) / "universal.o4d", codec="npz", overwrite=True)
+            with open4d.decode(artifact) as restored:
+                assert type(restored[0].geometry) is type(geometry)
+                assert restored.timestamps == (.25,) and restored[0].frame_index == 4
+                np.testing.assert_array_equal(restored[0].geometry.positions, geometry.positions)
+                for key, value in geometry.attributes.items():
+                    np.testing.assert_array_equal(restored[0].geometry.attributes[key], value)
     print("Installed I/O, CLI, O4D round trip, codec discovery and mesh streaming passed")

@@ -7,6 +7,10 @@ constants, the factory-calibration camera models, colour alignment and the
 transform reader are copied here verbatim in behaviour. The RGB-D tests compare
 this module with the scripts so the two cannot drift apart.
 
+The projector also takes a ``CameraMode`` (see ``_camera``) for captures that
+use other image sizes, crops, colour resolutions or depth units; the default
+mode reproduces the live receiver's fixed Orbbec setting exactly.
+
 OpenCV is imported only when a projector is built or used.
 """
 
@@ -56,34 +60,50 @@ def distortion(values: list[float]) -> np.ndarray:
                      values[6], values[7], values[8], values[9]], dtype=np.float64)
 
 
-def depth_model(factory_path: Path) -> tuple[np.ndarray, np.ndarray]:
+def depth_model(factory_path: Path, mode=None) -> tuple[np.ndarray, np.ndarray]:
     item = camera_entry(factory_path, "CALIBRATION_CameraPurposeDepth")
     values = item["Intrinsics"]["ModelParameters"]
     sensor_width = item["SensorWidth"]
     sensor_height = item["SensorHeight"]
+    crop_x, crop_y = NFOV_UNBINNED_CROP_X, NFOV_UNBINNED_CROP_Y
+    if mode is not None:
+        # The binned calibration resolution, then the mode's crop (K4A model).
+        sensor_width = sensor_width / mode.depth_binning
+        sensor_height = sensor_height / mode.depth_binning
+        crop_x, crop_y = mode.depth_crop
     matrix = np.array([
         [values[2] * sensor_width, 0,
-         values[0] * sensor_width - NFOV_UNBINNED_CROP_X - 0.5],
+         values[0] * sensor_width - crop_x - 0.5],
         [0, values[3] * sensor_height,
-         values[1] * sensor_height - NFOV_UNBINNED_CROP_Y - 0.5],
+         values[1] * sensor_height - crop_y - 0.5],
         [0, 0, 1],
     ], dtype=np.float64)
     return matrix, distortion(values)
 
 
-def color_model(factory_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def color_model(factory_path: Path, mode=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     item = camera_entry(factory_path, "CALIBRATION_CameraPurposePhotoVideo")
     values = item["Intrinsics"]["ModelParameters"]
     sensor_width = item["SensorWidth"]
     sensor_height = item["SensorHeight"]
-    scale = 1280.0 / sensor_width
-    crop_y = (sensor_height * scale - 720.0) / 2.0
-    matrix = np.array([
-        [values[2] * sensor_width * scale, 0, values[0] * sensor_width * scale - 0.5],
-        [0, values[3] * sensor_height * scale,
-         values[1] * sensor_height * scale - crop_y - 0.5],
-        [0, 0, 1],
-    ], dtype=np.float64)
+    width, height = (1280, 720) if mode is None else mode.color_size
+    if mode is not None and mode.color_binned is not None:
+        (binned_width, binned_height), (crop_x, crop_y) = mode.color_binned, mode.color_crop
+        matrix = np.array([
+            [values[2] * binned_width, 0, values[0] * binned_width - crop_x - 0.5],
+            [0, values[3] * binned_height, values[1] * binned_height - crop_y - 0.5],
+            [0, 0, 1],
+        ], dtype=np.float64)
+    else:
+        # Scale the sensor to the image width and crop the height evenly.
+        scale = float(width) / sensor_width
+        crop_y = (sensor_height * scale - float(height)) / 2.0
+        matrix = np.array([
+            [values[2] * sensor_width * scale, 0, values[0] * sensor_width * scale - 0.5],
+            [0, values[3] * sensor_height * scale,
+             values[1] * sensor_height * scale - crop_y - 0.5],
+            [0, 0, 1],
+        ], dtype=np.float64)
     rt = item["Rt"]
     depth_to_color = np.eye(4, dtype=np.float64)
     depth_to_color[:3, :3] = np.asarray(rt["Rotation"], dtype=np.float64).reshape(3, 3)
@@ -94,37 +114,50 @@ def color_model(factory_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 class CameraProjector:
     """Rectify depth and align the camera's RGB image to depth geometry."""
 
-    def __init__(self, factory_path: Path):
+    def __init__(self, factory_path: Path, mode=None):
         cv2 = importlib.import_module("cv2")
-        self.depth_k, self.depth_d = depth_model(factory_path)
-        self.color_k, self.color_d, self.depth_to_color = color_model(factory_path)
+        self.width, self.height = (WIDTH, HEIGHT) if mode is None else mode.depth_size
+        self.color_size = (1280, 720) if mode is None else mode.color_size
+        self.depth_scale = 1000.0 if mode is None else mode.depth_scale
+        self.depth_k, self.depth_d = depth_model(factory_path, mode)
+        self.color_k, self.color_d, self.depth_to_color = color_model(factory_path, mode)
         self.map_x, self.map_y = cv2.initUndistortRectifyMap(
-            self.depth_k, self.depth_d, None, self.depth_k, (WIDTH, HEIGHT), cv2.CV_32FC1)
-        y, x = np.mgrid[0:HEIGHT, 0:WIDTH]
+            self.depth_k, self.depth_d, None, self.depth_k, (self.width, self.height), cv2.CV_32FC1)
+        y, x = np.mgrid[0:self.height, 0:self.width]
         self.x_factor = ((x.astype(np.float64) - self.depth_k[0, 2]) / self.depth_k[0, 0]).ravel()
         self.y_factor = ((y.astype(np.float64) - self.depth_k[1, 2]) / self.depth_k[1, 1]).ravel()
 
     @staticmethod
-    def decode_color(color_jpeg: bytes) -> np.ndarray:
+    def decode_color(color_jpeg: bytes, size: tuple[int, int] = (1280, 720)) -> np.ndarray:
         cv2 = importlib.import_module("cv2")
         color_bgr = cv2.imdecode(np.frombuffer(color_jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if color_bgr is None or color_bgr.shape[:2] != (720, 1280):
-            raise RuntimeError("unable to decode 1280x720 camera MJPEG")
+        if color_bgr is None or color_bgr.shape[:2] != (size[1], size[0]):
+            raise RuntimeError(f"unable to decode {size[0]}x{size[1]} camera MJPEG")
         return color_bgr
 
-    def prepare_from_bgr(self, depth_raw: np.ndarray,
-                         color_bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def rectify(self, depth_raw: np.ndarray) -> np.ndarray:
         cv2 = importlib.import_module("cv2")
-        rectified_depth = cv2.remap(depth_raw, self.map_x, self.map_y, cv2.INTER_NEAREST,
-                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-        z = rectified_depth.astype(np.float64).ravel() / 1000.0
+        return cv2.remap(depth_raw, self.map_x, self.map_y, cv2.INTER_NEAREST,
+                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    def color_coordinates(self, rectified_depth: np.ndarray) -> np.ndarray:
+        """Colour-image pixel (u, v) of each rectified depth pixel; -1 where unseen."""
+        cv2 = importlib.import_module("cv2")
+        z = rectified_depth.astype(np.float64).ravel() / self.depth_scale
         points = np.column_stack((self.x_factor * z, self.y_factor * z, z))
         points_color = (self.depth_to_color[:3, :3] @ points.T).T + self.depth_to_color[:3, 3]
         projected, _ = cv2.projectPoints(points_color, np.zeros(3), np.zeros(3),
                                          self.color_k, self.color_d)
-        uv = projected.reshape(HEIGHT, WIDTH, 2).astype(np.float32)
-        invalid = (rectified_depth == 0) | (points_color[:, 2].reshape(HEIGHT, WIDTH) <= 0)
+        uv = projected.reshape(self.height, self.width, 2).astype(np.float32)
+        invalid = (rectified_depth == 0) | (points_color[:, 2].reshape(self.height, self.width) <= 0)
         uv[invalid] = -1
+        return uv
+
+    def prepare_from_bgr(self, depth_raw: np.ndarray,
+                         color_bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        cv2 = importlib.import_module("cv2")
+        rectified_depth = self.rectify(depth_raw)
+        uv = self.color_coordinates(rectified_depth)
         aligned_bgr = cv2.remap(color_bgr, uv[:, :, 0], uv[:, :, 1], cv2.INTER_LINEAR,
                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
         aligned_rgb = cv2.cvtColor(aligned_bgr, cv2.COLOR_BGR2RGB)

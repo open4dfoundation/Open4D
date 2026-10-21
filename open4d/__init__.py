@@ -22,24 +22,28 @@ from .core import (
     GaussianCloud,
     Geometry,
     MemoryFrameProvider,
+    MeshTexture,
     PointCloud,
     Representation,
     Sequence,
     SequenceView,
+    TextureImage,
     TopologyMode,
     TriangleMesh,
     dtypes,
 )
 from ._api import load, save, unload, reconstruct, stream
 from ._streamer import StreamerDependencyError
-from .codec import available_codecs, decode_sequence as decode, encode_sequence as encode, migrate_legacy
+from .codecs import available_codecs, decode_sequence as decode, encode_sequence as encode, migrate_legacy
 from .transport import receive, send
 from .gaussians import GaussianSplats, GaussianRun, NeuralGaussianFrame, load_gaussians
 from .metrics import compare_meshes, compare_sequences
-from .visualization import visualize
+from .visualization import Visualizer, visualize
 from .native import NativeSequence, NeuralFieldFrame, import_native
 from .orbit import OrbitCamera, OrbitScene, load_orbit
 from .reconstruction.rgbd import RGBDCapture, load_capture as load_rgbd_capture
+from .reconstruction import MultiviewCapture, available_methods
+from . import data, ml
 
 __all__ = [
     "ATTRIBUTE_FLOAT_DTYPE",
@@ -57,11 +61,14 @@ __all__ = [
     "OrbitCamera",
     "OrbitScene",
     "RGBDCapture",
+    "MultiviewCapture",
+    "Visualizer",
     "FrameProvider",
     "GaussianCloud",
     "Geometry",
     "INDEX_DTYPE",
     "MemoryFrameProvider",
+    "MeshTexture",
     "NORMAL_DTYPE",
     "PointCloud",
     "POSITION_DTYPE",
@@ -69,10 +76,14 @@ __all__ = [
     "Sequence",
     "SequenceView",
     "StreamerDependencyError",
+    "TextureImage",
     "TopologyMode",
     "TriangleMesh",
     "UV_DTYPE",
     "available_codecs",
+    "available_methods",
+    "data",
+    "ml",
     "decode",
     "encode",
     "migrate_legacy",

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from open4d.core import Sequence
 
-from ._frames import LazyRenderSequence, UP_AXES, UP_TO_Z
+from ._frames import GaussianFrames, LazyRenderSequence, UP_AXES, UP_TO_Z
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,11 @@ def _prepare(
     up: str | None,
     cache_size: int,
 ):
-    if not isinstance(sequence, Sequence):
-        raise TypeError("sequence must be an open4d.Sequence")
+    if GaussianFrames.accepts(sequence):
+        sequence = GaussianFrames(sequence, fps if fps is not None else 30.0)
+    elif not isinstance(sequence, Sequence):
+        raise TypeError("sequence must be an open4d.Sequence, a list of "
+                        "GaussianSplats or NeuralGaussianFrame, or a GaussianRun")
     if not len(sequence):
         raise ValueError("cannot visualize an empty sequence")
     if not isinstance(stride, int) or isinstance(stride, bool) or stride < 1:
@@ -71,16 +74,17 @@ def _prepare(
 
 
 def _open_source(source: Sequence | str | os.PathLike[str]) -> tuple[Sequence, bool]:
-    if isinstance(source, Sequence):
+    if isinstance(source, Sequence) or GaussianFrames.accepts(source):
         return source, False
     if isinstance(source, (str, os.PathLike)):
         from open4d import _api as public_api
 
-        from open4d.codec._o4d_format import is_mesh_profile
+        from open4d.codecs._o4d_format import inspect_o4d, is_mesh_profile
 
         suffix = Path(source).suffix.lower()
         if suffix == ".o4d" and not is_mesh_profile(source):
-            raise TypeError("the Qt viewer takes mesh sequences; Gaussian runs need their native renderer")
+            if inspect_o4d(source)["representation"] != "geometry_sequence":
+                raise TypeError("the Qt viewer takes geometry sequences; Gaussian runs need their native renderer")
         sequence = public_api.load(source)
         if not isinstance(sequence, Sequence):
             sequence.close()
@@ -125,17 +129,33 @@ def visualize(
     fps: float | None = None,
     up: str | None = None,
     cache_size: int = 3,
+    baseline: Sequence | str | os.PathLike[str] | None = None,
+    texture=None,
+    baseline_texture=None,
     **viewer_options,
 ) -> None:
     """Open an interactive Qt viewer for a sequence or sequence file.
 
     PyQt6, pyqtgraph, and PyOpenGL are imported only when this function runs.
     Stride skips frames while keeping the source speed; fps overrides playback.
+    Baseline sequences must have equal frame counts and matching timestamps;
+    comparison panes share camera controls. Texture and baseline_texture are
+    explicit RGB(A) image arrays applied using each mesh's UVs.
+
+    Gaussian sequences -- GaussianCloud frames, a list of GaussianSplats or
+    NeuralGaussianFrame, or a GaussianRun -- are drawn as splats: projected
+    covariance, Gaussian falloff and depth-sorted alpha blending, with SH
+    evaluated for the current view. Frames without their own timing are
+    stamped at ``fps`` (default 30). Contexts without instanced OpenGL show
+    Gaussian centers instead and say so in the overlay.
     """
     from . import _qt
 
+    if baseline is None and baseline_texture is not None:
+        raise ValueError("baseline_texture requires a baseline sequence")
     _qt.check_available()
     sequence, owned = _open_source(source)
+    reference, reference_owned = None, False
     try:
         frames, playback_fps = _prepare(
             sequence,
@@ -144,8 +164,25 @@ def visualize(
             up=up,
             cache_size=cache_size,
         )
-        _qt.play(frames, _options(playback_fps, viewer_options))
+        options = _options(playback_fps, viewer_options)
+        if baseline is None and texture is None:
+            _qt.play(frames, options)
+        else:
+            from ._visualizer import Visualizer
+
+            if baseline is not None:
+                reference, reference_owned = _open_source(baseline)
+            values = dict(viewer_options)
+            # _prepare has already resolved metadata and stride-adjusted FPS.
+            recorded = str(getattr(sequence, "metadata", {}).get("up_axis", "")).lower()
+            selected_up = up or (recorded if recorded in UP_AXES else "z")
+            with Visualizer(up=selected_up, **values) as viewer:
+                viewer.play(sequence, baseline=reference, stride=stride, fps=fps,
+                            cache_size=cache_size, texture=texture,
+                            baseline_texture=baseline_texture)
     finally:
+        if reference_owned:
+            reference.close()
         if owned:
             sequence.close()
 

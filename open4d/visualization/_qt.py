@@ -11,6 +11,10 @@ Shading is baked into vertex colors by `render_frames.shade` rather than left to
 pyqtgraph's `shaded` shader, which lights from the camera and so flattens the
 surface as the view moves.
 
+Gaussian frames are drawn as splats by `_splats` -- projected covariance,
+Gaussian falloff, back-to-front blending -- or as their centers where the
+OpenGL context lacks instancing.
+
 The scene and the window are built separately. `--save` wants a GL widget of an
 exact size and no chrome; a widget that has never been shown reports its default
 640x480 and renders at that aspect, so sizing it explicitly matters.
@@ -27,13 +31,28 @@ from open4d._files import publish_file
 
 from ._deps import require
 from . import _frames as render_frames
+from ._splats import splat_item
 
 
-def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
+# Qt's application owns process-wide platform/OpenGL state. Keep it alive
+# between standalone GIF calls and explicit-lifetime viewers instead of
+# repeatedly destroying/recreating it as a temporary Scene goes out of scope.
+_APPLICATION = None
+
+
+def _application(QtWidgets):
+    global _APPLICATION
+    _APPLICATION = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    return _APPLICATION
+
+
+def metrics_lines(frame, position: int, total: int, fps: float,
+                  gaussians: str = "Gaussian splats") -> list[str]:
     """The few numbers worth showing while a sequence plays.
 
     `frame.frame_index` is the source's own numbering, which differs from the
-    position in the list whenever --stride drops frames.
+    position in the list whenever --stride drops frames. ``gaussians`` says how
+    a Gaussian frame was drawn, since a context may force the point fallback.
     """
     lines = [
         f"frame {position + 1}/{total}   (source #{frame.frame_index})",
@@ -42,6 +61,8 @@ def metrics_lines(frame, position: int, total: int, fps: float) -> list[str]:
     ]
     if frame.is_mesh:
         lines.append(f"{len(frame.triangles):,} tris")
+    elif getattr(frame, "representation", None) == "gaussians":
+        lines.append(gaussians)
     else:
         lines.append("point cloud")
     return lines
@@ -72,6 +93,49 @@ def _mesh_shader():
     return shader
 
 
+def _check_current_context() -> None:
+    """Reject Qt/PyOpenGL platform mismatches while Qt's context is current."""
+    from OpenGL import contextdata, error
+
+    try:
+        contextdata.getContext()
+    except error.Error as cause:
+        raise RuntimeError(
+            "Qt's current OpenGL context is unavailable to PyOpenGL. "
+            "For EGL, set QT_XCB_GL_INTEGRATION=xcb_egl and "
+            "PYOPENGL_PLATFORM=egl before importing OpenGL. For X11 GLX, "
+            "use QT_XCB_GL_INTEGRATION=xcb_glx with its matching PyOpenGL platform."
+        ) from cause
+
+
+def _guarded_view(gl):
+    class GuardedView(gl.GLViewWidget):
+        def __init__(self, *args, **options):
+            self._context_error = None
+            super().__init__(*args, **options)
+
+        def initializeGL(self):
+            # Qt guarantees a current context here, including hidden GIF views.
+            # Do not raise through a Qt virtual callback: record the error and
+            # stop uploads/painting, then surface it through the Python caller.
+            try:
+                _check_current_context()
+                super().initializeGL()
+            except RuntimeError as error:
+                # Keep text, not a traceback retaining the callback's view.
+                self._context_error = str(error)
+
+        def paintGL(self):
+            if self._context_error is None:
+                super().paintGL()
+
+        def check_context(self):
+            if self._context_error is not None:
+                raise RuntimeError(self._context_error)
+
+    return GuardedView
+
+
 class Scene:
     """A GL view holding one sequence, with the frame it shows swappable."""
 
@@ -80,15 +144,13 @@ class Scene:
         from pyqtgraph import Vector
 
         # Qt refuses to build widgets before an application exists.
-        self.application = (
-            QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        )
+        self.application = _application(QtWidgets)
         self.frames = frames
         self.args = args
         self.index = 0
         self.gl = gl
 
-        self.view = gl.GLViewWidget()
+        self.view = _guarded_view(gl)()
         self.view.setBackgroundColor(
             tuple(int(255 * channel) for channel in args.background)
         )
@@ -129,8 +191,11 @@ class Scene:
         # to white and the points vanish entirely — correct-looking code drawing
         # nothing. Normal alpha blending works against any background.
         self.point_item.setGLOptions("translucent")
+        self.splat_item = splat_item(gl)(point_size=args.point_size)
         self.view.addItem(self.mesh_item)
         self.view.addItem(self.point_item)
+        self.view.addItem(self.splat_item)
+        self.texture_item = None
         self.show_frame(0)
 
     def _colors(self, frame) -> np.ndarray:
@@ -148,17 +213,65 @@ class Scene:
 
     def show_frame(self, index: int):
         """Display a frame, wrapping the index, and return it."""
+        self.view.check_context()
         self.index = index % len(self.frames)
         frame = self.frames[self.index]
-        if frame.is_mesh:
+        splats = frame.covariances is not None
+        pixels = render_frames.texture_pixels(frame)
+        if pixels is not None:
+            if self.texture_item is None:
+                from ._live_qt import _textured_item
+                self.texture_item = _textured_item(self.gl)(frame, pixels, self.args)
+                self.view.addItem(self.texture_item)
+            else:
+                self.texture_item.set_texture_data(frame, pixels)
+        elif frame.is_mesh:
             self.mesh_item.setMeshData(meshdata=self._mesh_data(frame))
+        elif splats:
+            self.splat_item.set_frame(frame, base_color=tuple(self.args.color))
         else:
             self.point_item.setData(
                 pos=frame.positions, color=self._colors(frame)
             )
-        self.mesh_item.setVisible(frame.is_mesh)
-        self.point_item.setVisible(not frame.is_mesh)
+        visible = bool(len(frame.positions))
+        # A blank frame has no GPU draw. In particular, do not send zero-byte
+        # scatter buffers through driver attribute setup merely to draw zero
+        # vertices; the next populated frame switches the items back on.
+        self.mesh_item.setVisible(visible and frame.is_mesh and pixels is None)
+        if self.texture_item is not None:
+            self.texture_item.setVisible(visible and pixels is not None)
+        self.point_item.setVisible(visible and not frame.is_mesh and not splats)
+        self.splat_item.setVisible(visible and splats)
         return frame
+
+    def metrics(self) -> list[str]:
+        return metrics_lines(self.frames[self.index], self.index, len(self.frames),
+                             self.args.fps, self.splat_item.status)
+
+    def close(self) -> None:
+        """Release item/view cycles and buffers while this view's context is current."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        valid = self.view.isValid()
+        if valid:
+            self.view.makeCurrent()
+        try:
+            # pyqtgraph holds view -> items -> view references. Closing only
+            # the widget leaves its native context awaiting arbitrary cyclic
+            # GC, potentially while another viewer creates/renders a context.
+            self.splat_item.dispose()
+            if self.texture_item is not None:
+                self.texture_item.dispose()
+                self.texture_item = None
+            self.view.clear()
+            self.mesh_item = None
+            self.point_item = None
+            self.splat_item = None
+        finally:
+            if valid:
+                self.view.doneCurrent()
+        self.view.close()
 
     def grab(self, image_module):
         """Render the current frame and return it as a PIL image.
@@ -169,6 +282,7 @@ class Scene:
         self.view.update()
         self.application.processEvents()
         image = self.view.grabFramebuffer()
+        self.view.check_context()
         if image.isNull():
             raise RuntimeError(
                 "Qt could not create an OpenGL framebuffer. Use a desktop "
@@ -199,9 +313,7 @@ class Scene:
         """
         from PIL import ImageDraw, ImageFont
 
-        lines = metrics_lines(
-            self.frames[self.index], self.index, len(self.frames), self.args.fps
-        )
+        lines = self.metrics()
         draw = ImageDraw.Draw(picture)
         try:
             font = ImageFont.truetype("Helvetica", 13)
@@ -282,17 +394,13 @@ def play(frames, args) -> None:
             if self.closed:
                 return
             try:
-                frame = scene.show_frame(index)
+                scene.show_frame(index)
             except Exception as error:
                 errors.append(error)
                 self.close()
                 return
             self.readout.setText(f"{scene.index + 1}/{len(frames)}")
-            self.metrics.setText(
-                "\n".join(
-                    metrics_lines(frame, scene.index, len(frames), args.fps)
-                )
-            )
+            self.metrics.setText("\n".join(scene.metrics()))
             self.metrics.adjustSize()
             if self.slider.value() != scene.index:
                 self.slider.blockSignals(True)
@@ -352,10 +460,11 @@ def play(frames, args) -> None:
     try:
         if not window.closed:
             window.show()
+            scene.view.check_context()
             event_loop.exec()
     finally:
         window.close()
-        scene.view.close()
+        scene.close()
     if errors:
         raise errors[0]
 
@@ -409,5 +518,5 @@ def record(frames, args, output: Path) -> None:
 
         _save_gif(captured, output, durations)
     finally:
-        scene.view.close()
+        scene.close()
     print(f"wrote {output} ({output.stat().st_size / 1e6:.2f} MB)")

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import math
 import re
+import warnings
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -20,6 +22,13 @@ _BLOCK_RESOLUTION = 16
 _ICP_LEVELS = (8, 4, 2, 1)
 _ICP_PASSES = 2
 _DEVICE = re.compile(r"(cpu|cuda)(?::(\d+))?", re.IGNORECASE)
+#: What reconstruct does when a frame's camera synchronization error exceeds
+#: max_sync_error_us: raise, warn, or only record it.
+SYNC_POLICIES = ("error", "warn", "off")
+
+
+class SyncWarning(UserWarning):
+    """Camera synchronization is out of tolerance or unknown."""
 
 
 def _positive(value, name):
@@ -52,6 +61,52 @@ def _timestamps(values, frames):
     return tuple(values.tolist())
 
 
+def _sync(sync_error_us, max_sync_error_us, sync_policy, timestamps, fps, frames, cameras):
+    """Check per-frame camera synchronization and describe it for metadata.
+
+    The record always says which policy and limit applied, whether timing was
+    known, and which frames exceeded the limit, so a saved sequence keeps the
+    evidence for (or the absence of) synchronized input.
+    """
+    if sync_policy not in SYNC_POLICIES:
+        raise ValueError(f"sync_policy must be one of {', '.join(SYNC_POLICIES)}")
+    if max_sync_error_us is None:
+        interval = (float(np.median(np.diff(timestamps)))
+                    if timestamps is not None and frames > 1 else 1 / fps)
+        limit, limit_source = 0.5e6 * interval, "half the frame interval"
+    else:
+        limit, limit_source = _positive(max_sync_error_us, "max_sync_error_us"), "given"
+    record = {"policy": sync_policy, "max_sync_error_us": limit,
+              "max_sync_error_source": limit_source, "cameras": cameras}
+    if sync_error_us is None:
+        record.update(timing_known=False, sync_error_us=None, max_abs_sync_error_us=None,
+                      exceeding_frames=[],
+                      status="single_camera" if cameras == 1 else "unknown")
+        return record
+    errors = np.asarray(sync_error_us)
+    if errors.dtype.kind not in "iuf" or errors.shape != (frames,) or not np.isfinite(errors).all():
+        raise ValueError(f"sync_error_us must be {frames} finite numbers, one per frame")
+    values = [value.item() for value in errors]
+    exceeding = np.flatnonzero(np.abs(errors) > limit).tolist()
+    worst = float(np.max(np.abs(errors)))
+    record.update(timing_known=True, sync_error_us=values, max_abs_sync_error_us=worst,
+                  exceeding_frames=exceeding)
+    if sync_policy == "off":
+        record["status"] = "unchecked"
+    else:
+        record["status"] = "exceeded" if exceeding else "ok"
+    if exceeding and sync_policy != "off":
+        shown = ", ".join(f"{index} ({values[index]:g} us)" for index in exceeding[:5])
+        message = (f"{len(exceeding)} of {frames} frames exceed the {limit:g} us camera "
+                   f"synchronization limit ({limit_source}): frame {shown}"
+                   + (" ..." if len(exceeding) > 5 else ""))
+        if sync_policy == "error":
+            raise ValueError(message + "; select synchronized frames, raise "
+                             "max_sync_error_us, or pass sync_policy='warn' or 'off'")
+        warnings.warn(message, SyncWarning, stacklevel=3)
+    return record
+
+
 def _meters(depth, depth_scale, depth_max):
     with np.errstate(over="ignore", under="ignore"):
         meters = depth.astype(np.float64) / depth_scale
@@ -65,7 +120,8 @@ class _RGBDProvider:
 
     def __init__(self, depth, color, intrinsics, camera_poses, fps,
                  depth_scale, depth_max, voxel_size, truncation, *,
-                 timestamps=None, device=None, block_count=None, metadata=None):
+                 timestamps=None, device=None, block_count=None, metadata=None,
+                 frame_metadata=None):
         self.depth = depth
         self.color = color
         self.intrinsics = intrinsics
@@ -88,6 +144,7 @@ class _RGBDProvider:
         if device is not None:
             self.metadata["device"] = device
         self.metadata.update(metadata or {})
+        self.frame_metadata = frame_metadata or [{} for _ in range(len(depth))]
 
     def get_frame(self, index):
         if self.device is not None:
@@ -118,7 +175,7 @@ class _RGBDProvider:
         return Frame(index, self.timestamps[index], TriangleMesh(
             np.asarray(mesh.vertices), np.asarray(mesh.triangles),
             colors=np.asarray(mesh.vertex_colors) if self.color is not None else None,
-        ))
+        ), dict(self.frame_metadata[index]))
 
     def _get_tensor_frame(self, index):
         o3d = importlib.import_module("open3d")
@@ -157,14 +214,14 @@ class _RGBDProvider:
             return Frame(index, self.timestamps[index], TriangleMesh(
                 np.zeros((0, 3)), np.zeros((0, 3), dtype=np.uint32),
                 colors=np.zeros((0, 3)) if self.color is not None else None,
-            ))
+            ), dict(self.frame_metadata[index]))
         mesh = volume.extract_triangle_mesh(weight_threshold=0.5)
         positions = mesh.vertex.positions.cpu().numpy()
         triangles = mesh.triangle.indices.cpu().numpy()
         colors = None if self.color is None else self._vertex_colors(index, positions, triangles)
         return Frame(index, self.timestamps[index], TriangleMesh(
             positions, triangles, colors=colors,
-        ))
+        ), dict(self.frame_metadata[index]))
 
     def _observations(self, index, positions):
         """Per camera: the vertices inside its image, their pixels and |z - depth|.
@@ -310,7 +367,8 @@ def _refine_poses(o3d, depth, intrinsics, poses, depth_scale, depth_max, voxel_s
 def reconstruct(depth, color=None, *, intrinsics, camera_poses=None, fps=None,
                 timestamps=None, depth_scale=1000.0, depth_max=4.0, voxel_size=0.01,
                 truncation=0.04, refine_poses=False, device=None,
-                block_count=None) -> Sequence:
+                block_count=None, sync_error_us=None, max_sync_error_us=None,
+                sync_policy="error", metadata=None) -> Sequence:
     """Turn aligned depth and RGB images into a lazy mesh sequence.
 
     Depth has shape (frames, height, width), or (frames, cameras, height, width).
@@ -340,6 +398,18 @@ def reconstruct(depth, color=None, *, intrinsics, camera_poses=None, fps=None,
     "cpu", "cuda" or "cuda:N" uses the tensor VoxelBlockGrid on that device;
     block_count is its initial capacity in 16^3 voxel blocks, which Open3D
     grows when a frame needs more (default DEFAULT_BLOCK_COUNT).
+
+    sync_error_us gives each frame's camera synchronization error in
+    microseconds (for example camera 2's minus camera 1's capture time).
+    Frames whose absolute error exceeds max_sync_error_us (default: half the
+    frame interval, from timestamps or fps) raise ValueError with
+    sync_policy="error", warn with SyncWarning with "warn", and are only
+    recorded with "off". Metadata "sync" always records the policy, limit,
+    per-frame errors, worst error, exceeding frames, and "timing_known"; its
+    "status" is "ok", "exceeded", "unchecked", "unknown" (several cameras and
+    no sync_error_us) or "single_camera". Each frame's metadata carries its
+    "sync_error_us" when known. metadata adds JSON-compatible entries to the
+    sequence metadata (open4d.reconstruct records a capture's provenance here).
     """
     if timestamps is not None and fps is not None:
         raise TypeError("timestamps and fps are mutually exclusive")
@@ -376,6 +446,9 @@ def reconstruct(depth, color=None, *, intrinsics, camera_poses=None, fps=None,
     frames, cameras = depth.shape[:2]
     if timestamps is not None:
         timestamps = _timestamps(timestamps, frames)
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise TypeError("metadata must be a mapping or None")
+    sync = _sync(sync_error_us, max_sync_error_us, sync_policy, timestamps, fps, frames, cameras)
     intrinsics = np.asarray(intrinsics, dtype=np.float64)
     if intrinsics.shape == (4,):
         intrinsics = np.broadcast_to(intrinsics, (cameras, 4))
@@ -428,13 +501,17 @@ def reconstruct(depth, color=None, *, intrinsics, camera_poses=None, fps=None,
         if int(device.split(":")[1]) >= available:
             raise RuntimeError(f"device={device!r} is not available; Open3D sees "
                                f"{available} CUDA device(s)")
-    metadata = {}
+    extra = {**dict(metadata or {}), "sync": sync, "depth_scale": depth_scale}
     if refine:
         refined, fits = _refine_poses(o3d, depth[0], intrinsics, camera_poses[0],
                                       depth_scale, depth_max, voxel_size)
         camera_poses = np.broadcast_to(refined, (frames, cameras, 4, 4))
-        metadata = {"refined_camera_poses": refined.tolist(), "pose_refinement": fits}
+        extra.update(refined_camera_poses=refined.tolist(), pose_refinement=fits)
+    frame_metadata = [{} if sync["sync_error_us"] is None
+                      else {"sync_error_us": sync["sync_error_us"][index]}
+                      for index in range(frames)]
     return Sequence(_RGBDProvider(depth, color, intrinsics, camera_poses, fps,
                                  depth_scale, depth_max, voxel_size, truncation,
                                  timestamps=timestamps, device=device,
-                                 block_count=block_count, metadata=metadata))
+                                 block_count=block_count, metadata=extra,
+                                 frame_metadata=frame_metadata))

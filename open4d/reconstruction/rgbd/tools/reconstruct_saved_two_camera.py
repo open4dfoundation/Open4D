@@ -5,7 +5,8 @@ This is the no-live-sender path: it replays saved synchronized capture pairs
 through the same fusion code the live receiver uses, so it needs no cameras and
 no network.
 
-Capture data lives outside the repository (see docs/artifacts.md). Point the
+Capture data lives outside the repository (see the wiki's datasets page,
+https://open4dfoundation.github.io/wiki/artifacts/). Point the
 script at your capture set in one of three ways, in order of precedence:
 
   1. --capture-root /path/to/captures

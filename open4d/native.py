@@ -19,11 +19,12 @@ from types import MappingProxyType
 
 import numpy as np
 
-from .codec._native import run
-from .codec._native_profiles import NEURAL_CODECS, layout
-from .codec._metadata import _json_value
-from .codec._protocol import CodecError
-from .codec._o4d_format import _json, inspect_o4d, pack_o4d, unpack_o4d
+from ._research_paths import default_runtime, managed_python
+from .codecs._native import run
+from .codecs._native_profiles import NEURAL_CODECS, layout
+from .codecs._metadata import _json_value
+from .codecs._protocol import CodecError
+from .codecs._o4d_format import _json, inspect_o4d, pack_o4d, unpack_o4d
 from ._files import publish_file
 
 
@@ -76,6 +77,37 @@ def _configuration(config):
     if not isinstance(value, dict):
         raise CodecError("native configuration must be a JSON/YAML object")
     return _json_value(value, "native configuration")
+
+
+def _rerf_decoder_config(cfg):
+    required = ("voxel_size", "fine_model_and_render", "data", "render")
+    if not all(key in cfg for key in required):
+        raise CodecError("ReRF needs a resolved decoder configuration including render near/far")
+    fine, data, render = (cfg[name] for name in required[1:])
+    if not all(isinstance(value, dict) for value in (fine, data, render)):
+        raise CodecError("ReRF decoder settings must be objects")
+    if type(cfg["voxel_size"]) is not int or cfg["voxel_size"] < 1:
+        raise CodecError("ReRF voxel_size must be a positive integer")
+    if type(fine.get("rgbnet_dim")) is not int or not 0 < fine["rgbnet_dim"] < 4096:
+        raise CodecError("ReRF rgbnet_dim must be a positive integer below 4096")
+    near, far = render.get("near"), render.get("far")
+    if (any(type(v) not in (int, float) or not math.isfinite(v) for v in (near, far))
+            or not 0 <= near < far):
+        raise CodecError("ReRF render bounds must be finite with 0 <= near < far")
+    # These are the decoder's inputs. Training paths must never survive packaging.
+    return {"voxel_size": cfg["voxel_size"], "fine_model_and_render": fine,
+            "data": {**{k: data[k] for k in ("white_bkgd", "inverse_y", "flip_x", "flip_y")
+                        if k in data}, "datadir": ""}, "render": render,
+            "native": cfg.get("native", {})}
+
+
+def _check_rerf_channels(profile, total):
+    for frame in profile["frames"]:
+        split = profile["pca"] and frame["id"] % profile["group_size"] != 0
+        boundaries = profile["pca_channels"]
+        expected = [boundaries[0], boundaries[1] - boundaries[0]] if split else [total]
+        if (split and boundaries[1] != total) or frame["channels"] != expected:
+            raise CodecError(f"ReRF frame {frame['id']} entropy channels disagree with rgbnet_dim/PCA")
 
 
 def _stage_native(source, destination, codec, config, initial_model, ntc_config):
@@ -133,9 +165,7 @@ def _stage_native(source, destination, codec, config, initial_model, ntc_config)
         native = cfg.get("native", {})
         profile.update(group_size=native.get("group_size"), pca=native.get("pca"),
                        pca_channels=native.get("pca_channels", [7, 13]), frames=[])
-        required = ("voxel_size", "fine_model_and_render", "data", "render")
-        if not all(key in cfg for key in required):
-            raise CodecError("ReRF needs a resolved decoder JSON configuration including render near/far; no training-directory fallback")
+        cfg = _rerf_decoder_config(cfg)
         indices = sorted(int(p.stem[7:]) for p in source.glob("header_*.json") if p.stem[7:].isdigit())
         for index in indices:
             header = _read_json(source / f"header_{index}.json")
@@ -155,7 +185,9 @@ def _stage_native(source, destination, codec, config, initial_model, ntc_config)
                 channels.append(size[1])
             profile["frames"].append(dict(id=index, quality=quality, motion=motion, channels=channels))
         # Layout validation detects missing keys, gaps, PCA halves and motion.
-        for name, _ in layout(codec, len(indices), profile)[1:]:
+        files = layout(codec, len(indices), profile)
+        _check_rerf_channels(profile, cfg["fine_model_and_render"]["rgbnet_dim"] + 1)
+        for name, _ in files[1:]:
             if name != "decoder_config.json":
                 _copy(source / name, destination / name)
         (destination / "decoder_config.json").write_text(json.dumps(cfg, allow_nan=False))
@@ -235,8 +267,9 @@ class NativeSequence:
     def _settings(self, runtime, python):
         variable = "OPEN4D_" + self.codec.upper()
         root = Path(runtime or self._runtime or os.environ.get(variable + "_ROOT") or
-                    Path(__file__).parent / "reconstruction" / self.codec).absolute()
-        executable = str(python or self._python or os.environ.get(variable + "_PYTHON") or sys.executable)
+                    default_runtime(self.codec)).absolute()
+        executable = str(python or self._python or os.environ.get(variable + "_PYTHON")
+                         or managed_python(self.codec) or sys.executable)
         return root, executable
 
     def decode(self, *, runtime=None, python=None):
@@ -256,7 +289,7 @@ class NativeSequence:
             run = VegaRun(source, root, executable, _owner=self)
             return run.decode()
         if self.codec not in NEURAL_CODECS:
-            from .codec import decode_sequence
+            from .codecs import decode_sequence
             return decode_sequence(self.path)
         with tempfile.TemporaryDirectory(prefix=f"open4d-{self.codec}-decode-") as directory:
             work = Path(directory)
@@ -284,7 +317,7 @@ class NativeSequence:
             from .gaussians import missing_runtime
             variable = "OPEN4D_" + self.codec.upper()
             raise FileNotFoundError(
-                missing_runtime(self.codec, root, variable + "_ROOT", f"open4d/reconstruction/{self.codec}")
+                missing_runtime(self.codec, root, variable + "_ROOT", f"codecs/{self.codec}")
                 + f" python= or {variable}_PYTHON selects the interpreter with its CUDA dependencies.")
         request = dict(operation=operation, codec=self.codec, source=str(source), output=str(work), runtime=str(root), **options)
         path = work / "request.json"

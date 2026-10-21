@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from ._files import publish_directory
+from ._research_paths import default_runtime, managed_python, runtime_checkout
 
 if TYPE_CHECKING:
     from .native import NativeSequence
@@ -117,7 +118,11 @@ def load_gaussians(path: str | Path) -> GaussianSplats:
             raise
         raise ImportError("Reading splats requires pip install 'open4d[gaussians]'") from exc
 
-    vertex = PlyData.read(Path(path))["vertex"].data
+    return splats_from_ply_vertices(PlyData.read(Path(path))["vertex"].data)
+
+
+def splats_from_ply_vertices(vertex: NDArray) -> GaussianSplats:
+    """Activate a structured array of Graphdeco PLY vertex fields."""
     names = set(vertex.dtype.names or ())
     required = {"x", "y", "z", "opacity"}
     required.update(f"{prefix}_{i}" for prefix, count in
@@ -163,19 +168,25 @@ def missing_runtime(name: str, root: Path, variable: str, folder: str) -> str:
 def _runtime(path: str | Path | None) -> Path:
     candidate = path or os.environ.get("OPEN4D_GS_ROOT")
     root = (Path(candidate).expanduser() if candidate else
-            Path(__file__).parent / "reconstruction" / "gs_tools").resolve()
+            default_runtime("gs_tools")).resolve()
     if not (root / "gs_tools" / "cli.py").is_file():
         raise FileNotFoundError(missing_runtime(
             "Gaussian (QUEEN/3DGStream)", root, "OPEN4D_GS_ROOT", "open4d/reconstruction/gs_tools"))
     return root
 
 
+def _python(value: str | Path | None, method: str) -> str:
+    """The method's interpreter: python=, OPEN4D_<METHOD>_PYTHON, a registered backend, then this one."""
+    return str(value or os.environ.get(f"OPEN4D_{method.upper()}_PYTHON")
+               or managed_python(method) or sys.executable)
+
+
 def _run(runtime: Path, python: str, arguments: Sequence[str]) -> None:
     # gs_tools imports open4d and the streamer package. Use the runtime's own
     # checkout for both rather than whatever the CUDA environment has installed.
     path = [runtime]
-    checkout = runtime.parents[2] if len(runtime.parents) > 2 else runtime
-    if (checkout / "open4d" / "__init__.py").is_file():
+    checkout = runtime_checkout(runtime)
+    if checkout is not None:
         path.append(checkout)
         if (checkout / "open4d" / "streamer" / "streamer" / "__init__.py").is_file():
             path.append(checkout / "open4d" / "streamer")
@@ -385,7 +396,7 @@ def reconstruct_gaussians(
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
     root = _runtime(runtime)
-    executable = str(python or sys.executable)
+    executable = _python(python, method)
     config_path = Path(config).expanduser().resolve() if config else None
     if config_path is not None and not config_path.is_file():
         raise FileNotFoundError(config_path)
@@ -413,8 +424,10 @@ def reconstruct_gaussians(
             frame_count = sum(path.is_dir() and path.name[5:].isdigit() for path in source.glob("frame[0-9]*"))
         if frame_count < 2:
             raise ValueError("3DGStream needs frame000000 and at least one later frame")
+        gstream = os.environ.get("OPEN4D_3DGSTREAM_ROOT")
+        gstream = Path(gstream).expanduser() if gstream else root.parent / "3dgstream"
         cache = (Path(ntc).expanduser().resolve() if ntc else
-                 root.parent / "3dgstream" / "ntc" / "flame_steak_ntc_params_F_4.pth")
+                 gstream / "ntc" / "flame_steak_ntc_params_F_4.pth")
         if not cache.is_file():
             raise FileNotFoundError(f"3DGStream NTC initialization checkpoint not found: {cache}")
         init_dir = Path(initial_model).expanduser().resolve() if initial_model else output / "init"
@@ -457,14 +470,14 @@ _VEGA_OPACITY_EPSILON = 2.0 ** -24
 
 def _vega_runtime(path: str | Path | None) -> Path:
     root = Path(path or os.environ.get("OPEN4D_VEGA_ROOT") or
-                Path(__file__).parent / "reconstruction" / "vega").expanduser().resolve()
+                default_runtime("vega")).expanduser().resolve()
     _check_vega_runtime(root)
     return root
 
 
 def _check_vega_runtime(root: Path) -> None:
     if not (root / "vega" / "encoder.py").is_file():
-        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "open4d/reconstruction/vega"))
+        raise FileNotFoundError(missing_runtime("Vega", root, "OPEN4D_VEGA_ROOT", "open4d/codecs/vega/source"))
 
 
 def _vega_command(runtime: Path, python: str, request: dict, work: Path) -> None:
@@ -580,7 +593,7 @@ def encode_gaussians(
     destination = Path(output).expanduser().resolve()
     if destination.exists():
         raise FileExistsError(destination)
-    root, executable = _vega_runtime(runtime), str(python or sys.executable)
+    root, executable = _vega_runtime(runtime), _python(python, "vega")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".open4d-vega-", dir=destination.parent) as folder:
         work = Path(folder)
@@ -610,41 +623,4 @@ def decode_gaussians(
     source = Path(source).expanduser().resolve()
     if not (source / "manifest.json").is_file() or not (source / "color_model.pt").is_file():
         raise FileNotFoundError(f"No native Vega bitstream at {source}")
-    return VegaRun(source, _vega_runtime(runtime), str(python or sys.executable)).decode()
-
-
-class _VegaCodec:
-    id = "vega"
-    suffixes = (".o4d",)
-    representation = "gaussian_splats"
-    backend = "research-subprocess"
-    lossless = False
-    preserves = ("positions", "scales", "rotations", "opacities", "neural_appearance")
-
-    def can_decode(self, source):
-        from .codec._o4d_format import contains_codec
-        return contains_codec(source, self.id)
-
-    def encode(self, sequence, destination: Path, **options) -> Path:
-        from .codec._metadata import require_o4d_destination
-        from .native import NativeSequence, import_native, save_native
-        from .codec._native_temporal import encode_native
-        destination = require_o4d_destination(destination)
-        if isinstance(sequence, (NativeSequence, VegaRun, str, os.PathLike)):
-            return encode_native(sequence, destination, codec="vega", **options)
-        overwrite = options.pop("overwrite", False)
-        if destination.exists() and not overwrite:
-            raise FileExistsError(destination)
-        timeline = {key: options.pop(key) for key in ("fps", "timestamps", "frame_indices", "metadata", "frame_metadata") if key in options}
-        with tempfile.TemporaryDirectory(prefix="open4d-vega-encode-") as folder:
-            encoded = encode_gaussians(sequence, Path(folder) / "native", **options)
-            with import_native(encoded, **timeline) as native:
-                return save_native(native, destination, overwrite=overwrite)
-
-    def decode(self, source: Path, **options) -> NativeSequence:
-        """Open the owned native state; call ``.decode()`` to evaluate frames."""
-        from .codec._native_temporal import NativeTemporalCodec
-        return NativeTemporalCodec("vega").decode(source, **options)
-
-
-VEGA_CODEC = _VegaCodec()
+    return VegaRun(source, _vega_runtime(runtime), _python(python, "vega")).decode()

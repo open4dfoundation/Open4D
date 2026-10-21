@@ -7,7 +7,7 @@
 #                               [--jobs N] [--revert]
 #
 #   --source DIR     V-DMC source tree. Default: the submodule in this checkout
-#                    (open4d/codecs/vdmc or open4d/codecs/faster_vdmc).
+#                    (open4d/codecs/vdmc/source or open4d/codecs/faster_vdmc/source).
 #   --build-dir DIR  CMake build directory. Default: DIR/build/Release, the
 #                    layout upstream build.sh uses. Binaries go to BUILD/bin.
 #   --jobs N         Parallel build jobs. Default: logical CPU count.
@@ -80,10 +80,10 @@ done
 [ -n "$codec" ] || { printf 'error: choose vdmc or faster_vdmc\n\n' >&2; usage 2; }
 
 if [ -z "$source_dir" ]; then
-  source_dir="$repo_root/open4d/codecs/$codec"
+  source_dir="$repo_root/codecs/$codec"
   if [ ! -f "$source_dir/CMakeLists.txt" ]; then
     die "$source_dir is empty. Initialize it with:
-  git -C \"$repo_root\" submodule update --init open4d/codecs/$codec
+  git -C \"$repo_root\" submodule update --init codecs/$codec
 or pass --source DIR pointing at a checkout of the pinned commit."
   fi
 fi

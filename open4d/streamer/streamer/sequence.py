@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Sequence as TypingSequence
 
 from open4d._files import publish_directory, publish_file
-from open4d.codec import _o4d_format as o4d
-from open4d.codec._protocol import CodecError
+from open4d.codecs import _o4d_format as o4d
+from open4d.codecs._protocol import CodecError
 from . import representations
 
 MAGIC = o4d._MAGIC
@@ -471,7 +471,7 @@ class _MeshFrames:
             positions, triangles, colors = read_ply(path)
             geometry = TriangleMesh(positions, triangles, colors=colors)
         else:
-            from open4d.codec._draco import _backend
+            from open4d.codecs.draco import _backend
             decoded = _backend().decode(path.read_bytes())
             colors = decoded.colors.astype("float32") / 255 if decoded.colors is not None else None
             geometry = TriangleMesh(decoded.points, decoded.faces, colors=colors,

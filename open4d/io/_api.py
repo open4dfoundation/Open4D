@@ -49,7 +49,7 @@ _FORMAT_DEPENDENCIES = {
     for suffix in _FRAME_READERS
 }
 _OUTPUT_FIELDS = {
-    ".obj": frozenset(("positions", "triangles")),
+    ".obj": frozenset(("positions", "triangles", "texture_coordinates", "texture")),
     ".ply": frozenset(("positions", "triangles", "colors")),
     ".off": frozenset(("positions", "triangles", "colors")),
     ".stl": frozenset(("positions", "triangles")),
@@ -269,9 +269,17 @@ def _read_manifest(
         raise DecodeError(f"Invalid sequence manifest {manifest_path}: {error}") from error
 
 
-def _read_geometry(path: Path, suffix: str | None = None) -> TriangleMesh:
+def _read_geometry(path: Path, suffix: str | None = None, *, textures=False) -> TriangleMesh:
     suffix = suffix or path.suffix.lower()
     try:
+        if suffix == ".obj":
+            if textures:
+                positions, triangles, colors, uv, texture = _mesh.read_obj_with_texture(path)
+            else:
+                positions, triangles, colors, uv = _mesh.read_obj_with_uv(path)
+                texture = None
+            return TriangleMesh(positions=positions, triangles=triangles, colors=colors,
+                                texture_coordinates=uv, texture=texture)
         try:
             positions, triangles, colors = _FRAME_READERS[suffix](path)
         except _mesh.UnsupportedPlyVariant:
@@ -290,7 +298,8 @@ class _FolderProvider:
     has_constant_vertex_count = None
     has_vertex_correspondence = None
 
-    def __init__(self, directory: Path, files: tuple[Path, ...], fps: float) -> None:
+    def __init__(self, directory: Path, files: tuple[Path, ...], fps: float, *, textures=False) -> None:
+        self.textures = textures
         self.directory = directory
         self.files = files
         self.fps = fps
@@ -321,13 +330,14 @@ class _FolderProvider:
         return Frame(
             frame_index=_source_index(path, ordinal),
             timestamp=ordinal / self.fps,
-            geometry=_read_geometry(path),
+            geometry=_read_geometry(path, textures=self.textures),
             metadata={"file": path.name},
         )
 
 
 class _ManifestFolderProvider:
-    def __init__(self, directory: Path, files: tuple[Path, ...], manifest: dict) -> None:
+    def __init__(self, directory: Path, files: tuple[Path, ...], manifest: dict, *, textures=False) -> None:
+        self.textures = textures
         self.directory = directory
         self.files = files
         self.frames = tuple(manifest["frames"])
@@ -354,7 +364,7 @@ class _ManifestFolderProvider:
         return Frame(
             frame_index=record["index"],
             timestamp=record["timestamp"],
-            geometry=_read_geometry(self.files[index]),
+            geometry=_read_geometry(self.files[index], textures=self.textures),
             metadata=record.get("metadata", {}),
         )
 
@@ -366,7 +376,8 @@ class _SingleFrameProvider:
     has_constant_vertex_count = True
     has_vertex_correspondence = True
 
-    def __init__(self, path: Path, suffix: str) -> None:
+    def __init__(self, path: Path, suffix: str, *, textures=False) -> None:
+        self.textures = textures
         self.path = path
         self.suffix = suffix
         self.metadata = MappingProxyType(
@@ -379,7 +390,7 @@ class _SingleFrameProvider:
         return Frame(
             frame_index=0,
             timestamp=0.0,
-            geometry=_read_geometry(self.path, self.suffix),
+            geometry=_read_geometry(self.path, self.suffix, textures=self.textures),
             metadata={"file": self.path.name},
         )
 
@@ -459,7 +470,11 @@ def open_sequence(
     fps: float | None = None,
     options: Mapping[str, object] | None = None,
 ) -> Sequence:
-    """Open a local mesh file or frame directory as a lazy sequence."""
+    """Open local meshes lazily. options={'textures': True} loads owned OBJ images.
+
+    External OBJ material references are otherwise left unread. Sequence
+    directories exported with textures record that choice in their manifest.
+    """
     if options is not None:
         if not isinstance(options, Mapping):
             raise TypeError("options must be a mapping or None")
@@ -470,21 +485,24 @@ def open_sequence(
         return _usd.open_usd_sequence(
             candidate, fps=fps, options=options
         )
-    if options:
-        names = ", ".join(sorted(str(name) for name in options))
+    if options and set(options) - {"textures"}:
+        names = ", ".join(sorted(str(name) for name in set(options) - {"textures"}))
         raise UnsupportedFeatureError(
             f"This reader has no options; received: {names}"
         )
     path, storage, files, suffix, manifest = _resolve(source, format)
+    textures = (options or {}).get("textures", bool(manifest and manifest.get("has_textures")))
+    if type(textures) is not bool:
+        raise TypeError("textures must be boolean")
     if storage == "directory":
         if manifest is not None:
             if fps is not None:
                 raise UnsupportedFeatureError("fps cannot override manifest timestamps")
-            return Sequence(_ManifestFolderProvider(path, files, manifest))
-        return Sequence(_FolderProvider(path, files, _fps(fps)))
+            return Sequence(_ManifestFolderProvider(path, files, manifest, textures=textures))
+        return Sequence(_FolderProvider(path, files, _fps(fps), textures=textures))
     if fps is not None:
         _fps(fps)  # Validate consistently even though one static frame has no rate.
-    return Sequence(_SingleFrameProvider(path, suffix))
+    return Sequence(_SingleFrameProvider(path, suffix, textures=textures))
 
 
 def _write_frame(
@@ -513,6 +531,8 @@ def _write_frame(
         if getattr(mesh, name, None) is not None
     )
     present.update(mesh.attributes)
+    if getattr(mesh, "texture", None) is not None:
+        present.add("texture")
     unsupported = sorted(present - _OUTPUT_FIELDS[suffix])
     if unsupported:
         raise UnsupportedFeatureError(
@@ -525,7 +545,8 @@ def _write_frame(
         )
     try:
         if suffix == ".obj":
-            return _mesh.write_obj(path, mesh.positions, triangles)
+            return _mesh.write_obj(path, mesh.positions, triangles,
+                                   mesh.texture_coordinates, texture=mesh.texture)
         if suffix == ".ply":
             return _mesh.write_ply(path, mesh.positions, triangles, mesh.colors)
         return _mesh.write_with_trimesh(
@@ -600,6 +621,8 @@ def write_sequence(
         raise UnsupportedFeatureError(
             "a multi-frame sequence needs a destination directory"
         )
+    if file_output and getattr(sequence[0].geometry, "texture", None) is not None:
+        raise UnsupportedFeatureError("textured OBJ export needs a sequence directory to publish its images and MTL together")
     if file_output and not allow_lossy:
         raise UnsupportedFeatureError(
             "single mesh files cannot preserve temporal identity, frame or sequence "
@@ -626,6 +649,7 @@ def write_sequence(
                 "has_vertex_correspondence": False if suffix == ".stl" else sequence.has_vertex_correspondence,
                 "allow_nonmonotonic_timestamps": sequence.allow_nonmonotonic_timestamps,
                 "frames": [],
+                "has_textures": any(getattr(frame.geometry, "texture", None) is not None for frame in sequence),
             }
             for ordinal, frame in enumerate(sequence):
                 name = f"frame_{ordinal:06d}{suffix}"

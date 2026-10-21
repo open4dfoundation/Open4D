@@ -25,11 +25,16 @@ def upstream(name: str) -> Path:
     """Path to an upstream tree: ``queen`` or ``3dgstream``.
 
     These were pinned submodules under ``gs_tools/upstream/`` when this module was
-    written. They are now vendored copies one level up, as siblings of
-    ``gs_tools`` under ``open4d/reconstruction/``, so the name no longer describes
-    a checkout this module manages -- only where the trees are.
+    written. They are now vendored as each codec's ``source/`` under
+    ``open4d/codecs/``, so the name no longer describes a checkout this module
+    manages -- only where the trees are. Older checkouts kept them as siblings
+    of ``gs_tools``.
     """
-    return module_root().parent / name
+    root = module_root()
+    sibling = root.parent / name
+    if sibling.is_dir():
+        return sibling
+    return root.parents[1] / "codecs" / name / "source"
 
 
 def patches(name: str) -> Path:

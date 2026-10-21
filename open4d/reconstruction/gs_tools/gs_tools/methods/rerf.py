@@ -10,7 +10,7 @@ for that is ReRF's, and it only runs under Python 3.8 -- its entropy coder
 
 **Rendering moved out of this module.** It used to shell out to upstream's
 ``rerf_render.py`` through a wrapper in the vendored tree. That is now
-`rerf_stream.export`, in ``open4d/reconstruction/rerf``, which does the job
+`rerf_stream.export`, in ``codecs/rerf``, which does the job
 better in three ways that matter:
 
 * it renders at the **corpus's own intrinsics**, where upstream's loader

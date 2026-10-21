@@ -12,7 +12,7 @@
 # the codecs install opencv-python. Two distributions both providing cv2 cannot
 # coexist cleanly, and unpinning a research dependency to suit an unrelated codec
 # is the wrong trade. Everything else -- Python 3.12, torch 2.7.0+cu126, CUDA
-# 12.6 -- deliberately matches, so ../../../requirements-gpu.txt's toolchain
+# 12.6 -- deliberately matches, so ../../requirements-gpu.txt's toolchain
 # notes apply unchanged.
 #
 # Python 3.12, not the 3.11 QUEEN declares or the 3.8 3DGStream was tested on.
@@ -41,7 +41,7 @@
 # --- what conda cannot express -------------------------------------------------
 #
 # Four CUDA extensions are compiled against this exact torch/CUDA pair, so they
-# are not listed below. Build them after activating, from open4d/reconstruction:
+# are not listed below. Build them after activating, from codecs:
 #
 #   export TCNN_CUDA_ARCHITECTURES=89     # sm_89 = RTX 4090; set to your card
 #   pip install --no-build-isolation \

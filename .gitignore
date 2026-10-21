@@ -36,8 +36,6 @@ htmlcov/
 
 # Renders and containers written by the example scripts
 /open4d-demo/
-examples/out/
-examples/**/out/
 
 # Benchmark dashboard runtime data
 benchmark_app/data/
@@ -48,27 +46,27 @@ benchmark_app/archives/
 # Codec datasets, training runs, and generated reconstructions
 # Existing tracked fixtures are unaffected.
 4d_files/
-open4d/codecs/*/datasets/
-open4d/codecs/*/outputs/
-open4d/codecs/*/experiments/
-open4d/codecs/*/checkpoints/
-open4d/codecs/*/logs/
-open4d/codecs/*/data/bench_*/
-open4d/codecs/tvmc/arap-volume-tracking/data/*/
-open4d/codecs/tsmc/arap-volume-tracking/data/*/
+open4d/codecs/*/source/datasets/
+open4d/codecs/*/source/outputs/
+open4d/codecs/*/source/experiments/
+open4d/codecs/*/source/checkpoints/
+open4d/codecs/*/source/logs/
+open4d/codecs/*/source/data/bench_*/
+open4d/codecs/tvmc/source/arap-volume-tracking/data/*/
+open4d/codecs/tsmc/source/arap-volume-tracking/data/*/
 
 # Reconstruction datasets and outputs
-open4d/reconstruction/*/data/
-open4d/reconstruction/*/datasets/
-open4d/reconstruction/*/output/
-open4d/reconstruction/*/outputs/
-open4d/reconstruction/*/logs/
-open4d/reconstruction/*/checkpoints/
+open4d/codecs/*/source/data/
+open4d/codecs/*/source/datasets/
+open4d/codecs/*/source/output/
+open4d/codecs/*/source/outputs/
+open4d/codecs/*/source/logs/
+open4d/codecs/*/source/checkpoints/
 # Submodules use their own ignore rules.
 
 # ARAP volume tracker caches
-open4d/codecs/*/data/*/meshes/*vg_*.bin
-open4d/codecs/*/data/*/meshes/*pc_*.bin
+open4d/codecs/*/source/data/*/meshes/*vg_*.bin
+open4d/codecs/*/source/data/*/meshes/*pc_*.bin
 
 # Common generated model artifacts
 *.ckpt
@@ -77,12 +75,12 @@ open4d/codecs/*/data/*/meshes/*pc_*.bin
 *.pth
 *.safetensors
 # 3DGStream's flame_steak scene requires these shipped weights.
-!open4d/reconstruction/3dgstream/ntc/*.pth
+!open4d/codecs/3dgstream/source/ntc/*.pth
 
 # Basketball comparison app generated render assets (frames/videos/heatmaps)
 basketball_comparison_app/assets/
 basketball_comparison_app/outputs/
 
 # QNDF-INT8 local setup symlinks (point into the sibling QNDF codec on this host)
-open4d/codecs/qndf_int8/experiments
-open4d/codecs/qndf_int8/objs_original
+open4d/codecs/qndf_int8/source/experiments
+open4d/codecs/qndf_int8/source/objs_original

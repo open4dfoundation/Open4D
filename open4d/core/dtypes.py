@@ -8,7 +8,7 @@ being shared. So arrays are coerced once, at construction, and anything reading 
 `TriangleMesh` can rely on the dtype without branching on it.
 
 Coercion is nearly free. `astype(..., copy=False)` returns the input untouched
-when it already matches, and the readers in `examples/visualization` already
+when it already matches, and the visualization example readers already
 produce float32 positions and uint32 indices, so the common path copies nothing.
 Only a producer that disagrees with the canon pays for it.
 

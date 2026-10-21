@@ -1,0 +1,44 @@
+{
+  "schema": "open4d.backend-recipe/v1",
+  "name": "n4mc",
+  "recipe_version": 1,
+  "summary": "Attach an independently acquired research runtime; automatic build inputs are not yet completely pinned.",
+  "mode": "attach-only",
+  "adapter": {
+    "group": "open4d.codecs",
+    "entry_points": [
+      "n4mc"
+    ],
+    "distributions": [
+      "open4d-n4mc"
+    ],
+    "versions": ">=0.3,<0.4"
+  },
+  "license": {
+    "ledger": ".github/THIRD_PARTY.md",
+    "component": "open4d/codecs/n4mc/source",
+    "decision": "BLOCK",
+    "terms": "See the upstream runtime and THIRD_PARTY.md; runtime, data and model terms are independent.",
+    "restrictions": [
+      "No redistribution authorization is granted by this recipe."
+    ]
+  },
+  "components": {
+    "n4mc": "source"
+  },
+  "profiles": {},
+  "attach": {
+    "components": {
+      "n4mc": {
+        "candidates": [
+          ".",
+          "open4d/codecs/n4mc/source",
+          "n4mc"
+        ],
+        "markers": [
+          "models/__init__.py"
+        ]
+      }
+    }
+  }
+}

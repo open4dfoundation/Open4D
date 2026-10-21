@@ -6,10 +6,11 @@ from __future__ import annotations
 import argparse
 import configparser
 import re
+import stat
 import sys
 import zipfile
 from email.parser import Parser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 try:
     import tomllib
@@ -20,7 +21,22 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIRS = {
     "open4d": ROOT / "open4d",
-    "open4d.codec": ROOT / "open4d/codec",
+    "open4d.codecs": ROOT / "open4d/codecs",
+    "open4d.codecs._backends": ROOT / "open4d/codecs/_backends",
+    "open4d.codecs.draco": ROOT / "open4d/codecs/draco",
+    "open4d.codecs.klt": ROOT / "open4d/codecs/klt",
+    "open4d.codecs.n4mc": ROOT / "open4d/codecs/n4mc",
+    "open4d.codecs.qndf": ROOT / "open4d/codecs/qndf",
+    "open4d.codecs.qndf_int8": ROOT / "open4d/codecs/qndf_int8",
+    "open4d.codecs.vdmc": ROOT / "open4d/codecs/vdmc",
+    "open4d.codecs.faster_vdmc": ROOT / "open4d/codecs/faster_vdmc",
+    "open4d.codecs.tvmc": ROOT / "open4d/codecs/tvmc",
+    "open4d.codecs.tsmc": ROOT / "open4d/codecs/tsmc",
+    "open4d.codecs.queen": ROOT / "open4d/codecs/queen",
+    "open4d.codecs.rerf": ROOT / "open4d/codecs/rerf",
+    "open4d.codecs.vega": ROOT / "open4d/codecs/vega",
+    "open4d.data": ROOT / "open4d/data",
+    "open4d.ml": ROOT / "open4d/ml",
     "open4d.core": ROOT / "open4d/core",
     "open4d.io": ROOT / "open4d/io",
     "open4d.reconstruction": ROOT / "open4d/reconstruction",
@@ -28,8 +44,6 @@ PACKAGE_DIRS = {
     "open4d.transport": ROOT / "open4d/transport",
     "open4d.torch_ops": ROOT / "open4d/torch_ops",
     "open4d.visualization": ROOT / "open4d/visualization",
-    "open4d.integrations": ROOT / "open4d/integrations",
-    "open4d.integrations.open3d": ROOT / "open4d/integrations/open3d",
 }
 
 
@@ -48,6 +62,26 @@ def expected_python_files() -> set[str]:
     return expected
 
 
+def expected_data_files() -> set[str]:
+    return {"open4d/data/catalog.json", *(
+        path.relative_to(ROOT).as_posix() for path in (ROOT / "open4d/codecs/_backends/recipes").glob("*.json"))}
+
+
+def unsafe_zip_member_errors(info: zipfile.ZipInfo) -> list[str]:
+    """Reject symlink entries and names that leave the installation root."""
+    name = info.filename
+    path = PurePosixPath(name)
+    drive = bool(path.parts) and ":" in path.parts[0]
+    if path.is_absolute() or ".." in path.parts or "\\" in name or drive:
+        return [f"unsafe member path: {name}"]
+    mode = info.external_attr >> 16
+    if stat.S_ISLNK(mode):
+        return [f"symlink member is not allowed: {name}"]
+    if stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
+        return [f"special file member is not allowed: {name}"]
+    return []
+
+
 def check_wheel(path: Path) -> list[str]:
     errors: list[str] = []
     if configured_packages() != set(PACKAGE_DIRS):
@@ -56,6 +90,8 @@ def check_wheel(path: Path) -> list[str]:
         return errors + [f"wheel does not exist: {path}"]
 
     with zipfile.ZipFile(path) as wheel:
+        for info in wheel.infolist():
+            errors.extend(unsafe_zip_member_errors(info))
         namelist = [name for name in wheel.namelist() if not name.endswith("/")]
         if len(namelist) != len(set(namelist)):
             seen = set()
@@ -91,7 +127,10 @@ def check_wheel(path: Path) -> list[str]:
         missing_metadata = expected_metadata - members
         if missing_metadata:
             errors.append(f"missing wheel metadata: {sorted(missing_metadata)}")
-        unexpected = members - expected_python - expected_metadata
+        expected_data = expected_data_files()
+        if expected_data - members:
+            errors.append(f"missing package data: {sorted(expected_data - members)}")
+        unexpected = members - expected_python - expected_metadata - expected_data
         if unexpected:
             errors.append(f"unexpected wheel members: {sorted(unexpected)}")
 

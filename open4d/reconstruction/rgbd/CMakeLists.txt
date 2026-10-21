@@ -65,7 +65,7 @@ add_subdirectory(app)
 include(CTest)
 if(BUILD_TESTING AND MESHREDUCE_ENABLE_CUDA_KERNELS)
     add_executable(texture_mapping_cuda_test
-            tests/texture_mapping_cuda_test.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/reconstruction/rgbd/texture_mapping_cuda_test.cpp
             src/reconstruction/texture_mapping_cuda.cu)
     target_include_directories(texture_mapping_cuda_test
             PRIVATE include/reconstruction)

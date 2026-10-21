@@ -1,0 +1,15 @@
+include LICENSE README.md pyproject.toml
+recursive-include streamer *.py
+include streamer/client/viewer.html streamer/client/worker.js
+include streamer/client/vendor/draco/draco_wasm_wrapper.js
+include streamer/client/vendor/draco/draco_decoder.wasm
+include streamer/client/vendor/draco/LICENSE
+include streamer/client/vendor/draco/NOTICE
+include streamer/client/vendor/draco/AUTHORS
+include streamer/client/vendor/draco/README.md
+prune study
+prune streamer_tests
+prune benchmarks
+prune build
+prune dist
+global-exclude __pycache__ *.py[cod]
