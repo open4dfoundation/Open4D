@@ -29,14 +29,12 @@ namespace Framework
         {
             Vector4[] framePc = pc[frame];
 
-            List<Vector4>[] gridPoints = vg.GetPoints(framePc);
+            TransformDistance[] dst = vg.GetTransformDistances(framePc);
 
             Transform[] transforms = new Transform[n];
-            TransformDistance[] dst = new TransformDistance[n];
             Parallel.For(0, n, i =>
             {
                 transforms[i] = ARAP.GetTransform(pc[frame - 1], framePc, i, this);
-                dst[i] = new TransformDistance(gridPoints[i]);
             });
 
             //Precalculate transforms

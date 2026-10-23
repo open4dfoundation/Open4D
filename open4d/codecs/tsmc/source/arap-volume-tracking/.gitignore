@@ -9,3 +9,5 @@
 /packages/
 results/*
 *.txt
+/Native/build/
+!/Native/CMakeLists.txt
