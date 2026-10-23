@@ -25,6 +25,17 @@ namespace Framework
         public abstract (double, float[]) LloydStats(Vector4[] pts);
         public abstract List<Vector4>[] GetPoints(Vector4[] pts);
 
+        /// <summary>
+        /// Transform distance evaluators over the cells nearest to each point (plus the point itself)
+        /// </summary>
+        public virtual TransformDistance[] GetTransformDistances(Vector4[] pts)
+        {
+            List<Vector4>[] points = GetPoints(pts);
+            TransformDistance[] dst = new TransformDistance[pts.Length];
+            Parallel.For(0, pts.Length, i => dst[i] = new TransformDistance(points[i]));
+            return dst;
+        }
+
         public bool Probe(Vector4 p)
         {
             var v = (p - min) / a;

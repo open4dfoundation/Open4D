@@ -136,6 +136,10 @@ boundaries; they do not resolve any release block above:
 - `open4d/codecs/tsmc/source/tsmc/get_reference_center.py`: retain the fifth reference
   frame on longer clips, use the last available frame on short clips, and
   remove unused alignment work that also accessed an unavailable sixth frame.
+- `open4d/codecs/tsmc/source/arap-volume-tracking`: optional CUDA backend
+  (`Native/`, mode flag `cuda`) for voxelization and the nearest-center scans
+  of the Lloyd step, statistics and affinity update; the default managed path
+  is unchanged.
 
 Additional local patches (2026-09-23): N4MC restores SSIM loss; ReRF validates
 inputs before native loading and makes test data configurable; the browser

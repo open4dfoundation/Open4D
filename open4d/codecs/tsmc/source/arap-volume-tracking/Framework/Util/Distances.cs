@@ -72,14 +72,22 @@ namespace Framework
         {
             int n = current.Length;
             float[,] result = new float[n, n];
-            List<Vector4>[] points = (vg == null) ? GetPointsLocal(current) : vg.GetPoints(current);
+            TransformDistance[] dst;
+            if (vg == null)
+            {
+                List<Vector4>[] points = GetPointsLocal(current);
+                dst = new TransformDistance[n];
+                Parallel.For(0, n, i => dst[i] = new TransformDistance(points[i]));
+            }
+            else
+            {
+                dst = vg.GetTransformDistances(current);
+            }
             Transform[] transforms = new Transform[n];
-            TransformDistance[] dst = new TransformDistance[n];
 
             Parallel.For(0, n, i =>
             {
                 transforms[i] = ARAP.GetTransform(prev, current, i, affinity);
-                dst[i] = new TransformDistance(points[i]);
             });
 
             Parallel.For(0, n, i =>

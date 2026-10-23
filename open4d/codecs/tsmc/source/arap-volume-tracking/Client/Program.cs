@@ -86,7 +86,7 @@ namespace Client
             {
                 for (int i = 0; i < config.frameCount(); i++)
                 {
-                    vg[i] = new MemoryEfficientVolumeGrid(config.volumeDataFileName(i));
+                    vg[i] = new MemoryEfficientVolumeGrid(config.volumeDataFileName(i)) { Accel = SelectBackend(config.mode) };
                     pc[i] = IO.LoadPCXYZ(config.resultFileNameXYZ(i));
                 }
             });
@@ -179,6 +179,7 @@ namespace Client
             {
                 using var profiler = new Profiler("Frame", $"{config.inputFileName(i)}");
 
+                (vg as IDisposable)?.Dispose();
                 Profiler.Profile("Preprocess", config.mode.Any(Mode.preprocess) ? "calculated" : "loaded from files", () => Preprocess(ref pc, out vg, i));
 
 
@@ -265,7 +266,8 @@ namespace Client
             {
                 Profiler.Profile("Frame", $"{i + 1}", () => {
                     Profiler.Profile("Loading", () => {
-                        vg = new MemoryEfficientVolumeGrid(config.volumeDataFileName(i)/*, (byte)(config.multilevelVolumeGrid ? 255 : 1)*/);
+                        (vg as IDisposable)?.Dispose();
+                        vg = new MemoryEfficientVolumeGrid(config.volumeDataFileName(i)/*, (byte)(config.multilevelVolumeGrid ? 255 : 1)*/) { Accel = SelectBackend(config.mode) };
 
                         pc = IO.LoadPCXYZ(config.mode.Has(Mode.improvement) ? config.improvedResultFilenameXYZ(i) : config.resultFileNameXYZ(i));
                         pcTf = IO.LoadTransforms(config.mode.Has(Mode.improvement) ? config.improvementTransformFilename(i) : config.resultTransformFilename(i));
@@ -369,6 +371,9 @@ namespace Client
             {
                 pc[i] = IO.LoadPC(config.resultFileName(i));
             }
+
+            if (vg is MemoryEfficientVolumeGrid grid)
+                grid.Accel = SelectBackend(mode);
         }
 
         private static (VolumeGrid, Voxelization, uint[], int) PreprocessMeshVgGpu(Config config, int i)
@@ -435,10 +440,19 @@ namespace Client
             return Profiler.Profile("Building volume grid", () => {
                 ObjLoader loader = new ObjLoader();
                 TriangleMesh mesh = loader.Execute(config.inputFileName(i));
-                VolumeGrid vg = new MemoryEfficientVolumeGrid(mesh, config.volumeGridResolution);
+                VolumeGrid vg = new MemoryEfficientVolumeGrid(mesh, config.volumeGridResolution, SelectBackend(config.mode));
                 vg.Save(config.volumeDataFileName(i));
                 return vg;
             });
+        }
+
+        private static Backend SelectBackend(Mode mode)
+        {
+            if (mode.Has(Mode.cuda))
+                return Backend.Cuda;
+            if (mode.Has(Mode.cudaHost))
+                return Backend.NativeHost;
+            return Backend.Cpu;
         }
 
         private static Vector4[] PreprocessMeshPC(Config config, int i, VolumeGrid vg)
