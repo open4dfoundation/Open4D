@@ -17,9 +17,25 @@ namespace Framework
     /// Volume grid represented by a single array of bytes
     /// where each bit corresponds to occupancy of a single cell
     /// </summary>
-    public class MemoryEfficientVolumeGrid : VolumeGrid
+    public class MemoryEfficientVolumeGrid : VolumeGrid, IDisposable
     {
         byte[] data;
+
+        /// <summary>
+        /// Backend for the cell-to-nearest-point scans (Lloyd, stats, affinity sums).
+        /// Only Backend.Cuda changes them; the other backends run the managed code.
+        /// </summary>
+        public Backend Accel { get; set; } = Backend.Cpu;
+
+        ArapCuda.NativeGrid nativeGrid;
+
+        ArapCuda.NativeGrid Native => nativeGrid ??= ArapCuda.CreateGrid(data, XRes, YRes, ZRes, min, a);
+
+        public void Dispose()
+        {
+            nativeGrid?.Dispose();
+            nativeGrid = null;
+        }
 
         public override bool GetValue(int x, int y, int z)
         {
@@ -176,8 +192,13 @@ namespace Framework
             Read(fn);
         }
 
-        public MemoryEfficientVolumeGrid(TriangleMesh mesh, int maxRes)
+        public MemoryEfficientVolumeGrid(TriangleMesh mesh, int maxRes) : this(mesh, maxRes, Backend.Cpu)
         {
+        }
+
+        public MemoryEfficientVolumeGrid(TriangleMesh mesh, int maxRes, Backend backend)
+        {
+            this.Accel = backend;
             var bb = mesh.BoundingBox;
             this.min = bb.MinPoint;
             float maxSize = (bb.MaxPoint - bb.MinPoint).X;
@@ -192,6 +213,12 @@ namespace Framework
             int numBits = XRes * YRes * ZRes;
             int numBytes = (int)Math.Ceiling(numBits / 8.0);
             this.data = new byte[numBytes];
+
+            if (backend != Backend.Cpu)
+            {
+                ArapCuda.Voxelize(mesh, min, a, XRes, YRes, ZRes, data, backend);
+                return;
+            }
 
             var tenth = XRes / 10;
 
@@ -228,6 +255,30 @@ namespace Framework
         //static object lockObj = new();
 
         public override Vector4[] LloydGradient(Vector4[] pts, float overRelax)
+        {
+            if (Accel != Backend.Cuda)
+                return LloydGradientCpu(pts, overRelax);
+
+            var m = ArapCuda.Assign(Native, pts, false);
+
+            Vector4[] gradient = new Vector4[pts.Length];
+            for (int i = 0; i < pts.Length; i++)
+            {
+                int c = m.Counts[i];
+                if (c > 0)
+                {
+                    var centroid = new Vector4((float)(m.Sums[3 * i] / c), (float)(m.Sums[3 * i + 1] / c), (float)(m.Sums[3 * i + 2] / c), min.W);
+                    gradient[i] = (centroid - pts[i]) * overRelax;
+                }
+                else
+                {
+                    gradient[i] = NearestIn(pts[i]) - pts[i];
+                }
+            }
+            return gradient;
+        }
+
+        Vector4[] LloydGradientCpu(Vector4[] pts, float overRelax)
         {
             Vector4[][] Gcentroids = new Vector4[XRes][];
             int[][] Gcounts = new int[XRes][];
@@ -319,8 +370,15 @@ namespace Framework
 
         public override (double, float[]) LloydStats(Vector4[] pts)
         {
+            if (Accel != Backend.Cuda)
+                return LloydStatsCpu(pts);
+
+            return StatsFromCounts(ArapCuda.Assign(Native, pts, false).Counts);
+        }
+
+        (double, float[]) LloydStatsCpu(Vector4[] pts)
+        {
             int[][] Gcounts = new int[XRes][];
-            float[] contribution = new float[pts.Length];
             KDTree Gtree = new KDTree(pts);
 
             Parallel.For(0, XRes, x =>
@@ -363,25 +421,61 @@ namespace Framework
                     counts[i] += Gcounts[x][i];
             }
 
+            return StatsFromCounts(counts);
+        }
+
+        static (double, float[]) StatsFromCounts(int[] counts)
+        {
+            float[] contribution = new float[counts.Length];
             double avg = 0;
-            for (int i = 0; i < pts.Length; i++)
+            for (int i = 0; i < counts.Length; i++)
                 avg += counts[i];
 
 
-            avg /= (double)pts.Length;
+            avg /= (double)counts.Length;
 
             double stdev = 0;
-            for (int i = 0; i < pts.Length; i++)
+            for (int i = 0; i < counts.Length; i++)
             {
                 double dif = counts[i] - avg;
                 stdev += dif * dif;
                 contribution[i] = (float)(dif * dif);
             }
 
-            var res = Math.Sqrt(stdev / pts.Length) / avg;
+            var res = Math.Sqrt(stdev / counts.Length) / avg;
             //Console.WriteLine("Stdev after Lloyd: stdev/avg: {0}", res);
 
             return (res, contribution);
+        }
+
+        public override TransformDistance[] GetTransformDistances(Vector4[] pts)
+        {
+            if (Accel != Backend.Cuda)
+                return base.GetTransformDistances(pts);
+
+            var m = ArapCuda.Assign(Native, pts, true);
+
+            TransformDistance[] dst = new TransformDistance[pts.Length];
+            for (int i = 0; i < pts.Length; i++)
+            {
+                // GetPoints also puts the point itself into its own cell set
+                Vector4 p = pts[i];
+                double sx = m.Sums[3 * i] + p.X, sy = m.Sums[3 * i + 1] + p.Y, sz = m.Sums[3 * i + 2] + p.Z;
+                double xx = m.Second[6 * i] + (double)p.X * p.X, xy = m.Second[6 * i + 1] + (double)p.X * p.Y;
+                double xz = m.Second[6 * i + 2] + (double)p.X * p.Z, yy = m.Second[6 * i + 3] + (double)p.Y * p.Y;
+                double yz = m.Second[6 * i + 4] + (double)p.Y * p.Z, zz = m.Second[6 * i + 5] + (double)p.Z * p.Z;
+
+                // TransformDistance.QSum starts from Vector.Build.Dense(3, 1), i.e. (1, 1, 1)
+                var qSum = MathNet.Numerics.LinearAlgebra.Vector<float>.Build.DenseOfArray(new float[] { (float)(sx + 1), (float)(sy + 1), (float)(sz + 1) });
+                var qqt = MathNet.Numerics.LinearAlgebra.Matrix<float>.Build.DenseOfArray(new float[,]
+                {
+                    { (float)xx, (float)xy, (float)xz },
+                    { (float)xy, (float)yy, (float)yz },
+                    { (float)xz, (float)yz, (float)zz },
+                });
+                dst[i] = new TransformDistance(m.Counts[i] + 1, (float)(xx + yy + zz), qSum, qqt);
+            }
+            return dst;
         }
 
         public override List<Vector4>[] GetPoints(Vector4[] pts)

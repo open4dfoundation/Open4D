@@ -36,6 +36,17 @@ namespace Framework
             // Console.WriteLine($"QQT {qqtSum}");
         }
 
+        /// <summary>
+        /// From precomputed sums over the point set (count, sum of q^T q, sum of q, sum of q q^T)
+        /// </summary>
+        public TransformDistance(int count, float qtqSum, Vector<float> qSum, Matrix<float> qqtSum)
+        {
+            this.vq = count;
+            this.qtqSum = qtqSum;
+            this.qSum = qSum;
+            this.qqtSum = qqtSum;
+        }
+
         //static private SysNumVector4[] coordFrame = new SysNumVector4[]
         //{
         //    SysNumVector4.Zero,

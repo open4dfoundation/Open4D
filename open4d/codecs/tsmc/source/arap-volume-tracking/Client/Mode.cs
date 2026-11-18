@@ -53,7 +53,17 @@ namespace Client
         //evaluation = 0x010000,
         gtcmp = 0x010000,
         improvement = 0x020000,
-        IIR = 0x040000
+        IIR = 0x040000,
+
+        /// <summary>
+        /// Use the CUDA kernels in libarapcuda where available
+        /// </summary>
+        cuda = 0x080000,
+
+        /// <summary>
+        /// Run the CUDA voxelizer natively on the CPU (validation without a GPU)
+        /// </summary>
+        cudaHost = 0x100000
     };
 
     public static class ModeExt

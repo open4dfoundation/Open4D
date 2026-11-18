@@ -205,10 +205,10 @@ namespace Framework
         {
             double[] dists = new double[pc1.Length];
             double result = 0;
-            List<Vector4>[] points = vg.GetPoints(pc1);
+            TransformDistance[] tfDists = vg.GetTransformDistances(pc1);
 
             Parallel.For(0, pc1.Length, (i) => {
-                TransformDistance tfDist = new TransformDistance(points[i]);
+                TransformDistance tfDist = tfDists[i];
 
                 dists[i] = tfDist.GetTransformDistance(tf1[i].R, tf2[i].R, tf1[i].t, tf2[i].t);
             });
